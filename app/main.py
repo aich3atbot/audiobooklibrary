@@ -1,3 +1,6 @@
+import asyncio
+import contextlib
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -5,13 +8,20 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.routes import ui
+from app.services.sync import hardcover_sync_loop
+
+logging.basicConfig(level=logging.INFO)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Background tasks (Hardcover sync, download watcher, importer) start here
-    # in later milestones.
+    tasks = [asyncio.create_task(hardcover_sync_loop())]
+    # Later milestones add the download watcher and importer here.
     yield
+    for task in tasks:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="Audiobook Library", lifespan=lifespan)

@@ -1,23 +1,32 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2>Library</h2>
+<header class="library-header">
+    <h2>Library <small>({{ books | length }})</small></h2>
+    <form method="post" action="/sync">
+        <button type="submit">Sync now</button>
+    </form>
+</header>
+<p><small>
+    {% if last_sync %}Last sync: {{ last_sync[:16].replace('T', ' ') }} UTC — {{ last_sync_result }}{% else %}Not synced yet.{% endif %}
+</small></p>
+
 {% if books %}
 <div class="book-grid">
     {% for book in books %}
     <article>
-        {% if book.cover_url %}<img src="{{ book.cover_url }}" alt="Cover of {{ book.title }}">{% endif %}
+        {% if book.cover_url %}<img src="{{ book.cover_url }}" alt="Cover of {{ book.title }}" loading="lazy">{% endif %}
         <h4>{{ book.title }}</h4>
         <p>{{ book.author.name }}</p>
-        {% if book.series %}<p><small>{{ book.series.name }}{% if book.series_index is not none %} #{{ book.series_index }}{% endif %}</small></p>{% endif %}
+        {% if book.series %}<p><small>{{ book.series.name }}{% if book.series_index is not none %} #{{ book.series_index | int if book.series_index == book.series_index | int else book.series_index }}{% endif %}</small></p>{% endif %}
         <p>
             <span class="badge">{{ book.read_state.value.replace('_', ' ') }}</span>
-            <span class="badge">{{ book.download_state.value }}</span>
+            {% if book.download_state.value != 'none' %}<span class="badge">{{ book.download_state.value }}</span>{% endif %}
         </p>
     </article>
     {% endfor %}
 </div>
 {% else %}
-<p>No books yet. Hardcover sync arrives in milestone 2.</p>
+<p>No books yet. Press <em>Sync now</em> to pull your Hardcover library.</p>
 {% endif %}
 {% endblock %}
