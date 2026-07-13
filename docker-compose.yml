@@ -1,0 +1,17 @@
+services:
+  audiobooklibrary:
+    build: .
+    container_name: audiobooklibrary
+    ports:
+      - "8000:8000"
+    environment:
+      HARDCOVER_TOKEN: ${HARDCOVER_TOKEN:?set in .env}
+      PROWLARR_URL: ${PROWLARR_URL:-http://prowlarr:9696}
+      PROWLARR_API_KEY: ${PROWLARR_API_KEY:?set in .env}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-30}
+    volumes:
+      - ./config:/config
+      # Must be the same directory your download client writes completed downloads to
+      - /path/to/downloads:/downloads
+      - /path/to/audiobooks:/audiobooks
+    restart: unless-stopped

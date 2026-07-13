@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Library</h2>
+{% if books %}
+<div class="book-grid">
+    {% for book in books %}
+    <article>
+        {% if book.cover_url %}<img src="{{ book.cover_url }}" alt="Cover of {{ book.title }}">{% endif %}
+        <h4>{{ book.title }}</h4>
+        <p>{{ book.author.name }}</p>
+        {% if book.series %}<p><small>{{ book.series.name }}{% if book.series_index is not none %} #{{ book.series_index }}{% endif %}</small></p>{% endif %}
+        <p>
+            <span class="badge">{{ book.read_state.value.replace('_', ' ') }}</span>
+            <span class="badge">{{ book.download_state.value }}</span>
+        </p>
+    </article>
+    {% endfor %}
+</div>
+{% else %}
+<p>No books yet. Hardcover sync arrives in milestone 2.</p>
+{% endif %}
+{% endblock %}

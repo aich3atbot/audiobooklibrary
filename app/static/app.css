@@ -1,0 +1,26 @@
+.book-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+}
+
+.book-grid article {
+    margin: 0;
+    padding: 0.75rem;
+}
+
+.book-grid img {
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    object-fit: cover;
+    border-radius: 4px;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    background: var(--pico-secondary-background);
+    color: var(--pico-secondary-inverse);
+}
