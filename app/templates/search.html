@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Search — Audiobook Library{% endblock %}
+
+{% block content %}
+<h2>Search Hardcover</h2>
+<form method="get" action="/search" role="search">
+    <fieldset role="group">
+        <input type="search" name="q" value="{{ q }}" placeholder="Title, author or series" autofocus>
+        <button type="submit">Search</button>
+    </fieldset>
+</form>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+{% if results %}
+<div class="book-grid">
+    {% for r in results %}
+    {% if r.hardcover_id in in_library %}
+    {% with book = in_library[r.hardcover_id] %}{% include "_card.html" %}{% endwith %}
+    {% else %}
+    {% include "_search_result.html" %}
+    {% endif %}
+    {% endfor %}
+</div>
+{% elif q and not error %}
+<p>No results for “{{ q }}”.</p>
+{% endif %}
+{% endblock %}

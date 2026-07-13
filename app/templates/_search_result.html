@@ -1,0 +1,18 @@
+<article>
+    {% if r.cover_url %}<img src="{{ r.cover_url }}" alt="Cover of {{ r.title }}" loading="lazy">{% endif %}
+    <h4>{{ r.title }}</h4>
+    <p>{{ r.authors | join(", ") }}{% if r.release_year %} <small>({{ r.release_year }})</small>{% endif %}</p>
+    {% if r.series_name %}<p><small>{{ r.series_name }}{% if r.series_position is not none %} #{{ r.series_position | int if r.series_position == r.series_position | int else r.series_position }}{% endif %}</small></p>{% endif %}
+    <p>{% if r.has_audiobook %}<span class="badge">audiobook</span>{% endif %}</p>
+    <form hx-post="/search/add" hx-target="closest article" hx-swap="outerHTML">
+        <input type="hidden" name="hardcover_id" value="{{ r.hardcover_id }}">
+        <fieldset role="group">
+            <select name="state" aria-label="Add with state">
+                <option value="want_to_read">Want to read</option>
+                <option value="reading">Reading</option>
+                <option value="read">Read</option>
+            </select>
+            <button type="submit">Add</button>
+        </fieldset>
+    </form>
+</article>
