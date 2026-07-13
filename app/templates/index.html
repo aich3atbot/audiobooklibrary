@@ -2,13 +2,13 @@
 
 {% block content %}
 <header class="library-header">
-    <h2>Library <small>({{ books | length }})</small></h2>
+    <h2>Library <small>({{ rows | length }})</small></h2>
     <form method="post" action="/sync">
         <button type="submit">Sync now</button>
     </form>
 </header>
 <p><small>
-    {% if last_sync %}Last sync: {{ last_sync[:16].replace('T', ' ') }} UTC — {{ last_sync_result }}{% else %}Not synced yet.{% endif %}
+    {% if last_sync %}Last sync: {{ last_sync.strftime("%Y-%m-%d %H:%M") }} UTC — {{ last_sync_result }}{% else %}Not synced yet.{% endif %}
 </small></p>
 
 <form method="get" action="/" class="filters">
@@ -19,10 +19,10 @@
         <option value="{{ s }}" {% if read == s %}selected{% endif %}>{{ s.replace('_', ' ') }}</option>
         {% endfor %}
     </select>
-    <select name="dl" aria-label="Download state">
-        <option value="">Any download state</option>
+    <select name="dl" aria-label="Download status">
+        <option value="">Any download status</option>
         {% for s in dl_states %}
-        <option value="{{ s }}" {% if dl == s %}selected{% endif %}>{{ s }}</option>
+        <option value="{{ s }}" {% if dl == s %}selected{% endif %}>{{ s.replace('_', ' ') }}</option>
         {% endfor %}
     </select>
     <select name="sort" aria-label="Sort">
@@ -33,9 +33,9 @@
     <button type="submit" class="secondary">Apply</button>
 </form>
 
-{% if books %}
+{% if rows %}
 <div class="book-grid">
-    {% for book in books %}
+    {% for book, ub in rows %}
     {% include "_card.html" %}
     {% endfor %}
 </div>

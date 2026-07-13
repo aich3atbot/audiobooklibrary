@@ -11,9 +11,6 @@ class Settings(BaseSettings):
     # Required: the app refuses to start without it.
     admin_password: str = ""
 
-    # Transitional global token; being replaced by per-user tokens.
-    hardcover_token: str = ""
-
     # Torrent indexer (AudioBookBay) and the torrent client that downloads it.
     index_url: str = ""
     download_client: str = "deluge"

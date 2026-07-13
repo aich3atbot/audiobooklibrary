@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.models import AppState, Author, Book, DownloadState, ReadState, Release, Series
+from app.models import AppState, Author, Book, DownloadState, Release, Series, UserBook
 from app.services.importer import (
     import_release,
     library_dir_for,
@@ -16,7 +16,7 @@ from app.services.importer import (
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -45,7 +45,6 @@ def book(clean_db):
         author=author,
         series=series,
         series_index=1.0,
-        read_state=ReadState.WANT_TO_READ,
         download_state=DownloadState.GRABBED,
     )
     clean_db.add(book)

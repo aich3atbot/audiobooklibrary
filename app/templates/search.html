@@ -15,10 +15,10 @@
 {% if results %}
 <div class="book-grid">
     {% for r in results %}
-    {% if r.hardcover_id in in_library %}
-    {% with book = in_library[r.hardcover_id] %}{% include "_card.html" %}{% endwith %}
+    {% if r.hardcover_id in mine %}
+    {% with book = known[r.hardcover_id], ub = mine[r.hardcover_id] %}{% include "_card.html" %}{% endwith %}
     {% else %}
-    {% include "_search_result.html" %}
+    {% with existing = known.get(r.hardcover_id) %}{% include "_search_result.html" %}{% endwith %}
     {% endif %}
     {% endfor %}
 </div>

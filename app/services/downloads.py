@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.clients.download_client import get_download_client
 from app.clients.indexer import IndexerRelease, get_indexer
 from app.config import get_settings
-from app.models import Book, DownloadState, Release
+from app.models import Book, DownloadState, Release, User
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ def drop_from_client(release: Release) -> None:
 
 def grab_release(
     session: Session,
+    user: User | None,
     book: Book,
     guid: str,
     indexer_name: str,
@@ -62,6 +63,7 @@ def grab_release(
 
     release = Release(
         book=book,
+        user=user,
         guid=guid,
         indexer=indexer_name,
         # The details-page title is what the magnet names the download, so it

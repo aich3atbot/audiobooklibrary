@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.models import Book, MediaProgress, ReadState
-from app.services.sync import update_read_state
+from app.models import Book, MediaProgress, ReadState, User
+from app.services.sync import get_user_book, update_read_state
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ def _utcnow() -> datetime:
 
 def apply_progress(
     db: Session,
+    user: User,
     book: Book,
     current_time: float | None = None,
     duration: float | None = None,
@@ -53,10 +54,14 @@ def apply_progress(
     row.is_finished = finished
     db.commit()
 
-    if newly_finished and book.read_state != ReadState.READ:
-        logger.info("ABS client finished %s; marking read on Hardcover", book.title)
+    user_book = get_user_book(db, user, book)
+    already_read = user_book is not None and user_book.read_state == ReadState.READ
+    if newly_finished and not already_read:
+        logger.info(
+            "ABS client finished %s; marking read on %s's Hardcover", book.title, user.username
+        )
         try:
-            update_read_state(db, book, ReadState.READ)
+            update_read_state(db, user, book, ReadState.READ)
         except Exception:
             logger.exception("Failed to mark %s read after finishing", book.title)
     return row

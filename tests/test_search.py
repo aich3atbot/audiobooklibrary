@@ -3,22 +3,27 @@ import pytest
 import respx
 
 from app.clients.hardcover import API_URL, HardcoverClient, _parse_search_document
-from app.models import AppState, Author, Book, ReadState, Release, Series
+from app.models import (
+    AppState,
+    Author,
+    Book,
+    DownloadState,
+    ReadState,
+    Release,
+    Series,
+    UserBook,
+)
 from app.services.sync import add_book
+from tests.conftest import make_user_book
 from tests.test_sync import entry, me_response
 
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
-
-
-@pytest.fixture
-def hardcover_token(test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings, "hardcover_token", "token")
 
 
 def search_doc(**overrides):
@@ -80,7 +85,7 @@ def test_parse_search_document_no_series():
 
 
 @respx.mock
-def test_search_books(hardcover_token):
+def test_search_books():
     respx.post(API_URL).mock(return_value=search_response([search_doc()]))
     with HardcoverClient("token") as client:
         results = client.search_books("way of kings")
@@ -88,36 +93,41 @@ def test_search_books(hardcover_token):
     assert results[0]["title"] == "The Way of Kings"
 
 
+def user_book_for(db, user, book) -> UserBook:
+    return (
+        db.query(UserBook)
+        .filter(UserBook.user_id == user.id, UserBook.book_id == book.id)
+        .one()
+    )
+
+
 @respx.mock
-def test_add_book_inserts_then_pulls_metadata(clean_db, hardcover_token):
+def test_add_book_inserts_then_pulls_metadata(clean_db, user):
     route = respx.post(API_URL)
     route.side_effect = [
         httpx.Response(200, json={"data": {"insert_user_book": {"id": 42, "error": None}}}),
         me_response([entry(ub_id=42, status_id=2, book_id=1000, title="Added Book")]),
     ]
 
-    book = add_book(clean_db, 1000, ReadState.READING)
+    book = add_book(clean_db, user, 1000, ReadState.READING)
 
     assert book.hardcover_id == 1000
     assert book.title == "Added Book"
-    assert book.hardcover_user_book_id == 42
-    assert book.read_state == ReadState.READING
-    assert book.pending_push is False
+    ub = user_book_for(clean_db, user, book)
+    assert ub.hardcover_user_book_id == 42
+    assert ub.read_state == ReadState.READING
+    assert ub.pending_push is False
     assert route.call_count == 2
 
 
 @respx.mock
-def test_add_book_existing_updates_state_without_insert(clean_db, hardcover_token):
+def test_add_book_existing_updates_state_without_insert(clean_db, user):
     author = Author(hardcover_id=500, name="A")
-    existing = Book(
-        hardcover_id=1000,
-        title="Existing",
-        author=author,
-        read_state=ReadState.WANT_TO_READ,
-        hardcover_user_book_id=42,
-    )
+    existing = Book(hardcover_id=1000, title="Existing", author=author)
     clean_db.add(existing)
     clean_db.commit()
+    make_user_book(clean_db, user, existing,
+                   read_state=ReadState.WANT_TO_READ, hardcover_user_book_id=42)
 
     route = respx.post(API_URL).mock(
         return_value=httpx.Response(
@@ -125,22 +135,47 @@ def test_add_book_existing_updates_state_without_insert(clean_db, hardcover_toke
         )
     )
 
-    book = add_book(clean_db, 1000, ReadState.READING)
+    book = add_book(clean_db, user, 1000, ReadState.READING)
 
     assert book.id == existing.id
-    assert book.read_state == ReadState.READING
+    assert user_book_for(clean_db, user, book).read_state == ReadState.READING
     assert route.call_count == 1
     assert b"update_user_book" in route.calls[0].request.content
 
 
 @respx.mock
-def test_search_page_marks_books_in_library(client, clean_db, hardcover_token):
-    author = Author(hardcover_id=500, name="Brandon Sanderson")
-    clean_db.add(
-        Book(hardcover_id=1000, title="The Way of Kings", author=author,
-             read_state=ReadState.READ)
-    )
+def test_add_available_book_shelves_it_for_the_user(clean_db, user):
+    """A book another user made available: adding it creates the user's own
+    Hardcover shelf entry, and download state is untouched."""
+    author = Author(hardcover_id=500, name="A")
+    existing = Book(hardcover_id=1000, title="Existing", author=author,
+                    download_state=DownloadState.IMPORTED, library_path="/audiobooks/x")
+    clean_db.add(existing)
     clean_db.commit()
+
+    route = respx.post(API_URL).mock(
+        return_value=httpx.Response(
+            200, json={"data": {"insert_user_book": {"id": 91, "error": None}}}
+        )
+    )
+
+    book = add_book(clean_db, user, 1000, ReadState.WANT_TO_READ)
+
+    assert book.id == existing.id
+    assert book.download_state == DownloadState.IMPORTED
+    assert book.library_path == "/audiobooks/x"
+    ub = user_book_for(clean_db, user, book)
+    assert ub.hardcover_user_book_id == 91
+    assert b"insert_user_book" in route.calls[0].request.content
+
+
+@respx.mock
+def test_search_page_marks_books_in_library(client, clean_db, user):
+    author = Author(hardcover_id=500, name="Brandon Sanderson")
+    mine = Book(hardcover_id=1000, title="The Way of Kings", author=author)
+    clean_db.add(mine)
+    clean_db.commit()
+    make_user_book(clean_db, user, mine, read_state=ReadState.READ)
     respx.post(API_URL).mock(
         return_value=search_response([search_doc(), search_doc(id="2000", title="Other Book")])
     )
@@ -155,7 +190,26 @@ def test_search_page_marks_books_in_library(client, clean_db, hardcover_token):
 
 
 @respx.mock
-def test_search_add_route_returns_library_card(client, clean_db, hardcover_token):
+def test_search_page_marks_available_books(client, clean_db, user):
+    """A book in the shared store but not the user's library shows as
+    available with an add-to-my-library action, never a download button."""
+    author = Author(hardcover_id=500, name="Brandon Sanderson")
+    theirs = Book(hardcover_id=1000, title="The Way of Kings", author=author,
+                  download_state=DownloadState.IMPORTED, library_path="/audiobooks/x")
+    clean_db.add(theirs)
+    clean_db.commit()
+    respx.post(API_URL).mock(return_value=search_response([search_doc()]))
+
+    response = client.get("/search", params={"q": "way of kings"})
+
+    assert response.status_code == 200
+    assert "badge-dl-available" in response.text
+    assert "Add to my library" in response.text
+    assert "/releases" not in response.text  # no download button
+
+
+@respx.mock
+def test_search_add_route_returns_library_card(client, clean_db):
     respx.post(API_URL).side_effect = [
         httpx.Response(200, json={"data": {"insert_user_book": {"id": 42, "error": None}}}),
         me_response([entry(ub_id=42, status_id=1, book_id=1000, title="Added Book")]),
@@ -173,3 +227,9 @@ def test_search_add_route_returns_library_card(client, clean_db, hardcover_token
 def test_search_add_route_rejects_none_state(client, clean_db):
     response = client.post("/search/add", data={"hardcover_id": "1000", "state": "none"})
     assert response.status_code == 422
+
+
+def test_search_without_token_shows_error(client, clean_db, tokenless_user):
+    response = client.get("/search", params={"q": "anything"})
+    assert response.status_code == 200
+    assert "No Hardcover token set" in response.text

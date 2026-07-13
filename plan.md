@@ -58,18 +58,24 @@ One FastAPI process running:
 
 ## Data model (SQLite)
 
+- **user** — id, uuid (ABS userId), username (unique), password_hash (scrypt), hardcover_token,
+  enabled, created_at, last_sync_at, last_sync_result. The `admin` account is virtual — never a row.
 - **author** — id, hardcover_id, name
 - **series** — id, hardcover_id, name
-- **book** — id, hardcover_id, title, author_id, series_id (nullable), series_index (nullable),
-  cover_url, read_state (`want_to_read` | `reading` | `read` | `none`), read_at (date, nullable),
-  download_state (`none` | `wanted` | `grabbed` | `downloading` | `downloaded` | `imported` | `failed`),
-  library_path (nullable), created_at, updated_at
-- **release** — id, book_id, guid (the release's details-page URL), indexer, title, size,
-  info_hash, magnet_uri, progress, grabbed_at, status
+- **book** — shared metadata + download state: id, hardcover_id, title, author_id,
+  series_id (nullable), series_index (nullable), cover_url,
+  download_state (`none` | `wanted` | `grabbed` | `downloading` | `downloaded` | `imported` | `failed`;
+  displayed as the three statuses *not present / downloading / available*),
+  library_path (nullable), created_at, updated_at. A book may belong to no user's library.
+- **user_book** — one user's shelf membership for a book (unique user_id+book_id):
+  hardcover_user_book_id, pending_push, read_state (`want_to_read` | `reading` | `read` | `none`),
+  read_at (date, nullable), timestamps
+- **release** — id, book_id, user_id (who grabbed it, nullable), guid (the release's
+  details-page URL), indexer, title, size, info_hash, magnet_uri, progress, grabbed_at, status
   (tracks what we handed the torrent client; `info_hash` is how we ask about it later.
   Rows grabbed before the direct-torrent rewrite have a null `info_hash` and fall back to
   name matching.)
-- **settings/state** — key-value table for sync cursors (e.g. last Hardcover sync time)
+- **settings/state** — key-value table for app state (sync cursors live on `user` now)
 
 A book's identity is anchored on `hardcover_id` (specifically the Hardcover *book* id; editions
 are collapsed to the canonical book).
@@ -181,7 +187,7 @@ Verified against Deluge WebUI 2.2.0.
 
 ```
 ADMIN_PASSWORD          # password for the virtual "admin" account (required at startup)
-HARDCOVER_TOKEN         # transitional global token, being replaced by per-user tokens
+                        # (Hardcover tokens are per-user, set on the admin's Users page)
 INDEX_URL               # AudioBookBay base URL (mirrors rotate; http:// may be the working one)
 DOWNLOAD_CLIENT         # default deluge (the only one implemented)
 DOWNLOAD_URL            # Deluge *web UI*, e.g. http://host.docker.internal:8112
@@ -397,7 +403,7 @@ Milestones (commit each; the app stays runnable throughout):
    minimal admin Users page (list + add), ABS auth switched to DB accounts (tokens carry
    the user's uuid; admin rejected; disabled users' tokens invalid).
 2. ✅ **Admin user management** — enable/disable, change password, change token, simple delete.
-3. **Per-user data pivot** — `user_book`, `user_id` columns, per-user sync loop, UI rework
+3. ✅ **Per-user data pivot** — `user_book`, `user_id` columns, per-user sync loop, UI rework
    (library/search/downloads), drop the global `HARDCOVER_TOKEN`.
 4. **ABS per-user** — progress/bookmarks/sessions filtered by the authenticated user.
 5. **Imports rework + delete-user orphan review.**

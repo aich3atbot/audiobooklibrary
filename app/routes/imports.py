@@ -5,10 +5,11 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from app.auth import get_current_user
 from app.clients.hardcover import HardcoverClient
 from app.config import get_settings
 from app.db import get_db
-from app.models import Book, ReadState
+from app.models import Book, ReadState, User
 from app.services.collection import (
     HIGH_CONFIDENCE,
     best_matches,
@@ -77,11 +78,17 @@ def match_search(request: Request, rel: str, q: str = "", db: Session = Depends(
 
 
 @router.get("/imports/hardcover", response_class=HTMLResponse)
-def match_hardcover(request: Request, rel: str, q: str, db: Session = Depends(get_db)):
+def match_hardcover(
+    request: Request,
+    rel: str,
+    q: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     error = None
     results = []
     try:
-        with HardcoverClient(get_settings().hardcover_token) as client:
+        with HardcoverClient(user.hardcover_token) as client:
             results = client.search_books(q.strip(), per_page=5)
     except Exception:
         logger.exception("Hardcover search failed for imports match")
@@ -114,6 +121,7 @@ def add_and_match(
     hardcover_id: int = Form(...),
     state: str = Form(...),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     entry = entry_for(rel)
     if entry is None:
@@ -124,7 +132,7 @@ def add_and_match(
         read_state = None
     if read_state not in ADDABLE_STATES:
         raise HTTPException(status_code=422, detail=f"invalid state: {state}")
-    book = add_book(db, hardcover_id, read_state)
+    book = add_book(db, user, hardcover_id, read_state)
     return templates.TemplateResponse(request, "_import_row.html", {"m": _row(entry, book)})
 
 

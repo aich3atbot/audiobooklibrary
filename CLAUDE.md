@@ -53,9 +53,12 @@ it read on Hardcover via `update_read_state`.
 - **Collection import** (`/imports` volume, Imports page): hard-coded path, no env var
   (`Settings.imports_dir` exists only for tests). Always MOVES files (draining /imports is
   the point) regardless of IMPORT_MODE, which applies to the download pipeline only.
-- **Read state**: two-way sync, but **Hardcover is the source of truth** — push local changes
-  first, then pull; Hardcover wins conflicts. Book identity is anchored on the Hardcover
-  *book* id (editions collapsed).
+- **Read state**: per user (`user_book` rows over shared `book` metadata), two-way sync with
+  each user's own Hardcover token, but **Hardcover is the source of truth** — push local
+  changes first, then pull; Hardcover wins conflicts. Book identity is anchored on the
+  Hardcover *book* id (editions collapsed). Download state stays shared on `book`
+  (displayed as not present / downloading / available; a book one user made available
+  cannot be grabbed again — search offers "add to my library" instead).
 - **Multi-user, mandatory auth**: there is no open mode. Users are DB rows (scrypt
   password hashes via `app/passwords.py`, per-user Hardcover tokens); the virtual `admin`
   account (password from `ADMIN_PASSWORD`, required at startup, reserved username) sees

@@ -84,6 +84,25 @@ def user(db_session):
 
 
 @pytest.fixture
+def tokenless_user(user, db_session):
+    """The default user with no Hardcover token (push/sync disabled)."""
+    user.hardcover_token = ""
+    db_session.commit()
+    yield user
+    user.hardcover_token = "hc-token"
+    db_session.commit()
+
+
+def make_user_book(db, user, book, **kwargs):
+    from app.models import UserBook
+
+    user_book = UserBook(user_id=user.id, book=book, **kwargs)
+    db.add(user_book)
+    db.commit()
+    return user_book
+
+
+@pytest.fixture
 def anon_client(test_settings):
     from fastapi.testclient import TestClient
 

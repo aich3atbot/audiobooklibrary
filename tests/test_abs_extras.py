@@ -104,8 +104,7 @@ def test_year_stats_counts_finished(client, token, library):
 
 
 def test_patch_progress_fraction_maps_to_current_time(client, token, library,
-                                                      test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings, "hardcover_token", "")
+                                                      tokenless_user):
     db = library["db"]
     item_id = f"li_{library['hail'].id}"
 

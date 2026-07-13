@@ -7,15 +7,17 @@
             hx-post="/books/{{ book.id }}/read-state"
             hx-target="#book-{{ book.id }}" hx-swap="outerHTML">
         {% for state, label in [("none", "—"), ("want_to_read", "Want to read"), ("reading", "Reading"), ("read", "Read")] %}
-        <option value="{{ state }}" {% if book.read_state.value == state %}selected{% endif %}>{{ label }}</option>
+        <option value="{{ state }}" {% if ub.read_state.value == state %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
     </select>
+    {% set dl = display_status(book.download_state) %}
     <p>
-        {% if book.read_at %}<span class="badge">read {{ book.read_at }}</span>{% endif %}
-        {% if book.download_state.value != 'none' %}<span class="badge badge-dl-{{ book.download_state.value }}">{{ book.download_state.value }}</span>{% endif %}
-        {% if book.pending_push %}<span class="badge badge-pending" title="Change not yet confirmed by Hardcover">sync pending</span>{% endif %}
+        {% if ub.read_at %}<span class="badge">read {{ ub.read_at }}</span>{% endif %}
+        {% if dl != 'not_present' %}<span class="badge badge-dl-{{ dl }}">{{ dl.replace('_', ' ') }}</span>{% endif %}
+        {% if book.download_state.value == 'failed' %}<span class="badge badge-dl-failed" title="Last download failed — see Activity">failed</span>{% endif %}
+        {% if ub.pending_push %}<span class="badge badge-pending" title="Change not yet confirmed by Hardcover">sync pending</span>{% endif %}
     </p>
-    {% if book.download_state.value in ('none', 'failed') %}
+    {% if dl == 'not_present' %}
     <button class="secondary download-btn" hx-get="/books/{{ book.id }}/releases" hx-target="#modal" hx-swap="outerHTML">Download…</button>
     {% endif %}
 </article>

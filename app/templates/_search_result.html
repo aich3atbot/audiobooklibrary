@@ -3,7 +3,11 @@
     <h4>{{ r.title }}</h4>
     <p>{{ r.authors | join(", ") }}{% if r.release_year %} <small>({{ r.release_year }})</small>{% endif %}</p>
     {% if r.series_name %}<p><small>{{ r.series_name }}{% if r.series_position is not none %} #{{ r.series_position | int if r.series_position == r.series_position | int else r.series_position }}{% endif %}</small></p>{% endif %}
-    <p>{% if r.has_audiobook %}<span class="badge">audiobook</span>{% endif %}</p>
+    {% set dl = display_status(existing.download_state) if existing else 'not_present' %}
+    <p>
+        {% if r.has_audiobook %}<span class="badge">audiobook</span>{% endif %}
+        {% if dl != 'not_present' %}<span class="badge badge-dl-{{ dl }}" title="Already in the shared audiobook store">{{ dl.replace('_', ' ') }}</span>{% endif %}
+    </p>
     <form hx-post="/search/add" hx-target="closest article" hx-swap="outerHTML">
         <input type="hidden" name="hardcover_id" value="{{ r.hardcover_id }}">
         <fieldset role="group">
@@ -12,7 +16,7 @@
                 <option value="reading">Reading</option>
                 <option value="read">Read</option>
             </select>
-            <button type="submit">Add</button>
+            <button type="submit">{% if existing %}Add to my library{% else %}Add{% endif %}</button>
         </fieldset>
     </form>
 </article>

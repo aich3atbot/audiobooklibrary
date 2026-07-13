@@ -149,7 +149,8 @@
 .badge-ok { background: #2e7d32; color: white; }
 .badge-err { background: #b71c1c; color: white; }
 
-.badge-dl-imported { background: #2e7d32; color: white; }
+.badge-dl-available { background: #2e7d32; color: white; }
+.badge-dl-downloading { background: #1565c0; color: white; }
 .badge-dl-failed { background: #b71c1c; color: white; }
 
 .badge-pending {

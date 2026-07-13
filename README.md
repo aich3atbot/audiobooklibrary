@@ -35,13 +35,14 @@ See `plan.md` for the full design.
 ## Run with Docker
 
 ```bash
-cp .env.example .env    # fill in HARDCOVER_TOKEN, INDEX_URL and DOWNLOAD_URL
+cp .env.example .env    # fill in ADMIN_PASSWORD, INDEX_URL and DOWNLOAD_URL
 # edit docker-compose.yml volume paths, then:
 docker compose up --build
 ```
 
-Open http://localhost:8000. The app syncs your Hardcover library on startup and every
-`SYNC_INTERVAL_MINUTES` after that.
+Open http://localhost:8000, log in as `admin` (password from `ADMIN_PASSWORD`) and create
+user accounts — each with its own password and Hardcover token. The app syncs every user's
+Hardcover library on startup and every `SYNC_INTERVAL_MINUTES` after that.
 
 Volumes:
 

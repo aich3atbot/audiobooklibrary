@@ -130,17 +130,27 @@ def _session_book(db: Session, session_id: str) -> Book:
 
 
 @router.post("/session/{session_id}/sync")
-async def sync_session(session_id: str, request: Request, db: Session = Depends(get_db)):
+async def sync_session(
+    session_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
     body = await request.json()
     book = _session_book(db, session_id)
     apply_progress(
-        db, book, current_time=body.get("currentTime"), duration=body.get("duration")
+        db, user, book, current_time=body.get("currentTime"), duration=body.get("duration")
     )
     return Response(status_code=200)
 
 
 @router.post("/session/{session_id}/close")
-async def close_session(session_id: str, request: Request, db: Session = Depends(get_db)):
+async def close_session(
+    session_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
     try:
         body = await request.json()
     except Exception:
@@ -149,13 +159,17 @@ async def close_session(session_id: str, request: Request, db: Session = Depends
         if body.get("currentTime") is not None:
             book = _session_book(db, session_id)
             apply_progress(
-                db, book, current_time=body.get("currentTime"), duration=body.get("duration")
+                db,
+                user,
+                book,
+                current_time=body.get("currentTime"),
+                duration=body.get("duration"),
             )
         del open_sessions[session_id]
     return Response(status_code=200)
 
 
-def _apply_local_session(db: Session, session: dict[str, Any]) -> bool:
+def _apply_local_session(db: Session, user: User, session: dict[str, Any]) -> bool:
     item_id = session.get("libraryItemId") or ""
     book = catalogue.get_book_by_item_id(db, item_id)
     if book is None:
@@ -163,6 +177,7 @@ def _apply_local_session(db: Session, session: dict[str, Any]) -> bool:
         return False
     apply_progress(
         db,
+        user,
         book,
         current_time=session.get("currentTime"),
         duration=session.get("duration"),
@@ -171,24 +186,37 @@ def _apply_local_session(db: Session, session: dict[str, Any]) -> bool:
 
 
 @router.post("/session/local")
-async def sync_local_session(request: Request, db: Session = Depends(get_db)):
+async def sync_local_session(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
     session = await request.json()
-    _apply_local_session(db, session)
+    _apply_local_session(db, user, session)
     return {}
 
 
 @router.post("/session/local-all")
-async def sync_local_sessions(request: Request, db: Session = Depends(get_db)):
+async def sync_local_sessions(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
     body = await request.json()
     results = []
     for session in body.get("sessions") or []:
-        success = _apply_local_session(db, session)
+        success = _apply_local_session(db, user, session)
         results.append({"id": session.get("id"), "success": success})
     return {"results": results}
 
 
 @router.patch("/me/progress/{item_id}")
-async def update_progress(item_id: str, request: Request, db: Session = Depends(get_db)):
+async def update_progress(
+    item_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
     body = await request.json()
     book = _get_book(db, item_id)
     current_time = body.get("currentTime")
@@ -204,6 +232,7 @@ async def update_progress(item_id: str, request: Request, db: Session = Depends(
             current_time = float(body["progress"]) * effective_duration
     apply_progress(
         db,
+        user,
         book,
         current_time=current_time,
         duration=duration,

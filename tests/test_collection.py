@@ -5,7 +5,7 @@ import pytest
 import respx
 
 from app.clients.hardcover import API_URL
-from app.models import AppState, Author, Book, DownloadState, ReadState, Release, Series
+from app.models import AppState, Author, Book, DownloadState, Release, Series, UserBook
 from app.services.collection import (
     entry_for,
     import_entry,
@@ -19,7 +19,7 @@ from tests.test_sync import me_response
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -44,7 +44,6 @@ def book(clean_db):
         author=author,
         series=series,
         series_index=1.0,
-        read_state=ReadState.READ,
     )
     clean_db.add(book)
     clean_db.commit()
@@ -227,8 +226,7 @@ def test_import_one_via_route(client, clean_db, dirs, book):
 
 def test_import_all_via_route(client, clean_db, dirs, book):
     author2 = Author(hardcover_id=501, name="Andy Weir")
-    book2 = Book(hardcover_id=700, title="Project Hail Mary", author=author2,
-                 read_state=ReadState.READ)
+    book2 = Book(hardcover_id=700, title="Project Hail Mary", author=author2)
     clean_db.add(book2)
     clean_db.commit()
     put(dirs, "The Mayor of Noobtown")
@@ -289,8 +287,7 @@ def test_match_search_returns_local_options(client, clean_db, dirs, book):
 
 
 @respx.mock
-def test_add_match_adds_from_hardcover(client, clean_db, dirs, test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings, "hardcover_token", "token")
+def test_add_match_adds_from_hardcover(client, clean_db, dirs):
     put(dirs, "Brand New Book")
     respx.post(API_URL).side_effect = [
         httpx.Response(200, json={"data": {"insert_user_book": {"id": 42, "error": None}}}),

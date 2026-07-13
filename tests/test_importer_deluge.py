@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.clients.download_client import DownloadClientError, TorrentStatus
-from app.models import AppState, Author, Book, DownloadState, ReadState, Release, Series
+from app.models import AppState, Author, Book, DownloadState, Release, Series, UserBook
 from app.services import downloads, importer
 from app.services.importer import scan_downloads_once
 
@@ -17,7 +17,7 @@ TORRENT_NAME = "The Mayor of Noobtown - Ryan Rimmel [M4B]"
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -46,7 +46,6 @@ def book(clean_db):
         hardcover_id=646489,
         title="The Mayor of Noobtown",
         author=author,
-        read_state=ReadState.WANT_TO_READ,
         download_state=DownloadState.GRABBED,
     )
     clean_db.add(book)

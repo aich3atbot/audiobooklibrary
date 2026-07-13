@@ -27,7 +27,7 @@
 
 <h3>Hardcover sync</h3>
 <p><small>
-    {% if last_sync %}Last sync: {{ last_sync[:16].replace('T', ' ') }} UTC — {{ last_sync_result }}{% else %}Not synced yet.{% endif %}
+    {% if last_sync %}Last sync: {{ last_sync.strftime("%Y-%m-%d %H:%M") }} UTC — {{ last_sync_result }}{% else %}Not synced yet.{% endif %}
 </small></p>
 <form method="post" action="/sync">
     <button type="submit">Sync now</button>

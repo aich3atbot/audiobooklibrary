@@ -9,7 +9,6 @@ from app.models import (
     Book,
     DownloadState,
     MediaProgress,
-    ReadState,
     Release,
     Series,
 )
@@ -45,7 +44,6 @@ def imported_book(clean_db, test_settings):
         hardcover_id=1000,
         title="Test Book",
         author=author,
-        read_state=ReadState.READ,
         download_state=DownloadState.IMPORTED,
         library_path=str(lib),
     )

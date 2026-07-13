@@ -9,16 +9,16 @@ from app.models import (
     Book,
     DownloadState,
     MediaProgress,
-    ReadState,
     Release,
     Series,
+    UserBook,
 )
 from tests.test_audio_meta import write_mp3
 
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (AudioFile, MediaProgress, Release, Book, Author, Series, AppState):
+    for model in (UserBook, AudioFile, MediaProgress, Release, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -54,7 +54,7 @@ def library(clean_db, test_settings):
     (mayor_dir / "cover.jpg").write_bytes(b"cover-bytes")
     mayor = Book(
         hardcover_id=646489, title="The Mayor of Noobtown", author=rimmel,
-        series=noobtown, series_index=1.0, read_state=ReadState.READ,
+        series=noobtown, series_index=1.0,
         download_state=DownloadState.IMPORTED, library_path=str(mayor_dir),
         cover_url="https://assets.hardcover.app/mayor.jpg",
     )
@@ -63,13 +63,12 @@ def library(clean_db, test_settings):
     write_mp3(hail_dir / "Project Hail Mary.mp3", frames=200)
     hail = Book(
         hardcover_id=700, title="Project Hail Mary", author=weir,
-        read_state=ReadState.WANT_TO_READ, download_state=DownloadState.IMPORTED,
+        download_state=DownloadState.IMPORTED,
         library_path=str(hail_dir), cover_url="https://assets.hardcover.app/phm.jpg",
     )
 
     unimported = Book(
         hardcover_id=800, title="Not Downloaded", author=weir,
-        read_state=ReadState.WANT_TO_READ,
     )
 
     clean_db.add_all([mayor, hail, unimported])

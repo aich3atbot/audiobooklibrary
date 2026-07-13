@@ -4,7 +4,8 @@ import respx
 
 from app.abs.playback_routes import open_sessions
 from app.clients.hardcover import API_URL
-from app.models import MediaProgress, ReadState
+from app.models import MediaProgress, ReadState, UserBook
+from tests.conftest import make_user_book
 from tests.test_abs_catalogue import clean_db, get, library, token  # noqa: F401
 
 
@@ -122,9 +123,7 @@ def test_session_sync_updates_progress(client, token, library):
 
 
 @respx.mock
-def test_session_sync_finish_marks_hardcover_read(client, token, library,
-                                                  test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings, "hardcover_token", "hc-token")
+def test_session_sync_finish_marks_hardcover_read(client, token, library, user):
     route = respx.post(API_URL).mock(
         return_value=httpx.Response(
             200, json={"data": {"update_user_book": {"id": 42, "error": None}}}
@@ -132,9 +131,8 @@ def test_session_sync_finish_marks_hardcover_read(client, token, library,
     )
     db = library["db"]
     book = library["mayor"]
-    book.read_state = ReadState.READING
-    book.hardcover_user_book_id = 42
-    db.commit()
+    shelf = make_user_book(db, user, book,
+                           read_state=ReadState.READING, hardcover_user_book_id=42)
     session_id = play(client, token, f"li_{book.id}").json()["id"]
 
     response = post(client, token, f"/api/session/{session_id}/sync",
@@ -145,8 +143,8 @@ def test_session_sync_finish_marks_hardcover_read(client, token, library,
     progress = db.query(MediaProgress).filter_by(book_id=book.id).one()
     assert progress.is_finished is True
     assert progress.finished_at is not None
-    db.refresh(book)
-    assert book.read_state == ReadState.READ
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.READ
     assert route.call_count == 1
     assert b"update_user_book" in route.calls[0].request.content
 
@@ -194,9 +192,7 @@ def test_local_all_sessions(client, token, library):
     assert body["results"][1]["success"] is False
 
 
-def test_patch_progress_finished_and_unfinished(client, token, library,
-                                                test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings, "hardcover_token", "")  # no push in this test
+def test_patch_progress_finished_and_unfinished(client, token, library, tokenless_user):
     db = library["db"]
     item_id = f"li_{library['hail'].id}"
 
@@ -206,8 +202,9 @@ def test_patch_progress_finished_and_unfinished(client, token, library,
     db.expire_all()
     progress = db.query(MediaProgress).filter_by(book_id=library["hail"].id).one()
     assert progress.is_finished is True
-    db.refresh(library["hail"])
-    assert library["hail"].read_state == ReadState.READ
+    shelf = db.query(UserBook).filter_by(
+        user_id=tokenless_user.id, book_id=library["hail"].id).one()
+    assert shelf.read_state == ReadState.READ
 
     response = client.patch(f"/api/me/progress/{item_id}", json={"isFinished": False},
                             headers={"Authorization": f"Bearer {token}"})

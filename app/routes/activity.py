@@ -32,7 +32,10 @@ def activity(request: Request, db: Session = Depends(get_db)):
             db.scalars(
                 select(Release)
                 .where(Release.status.in_(statuses))
-                .options(joinedload(Release.book).joinedload(Book.author))
+                .options(
+                    joinedload(Release.book).joinedload(Book.author),
+                    joinedload(Release.user),
+                )
                 .order_by(Release.grabbed_at.desc())
             )
             .unique()

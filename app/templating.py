@@ -2,6 +2,8 @@ from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
+from app.models import display_status
+
 
 def human_size(n: int | float | None) -> str:
     if not n:
@@ -16,3 +18,4 @@ def human_size(n: int | float | None) -> str:
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters["human_size"] = human_size
+templates.env.globals["display_status"] = display_status
