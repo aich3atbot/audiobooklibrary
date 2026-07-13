@@ -163,12 +163,18 @@ def sync_from_hardcover(session: Session, client: HardcoverClient, user: User) -
     return {"created": added, "updated": updated, "total": len(entries)}
 
 
-def _set_state(session: Session, key: str, value: str) -> None:
+def set_state(session: Session, key: str, value: str) -> None:
     row = session.get(AppState, key)
     if row is None:
         session.add(AppState(key=key, value=value))
     else:
         row.value = value
+
+
+def delete_state(session: Session, key: str) -> None:
+    row = session.get(AppState, key)
+    if row is not None:
+        session.delete(row)
 
 
 def get_state(session: Session, key: str) -> str | None:

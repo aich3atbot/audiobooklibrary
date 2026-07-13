@@ -111,9 +111,11 @@ m4b/m4a/mp3/flac/ogg all play natively in the apps.
 
 Mount your current audiobook collection at `/imports` and open the **Imports** page. The
 app scans it recursively (any folder directly containing audio files is one book;
-`CD1`/`Disc 2` folders are grouped; loose `.m4b` files count individually), suggests a
-matching book from your Hardcover library with a confidence badge, and lets you amend any
-match — including searching Hardcover and adding the book to your shelf on the spot.
+`CD1`/`Disc 2` folders are grouped; loose `.m4b` files count individually), identifies
+each entry by searching Hardcover (author/series/title from the folder names) with a
+confidence badge, and lets you amend any match via library or Hardcover search.
 Import rows one at a time, bulk-select, or import everything matched. Confirmed books are
 **moved** out of `/imports` into the organized `/audiobooks` layout, and emptied folders
-are cleaned up behind them.
+are cleaned up behind them. Imported books belong to no one until users' own Hardcover
+libraries claim them: anyone who has the book on Hardcover sees it appear automatically,
+and everyone else finds it as *available* in search.

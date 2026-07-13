@@ -51,6 +51,26 @@ query UserBookByBook($bookId: Int!) {{
 }}
 """
 
+# The inner `book` shape again, via the public books root query — verified
+# live 2026-07. Used to import books nobody has shelved.
+BOOK_BY_ID_QUERY = """
+query BookById($id: Int!) {
+  books(where: {id: {_eq: $id}}) {
+    id
+    title
+    cached_image
+    contributions {
+      author { id name }
+    }
+    book_series {
+      position
+      featured
+      series { id name }
+    }
+  }
+}
+"""
+
 # search results is raw Typesense JSON (jsonb), not typed GraphQL fields
 SEARCH_QUERY = """
 query Search($query: String!, $perPage: Int!, $page: Int!) {
@@ -171,6 +191,13 @@ class HardcoverClient:
         users = data.get("me") or []
         entries = users[0]["user_books"] if users else []
         return entries[0] if entries else None
+
+    def fetch_book(self, book_id: int) -> dict[str, Any] | None:
+        """Fetch one book's metadata (no shelf entry required), in the same
+        inner `book` shape as fetch_user_books entries. None if unknown."""
+        data = self.execute(BOOK_BY_ID_QUERY, {"id": book_id})
+        books = data.get("books") or []
+        return books[0] if books else None
 
     def search_books(
         self, query: str, per_page: int = 25, page: int = 1

@@ -286,22 +286,27 @@ library. Complements (does not change) the automatic /downloads pipeline.
   entry (so `Author/Series/Book/` layouts work). Multi-disc folders (children named like
   `CD1`, `Disc 2`, `Part 3`) are grouped as a single entry. Loose audio files at a scanned
   level are single-file entries. Entry = relative path + audio file count + total size.
-- **Matcher**: scores entries against local (Hardcover-synced) books using normalized
-  name similarity of the entry folder (with parent folders as author/series hints) vs
-  title / author+title. High-confidence matches are pre-selected; low-confidence ones are
-  suggestions; below threshold the entry is unmatched. Books already imported
-  (`library_path` set) are excluded from matching.
-- **Amend**: each row's match can be changed — pick from local-library search, or search
-  Hardcover and add-with-state (per-book state dropdown, defaulting to *read*), which
-  shelves the book and syncs its metadata, then matches it.
+- **Identification**: each entry is identified by **searching Hardcover** (query built
+  from the entry name with parent folders as author/series hints), scoring the results
+  with normalized name similarity vs title / author+title / series+index+title forms.
+  High-confidence matches are pre-selected; low-confidence ones are suggestions; below
+  threshold the entry is unmatched. Identification runs with the requesting user's token
+  (public book search — any account works) and is cached per entry in the app_state table
+  (`imports_match:{rel}`), with a per-row "Re-identify" button to bust the cache.
+- **Amend**: each row's match can be changed — pick from local-library search (unimported
+  tracked books) or from a Hardcover search. Choosing a match only stores it; **nothing is
+  shelved on Hardcover from the Imports page**.
 - **Import**: per-row button, bulk-select, or import-all-matched. Import always **moves**
-  (regardless of IMPORT_MODE, which remains download-pipeline-only): files go to the
-  standard `Author/Series/{index} - Title/` path, the source folder is removed from
-  /imports, and now-empty parent folders are cleaned up. Book becomes
-  `download_state=imported` with `library_path` set. Destination-exists and other failures
-  are reported per row; nothing is guessed.
-- **Safety**: import paths are validated to stay inside IMPORTS_DIR; a book that already
-  has a `library_path` can't be the target of an import.
+  (regardless of IMPORT_MODE, which remains download-pipeline-only): the Book row is
+  created from Hardcover metadata if nobody tracks it yet (**ownerless** — no user_book),
+  files go to the standard `Author/Series/{index} - Title/` path, the source folder is
+  removed from /imports, and now-empty parent folders are cleaned up. Book becomes
+  `download_state=imported` with `library_path` set. Users who have the book in their
+  Hardcover library pick it up automatically — a successful batch kicks a background
+  all-user sync; everyone else sees it as *available* in search. Destination-exists and
+  other failures are reported per row; nothing is guessed.
+- **Safety**: import paths are validated to stay inside IMPORTS_DIR; a book that is
+  already available (`library_path` set) can't be the target of an import.
 
 ## Audiobookshelf-compatible API
 
@@ -406,7 +411,7 @@ Milestones (commit each; the app stays runnable throughout):
 3. ✅ **Per-user data pivot** — `user_book`, `user_id` columns, per-user sync loop, UI rework
    (library/search/downloads), drop the global `HARDCOVER_TOKEN`.
 4. ✅ **ABS per-user** — progress/bookmarks/sessions filtered by the authenticated user.
-5. **Imports rework + delete-user orphan review.**
+5. ✅ **Imports rework + delete-user orphan review.**
 6. **Squash migrations + final docs pass.**
 
 ## Future work (out of scope for this build)

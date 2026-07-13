@@ -51,8 +51,11 @@ it read on Hardcover via `update_read_state`.
 - **Import mode**: default is hardlink-or-copy (seeding torrents keep their files);
   `IMPORT_MODE=move` opts into relocating. Do not change the default back to move.
 - **Collection import** (`/imports` volume, Imports page): hard-coded path, no env var
-  (`Settings.imports_dir` exists only for tests). Always MOVES files (draining /imports is
-  the point) regardless of IMPORT_MODE, which applies to the download pipeline only.
+  (`Settings.imports_dir` exists only for tests). Entries are identified by **searching
+  Hardcover** (folder-name heuristics; cached in app_state per entry), never by shelving —
+  imported books are **ownerless** until each user's own sync attaches their shelf entry.
+  Always MOVES files (draining /imports is the point) regardless of IMPORT_MODE, which
+  applies to the download pipeline only. A successful batch kicks a background all-user sync.
 - **Read state**: per user (`user_book` rows over shared `book` metadata), two-way sync with
   each user's own Hardcover token, but **Hardcover is the source of truth** — push local
   changes first, then pull; Hardcover wins conflicts. Book identity is anchored on the

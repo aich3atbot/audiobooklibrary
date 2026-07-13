@@ -5,22 +5,31 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.auth import ADMIN_USERNAME, require_admin
 from app.db import get_db
 from app.models import User
 from app.passwords import hash_password
+from app.services.users import delete_user as delete_user_service
+from app.services.users import review_orphans
 from app.templating import templates
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 
-def _users_page(request: Request, db: Session, error: str | None = None, status_code: int = 200):
+def _users_page(
+    request: Request,
+    db: Session,
+    error: str | None = None,
+    status_code: int = 200,
+    report=None,
+):
     users = db.scalars(select(User).order_by(User.username)).all()
     return templates.TemplateResponse(
         request,
         "admin_users.html",
-        {"users": users, "error": error},
+        {"users": users, "error": error, "report": report},
         status_code=status_code,
     )
 
@@ -107,11 +116,28 @@ def change_token(
     return RedirectResponse(url="/admin/users", status_code=303)
 
 
-@router.post("/users/{user_id}/delete")
-def delete_user(user_id: int, db: Session = Depends(get_db)):
-    # Simple delete for now; the orphan-book review flow arrives with the
-    # per-user library pivot (books can't be user-owned yet).
+@router.get("/users/{user_id}/delete", response_class=HTMLResponse)
+def delete_user_review(request: Request, user_id: int, db: Session = Depends(get_db)):
+    """Review page: books only this user has, with a per-book choice of
+    delete-from-disk or leave-in-place before the account is removed."""
     user = _get_user(db, user_id)
-    db.delete(user)
-    db.commit()
-    return RedirectResponse(url="/admin/users", status_code=303)
+    review = review_orphans(db, user)
+    return templates.TemplateResponse(
+        request,
+        "admin_delete_user.html",
+        {"user": user, "review": review},
+    )
+
+
+@router.post("/users/{user_id}/delete")
+async def delete_user(request: Request, user_id: int, db: Session = Depends(get_db)):
+    user = _get_user(db, user_id)
+    form = await request.form()
+    delete_disk_ids = {
+        int(name.removeprefix("disk_"))
+        for name, value in form.multi_items()
+        if name.startswith("disk_") and value == "delete"
+    }
+    # file IO can be slow (large audiobooks): keep it off the event loop
+    report = await run_in_threadpool(delete_user_service, db, user, delete_disk_ids)
+    return _users_page(request, db, report=report)

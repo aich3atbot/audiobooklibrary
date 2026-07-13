@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import select
 
-from app.models import User
+from app.models import DownloadState, User
 from tests.conftest import cheap_password_hash
 
 
@@ -141,10 +141,9 @@ def test_change_token(admin_client, other_user, db_session):
 
 def test_delete_user(admin_client, other_user, db_session):
     user_id = other_user.id
-    response = admin_client.post(
-        f"/admin/users/{user_id}/delete", follow_redirects=False
-    )
-    assert response.status_code == 303
+    response = admin_client.post(f"/admin/users/{user_id}/delete")
+    assert response.status_code == 200
+    assert f"Deleted user <strong>{other_user.username}</strong>" in response.text
     db_session.expire_all()
     assert db_session.get(User, user_id) is None
 
@@ -152,3 +151,112 @@ def test_delete_user(admin_client, other_user, db_session):
 def test_actions_on_missing_user_404(admin_client):
     assert admin_client.post("/admin/users/99999/disable").status_code == 404
     assert admin_client.post("/admin/users/99999/delete").status_code == 404
+    assert admin_client.get("/admin/users/99999/delete").status_code == 404
+
+
+# --- delete-user orphan review ----------------------------------------------
+
+
+@pytest.fixture
+def orphan_library(db_session, other_user, user, test_settings):
+    """other_user's library: one on-disk book only they have, one on-disk
+    book shared with the default user, one metadata-only orphan."""
+    import shutil
+
+    from app.models import AudioFile, Author, Book, MediaProgress, Release, UserBook
+    from tests.conftest import make_user_book
+
+    for model in (UserBook, AudioFile, MediaProgress, Release, Book, Author):
+        db_session.query(model).delete()
+    db_session.commit()
+
+    lib = test_settings.library_dir
+    if lib.exists():
+        shutil.rmtree(lib)
+
+    author = Author(hardcover_id=500, name="Ryan Rimmel")
+
+    solo_dir = lib / "Ryan Rimmel" / "Solo Book"
+    solo_dir.mkdir(parents=True)
+    (solo_dir / "book.m4b").write_bytes(b"audio")
+    solo = Book(hardcover_id=1, title="Solo Book", author=author,
+                download_state=DownloadState.IMPORTED, library_path=str(solo_dir))
+
+    shared_dir = lib / "Ryan Rimmel" / "Shared Book"
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "book.m4b").write_bytes(b"audio")
+    shared = Book(hardcover_id=2, title="Shared Book", author=author,
+                  download_state=DownloadState.IMPORTED, library_path=str(shared_dir))
+
+    meta_only = Book(hardcover_id=3, title="Metadata Only", author=author)
+
+    db_session.add_all([solo, shared, meta_only])
+    db_session.commit()
+    make_user_book(db_session, other_user, solo)
+    make_user_book(db_session, other_user, shared)
+    make_user_book(db_session, other_user, meta_only)
+    make_user_book(db_session, user, shared)  # shared with the default user
+    return {"solo": solo, "shared": shared, "meta_only": meta_only,
+            "solo_dir": solo_dir, "shared_dir": shared_dir}
+
+
+def test_delete_review_lists_only_orphans(admin_client, other_user, orphan_library):
+    page = admin_client.get(f"/admin/users/{other_user.id}/delete")
+    assert page.status_code == 200
+    assert "Solo Book" in page.text
+    assert "Shared Book" not in page.text  # another user has it
+    assert "1 tracked book(s) without files" in page.text
+
+
+def test_delete_user_removes_chosen_books_from_disk(
+    admin_client, other_user, orphan_library, db_session
+):
+    from app.models import Book
+
+    solo_id = orphan_library["solo"].id
+    other_id = other_user.id
+    response = admin_client.post(
+        f"/admin/users/{other_id}/delete",
+        data={f"disk_{solo_id}": "delete"},
+    )
+    assert response.status_code == 200
+    assert "1 book(s) deleted from disk" in response.text
+    assert not orphan_library["solo_dir"].exists()
+    db_session.expire_all()
+    assert db_session.get(User, other_id) is None
+    assert db_session.get(Book, solo_id) is None
+    # metadata-only orphan removed too; shared book untouched
+    assert db_session.query(Book).filter_by(hardcover_id=3).count() == 0
+    assert orphan_library["shared_dir"].exists()
+    assert db_session.query(Book).filter_by(hardcover_id=2).count() == 1
+
+
+def test_delete_user_leaves_books_in_place_by_default(
+    admin_client, other_user, orphan_library, db_session, client
+):
+    from app.models import Book
+
+    other_id = other_user.id
+    response = admin_client.post(f"/admin/users/{other_id}/delete", data={})
+    assert response.status_code == 200
+    assert "1 left in place" in response.text
+    assert orphan_library["solo_dir"].exists()
+    db_session.expire_all()
+    assert db_session.get(User, other_id) is None
+    # the book survives as ownerless "available"
+    solo = db_session.query(Book).filter_by(hardcover_id=1).one()
+    assert solo.library_path is not None
+    assert solo.user_books == []
+
+
+def test_delete_review_warns_about_other_users_progress(
+    admin_client, other_user, user, orphan_library, db_session
+):
+    from app.models import MediaProgress
+
+    db_session.add(MediaProgress(user_id=user.id, book_id=orphan_library["solo"].id,
+                                 current_time=10.0, duration=100.0))
+    db_session.commit()
+
+    page = admin_client.get(f"/admin/users/{other_user.id}/delete")
+    assert "others have progress" in page.text

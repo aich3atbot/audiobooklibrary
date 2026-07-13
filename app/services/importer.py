@@ -57,6 +57,14 @@ def normalize(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
 
 
+def cleanup_empty_parents(path: Path, root: Path) -> None:
+    """Remove now-empty directories from path up to (excluding) root."""
+    current = path
+    while current != root and current.is_dir() and not any(current.iterdir()):
+        current.rmdir()
+        current = current.parent
+
+
 def library_dir_for(book: Book) -> Path:
     settings = get_settings()
     parts = [sanitize(book.author.name)]

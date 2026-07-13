@@ -1,20 +1,21 @@
+import json
 import shutil
 
 import httpx
 import pytest
 import respx
 
-from app.clients.hardcover import API_URL
+from app.clients.hardcover import API_URL, HardcoverClient
 from app.models import AppState, Author, Book, DownloadState, Release, Series, UserBook
 from app.services.collection import (
     entry_for,
+    hardcover_query,
+    identify_entry,
     import_entry,
     scan_imports,
-    score_match,
+    score_result,
 )
 from app.services.importer import ImportFailure
-from tests.test_sync import entry as hc_entry
-from tests.test_sync import me_response
 
 
 @pytest.fixture
@@ -50,12 +51,97 @@ def book(clean_db):
     return book
 
 
+@pytest.fixture(autouse=True)
+def no_background_sync(monkeypatch):
+    """Imports kick a background all-user sync; keep it out of tests."""
+    kicks = []
+    monkeypatch.setattr("app.routes.imports._schedule_sync_all", lambda: kicks.append(1))
+    return kicks
+
+
 def put(dirs, rel, files=("part1.mp3", "part2.mp3")):
     folder = dirs.imports_dir / rel
     folder.mkdir(parents=True, exist_ok=True)
     for f in files:
         (folder / f).write_bytes(b"x" * 10)
     return folder
+
+
+MAYOR_DOC = {
+    "hardcover_id": 646489,
+    "title": "The Mayor of Noobtown",
+    "authors": ["Ryan Rimmel"],
+    "series_name": "Noobtown",
+    "series_position": 1.0,
+    "cover_url": None,
+    "release_year": 2019,
+    "has_audiobook": True,
+    "users_count": 10,
+}
+
+
+def typesense_doc(parsed):
+    """Turn a parsed-result dict back into the raw search document shape."""
+    return {
+        "id": str(parsed["hardcover_id"]),
+        "title": parsed["title"],
+        "author_names": parsed["authors"],
+        "contribution_types": ["Author"] * len(parsed["authors"]),
+        "contributions": [
+            {"author": {"id": 1, "name": name}} for name in parsed["authors"]
+        ],
+        "featured_series": (
+            {"position": parsed["series_position"], "series": {"id": 2, "name": parsed["series_name"]}}
+            if parsed.get("series_name")
+            else None
+        ),
+        "image": {"url": parsed.get("cover_url")},
+        "release_year": parsed.get("release_year"),
+        "has_audiobook": parsed.get("has_audiobook", False),
+        "users_count": parsed.get("users_count", 0),
+    }
+
+
+def search_response(parsed_docs):
+    hits = [{"document": typesense_doc(d)} for d in parsed_docs]
+    return httpx.Response(
+        200,
+        json={"data": {"search": {"results": {"found": len(hits), "hits": hits}}}},
+    )
+
+
+def book_response(hardcover_id, title, author=("Ryan Rimmel", 500), series=None):
+    doc = {
+        "id": hardcover_id,
+        "title": title,
+        "cached_image": None,
+        "contributions": [{"author": {"id": author[1], "name": author[0]}}],
+        "book_series": (
+            [{"position": series[2], "featured": True,
+              "series": {"id": series[1], "name": series[0]}}]
+            if series
+            else []
+        ),
+    }
+    return httpx.Response(200, json={"data": {"books": [doc]}})
+
+
+def hardcover_dispatch(search_docs, books=None):
+    """Answer search queries with search_docs and books-by-id from books."""
+    books = books or {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        query = json.loads(request.content)["query"]
+        if "search(" in query:
+            return search_response(search_docs)
+        if "books(" in query:
+            book_id = json.loads(request.content)["variables"]["id"]
+            if book_id in books:
+                return books[book_id]
+            return httpx.Response(200, json={"data": {"books": []}})
+        raise AssertionError(f"unexpected Hardcover query: {query[:80]}")
+
+    return respx.post(API_URL).mock(side_effect=handle)
 
 
 # --- scanner ---------------------------------------------------------------
@@ -114,28 +200,60 @@ def test_entry_for_rejects_traversal(dirs):
     assert entry_for("Gone") is None
 
 
-# --- matcher ---------------------------------------------------------------
+# --- identification --------------------------------------------------------
 
 
-def test_score_match_exact_title(dirs, book):
+def test_hardcover_query_uses_parent_folders_without_duplicates(dirs):
+    put(dirs, "Ryan Rimmel/Noobtown/01 - The Mayor of Noobtown")
+    entry = scan_imports()[0]
+    assert hardcover_query(entry) == "ryan rimmel noobtown 01 the mayor of"
+
+
+def test_score_result_exact_title(dirs):
     put(dirs, "The Mayor of Noobtown")
     entry = scan_imports()[0]
-    assert score_match(entry, book) > 0.9
+    assert score_result(entry, MAYOR_DOC) > 0.9
 
 
-def test_score_match_with_noise_and_author_path(dirs, book):
+def test_score_result_with_noise_and_author_path(dirs):
     put(dirs, "Ryan Rimmel/Noobtown/01 - The Mayor of Noobtown [M4B 64kbps]")
     entry = scan_imports()[0]
-    assert score_match(entry, book) >= 0.75
+    assert score_result(entry, MAYOR_DOC) >= 0.75
 
 
-def test_score_match_unrelated_is_low(dirs, book):
+def test_score_result_unrelated_is_low(dirs):
     put(dirs, "A Completely Different Story by Nobody")
     entry = scan_imports()[0]
-    assert score_match(entry, book) < 0.5
+    assert score_result(entry, MAYOR_DOC) < 0.5
 
 
-# --- import ----------------------------------------------------------------
+@respx.mock
+def test_identify_entry_picks_best_result(dirs):
+    put(dirs, "The Mayor of Noobtown")
+    other = dict(MAYOR_DOC, hardcover_id=111, title="Completely Unrelated Novel")
+    hardcover_dispatch([other, MAYOR_DOC])
+    entry = scan_imports()[0]
+
+    with HardcoverClient("token") as client:
+        match = identify_entry(client, entry)
+
+    assert match["hardcover_id"] == 646489
+    assert match["title"] == "The Mayor of Noobtown"
+    assert match["author"] == "Ryan Rimmel"
+    assert match["score"] > 0.9
+
+
+@respx.mock
+def test_identify_entry_below_threshold_is_none(dirs):
+    put(dirs, "Zzz Qqq Xxx")
+    hardcover_dispatch([MAYOR_DOC])
+    entry = scan_imports()[0]
+
+    with HardcoverClient("token") as client:
+        assert identify_entry(client, entry) is None
+
+
+# --- import service ---------------------------------------------------------
 
 
 def test_import_entry_moves_folder_and_cleans_up(clean_db, dirs, book):
@@ -187,26 +305,68 @@ def test_import_entry_rejects_already_imported_book(clean_db, dirs, book):
 # --- routes ----------------------------------------------------------------
 
 
-def test_imports_page_matches_book(client, clean_db, dirs, book):
-    put(dirs, "Ryan Rimmel/Noobtown/01 - The Mayor of Noobtown")
+@respx.mock
+def test_imports_page_identifies_and_caches(client, clean_db, dirs):
+    put(dirs, "The Mayor of Noobtown")
+    route = hardcover_dispatch([MAYOR_DOC])
 
     response = client.get("/imports")
 
     assert response.status_code == 200
     assert "The Mayor of Noobtown" in response.text
+    assert "Ryan Rimmel" in response.text
     assert "match" in response.text
-    assert "Import all matched" in response.text
+    first_calls = route.call_count
+    assert first_calls >= 1
+
+    # identification is cached: a rescan doesn't re-hit Hardcover
+    response = client.get("/imports")
+    assert response.status_code == 200
+    assert route.call_count == first_calls
 
 
-def test_imports_page_unmatched(client, clean_db, dirs, book):
-    put(dirs, "Nothing Like Anything")
+@respx.mock
+def test_imports_page_unmatched(client, clean_db, dirs):
+    put(dirs, "Nothing Like Anything At All")
+    hardcover_dispatch([])
 
     response = client.get("/imports")
 
     assert "No match" in response.text
 
 
-def test_import_one_via_route(client, clean_db, dirs, book):
+@respx.mock
+def test_import_via_route_creates_ownerless_book(client, clean_db, dirs):
+    """Importing a book nobody tracks pulls its metadata from Hardcover and
+    creates a Book with no shelf membership and no Hardcover mutations."""
+    put(dirs, "The Mayor of Noobtown")
+    route = hardcover_dispatch(
+        [MAYOR_DOC],
+        books={646489: book_response(
+            646489, "The Mayor of Noobtown", series=("Noobtown", 300, 1.0))},
+    )
+
+    response = client.post(
+        "/imports/import",
+        data={
+            "mode": "one",
+            "rel": "The Mayor of Noobtown",
+            "hc__The Mayor of Noobtown": "646489",
+        },
+    )
+
+    assert response.status_code == 200
+    created = clean_db.query(Book).filter_by(hardcover_id=646489).one()
+    assert created.download_state == DownloadState.IMPORTED
+    assert created.library_path is not None
+    assert created.series.name == "Noobtown"
+    # ownerless: no shelf memberships, and no shelving mutation was sent
+    assert clean_db.query(UserBook).count() == 0
+    for call in route.calls:
+        assert b"insert_user_book" not in call.request.content
+
+
+def test_import_one_via_route_existing_book(client, clean_db, dirs, book):
     put(dirs, "The Mayor of Noobtown")
 
     response = client.post(
@@ -214,7 +374,7 @@ def test_import_one_via_route(client, clean_db, dirs, book):
         data={
             "mode": "one",
             "rel": "The Mayor of Noobtown",
-            "book__The Mayor of Noobtown": str(book.id),
+            "hc__The Mayor of Noobtown": str(book.hardcover_id),
         },
     )
 
@@ -224,7 +384,7 @@ def test_import_one_via_route(client, clean_db, dirs, book):
     assert "nothing to review" in response.text
 
 
-def test_import_all_via_route(client, clean_db, dirs, book):
+def test_import_all_via_route(client, clean_db, dirs, book, no_background_sync):
     author2 = Author(hardcover_id=501, name="Andy Weir")
     book2 = Book(hardcover_id=700, title="Project Hail Mary", author=author2)
     clean_db.add(book2)
@@ -236,14 +396,17 @@ def test_import_all_via_route(client, clean_db, dirs, book):
         "/imports/import",
         data={
             "mode": "all",
-            "book__The Mayor of Noobtown": str(book.id),
-            "book__Project Hail Mary": str(book2.id),
+            "hc__The Mayor of Noobtown": str(book.hardcover_id),
+            "hc__Project Hail Mary": str(book2.hardcover_id),
         },
     )
 
     assert response.status_code == 200
     assert "nothing to review" in response.text
     assert (dirs.library_dir / "Andy Weir" / "Project Hail Mary").is_dir()
+    # a successful import kicks the background sync so users who have the
+    # book on Hardcover pick it up immediately
+    assert no_background_sync
 
 
 def test_import_error_reported_in_row(client, clean_db, dirs, book):
@@ -256,11 +419,11 @@ def test_import_error_reported_in_row(client, clean_db, dirs, book):
         data={
             "mode": "one",
             "rel": "The Mayor of Noobtown",
-            "book__The Mayor of Noobtown": str(book.id),
+            "hc__The Mayor of Noobtown": str(book.hardcover_id),
         },
     )
 
-    assert "already in the library" in response.text
+    assert "already available" in response.text
     assert (dirs.imports_dir / "The Mayor of Noobtown").exists()
 
 
@@ -276,6 +439,43 @@ def test_set_match_renders_manual_row(client, clean_db, dirs, book):
     assert "The Mayor of Noobtown" in response.text
 
 
+def test_set_hardcover_match_caches_choice(client, clean_db, dirs):
+    put(dirs, "Oddly Named Thing")
+
+    response = client.post(
+        "/imports/set-hardcover-match",
+        data={
+            "rel": "Oddly Named Thing",
+            "hardcover_id": "9000",
+            "title": "Brand New Book",
+            "author": "Somebody New",
+            "series_name": "",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Brand New Book" in response.text
+    assert "manual" in response.text
+    cached = clean_db.get(AppState, "imports_match:Oddly Named Thing")
+    assert cached is not None
+    assert '"hardcover_id": 9000' in cached.value
+
+
+@respx.mock
+def test_reidentify_busts_cache(client, clean_db, dirs):
+    put(dirs, "The Mayor of Noobtown")
+    clean_db.add(AppState(key="imports_match:The Mayor of Noobtown", value="null"))
+    clean_db.commit()
+    hardcover_dispatch([MAYOR_DOC])
+
+    response = client.post(
+        "/imports/reidentify", data={"rel": "The Mayor of Noobtown"}
+    )
+
+    assert response.status_code == 200
+    assert "Ryan Rimmel" in response.text
+
+
 def test_match_search_returns_local_options(client, clean_db, dirs, book):
     put(dirs, "Something")
 
@@ -284,22 +484,3 @@ def test_match_search_returns_local_options(client, clean_db, dirs, book):
     assert "set-match" in response.text
     assert "The Mayor of Noobtown" in response.text
     assert "Search Hardcover" in response.text
-
-
-@respx.mock
-def test_add_match_adds_from_hardcover(client, clean_db, dirs):
-    put(dirs, "Brand New Book")
-    respx.post(API_URL).side_effect = [
-        httpx.Response(200, json={"data": {"insert_user_book": {"id": 42, "error": None}}}),
-        me_response([hc_entry(ub_id=42, status_id=3, book_id=9000, title="Brand New Book")]),
-    ]
-
-    response = client.post(
-        "/imports/add-match",
-        data={"rel": "Brand New Book", "hardcover_id": "9000", "state": "read"},
-    )
-
-    assert response.status_code == 200
-    assert "Brand New Book" in response.text
-    assert "manual" in response.text
-    assert clean_db.query(Book).filter_by(hardcover_id=9000).count() == 1

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Delete {{ user.username }} — Audiobook Library{% endblock %}
+
+{% block content %}
+<h2>Delete user “{{ user.username }}”</h2>
+
+<form method="post" action="/admin/users/{{ user.id }}/delete">
+    {% if review.on_disk %}
+    <p>These audiobooks are in the library and belong only to
+       <strong>{{ user.username }}</strong>. Choose what happens to each:</p>
+    <table>
+        <thead>
+            <tr><th>Book</th><th>Path</th><th>Keep files</th><th>Delete from disk</th></tr>
+        </thead>
+        <tbody>
+            {% for book in review.on_disk %}
+            <tr>
+                <td>
+                    {{ book.title }}<br><small>{{ book.author.name }}</small>
+                    {% if book.id in review.others_progress %}
+                    <br><span class="badge badge-pending"
+                          title="Another user has listening progress on this book; deleting the files destroys their resume point">
+                        others have progress</span>
+                    {% endif %}
+                </td>
+                <td><small>{{ book.library_path }}</small></td>
+                <td><input type="radio" name="disk_{{ book.id }}" value="keep" checked
+                           aria-label="Leave {{ book.title }} in place"></td>
+                <td><input type="radio" name="disk_{{ book.id }}" value="delete"
+                           aria-label="Delete {{ book.title }} from disk"></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p><small>Books left in place stay <em>available</em>: anyone can find them by
+       searching, and users who have them on Hardcover keep them in their library.</small></p>
+    {% else %}
+    <p>No audiobooks on disk belong only to this user.</p>
+    {% endif %}
+
+    {% if review.downloading %}
+    <p>Currently downloading (the download will finish and the book stays available):</p>
+    <ul>
+        {% for book in review.downloading %}<li>{{ book.title }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if review.metadata_only %}
+    <p>{{ review.metadata_only | length }} tracked book(s) without files belong only to this
+       user and will be removed with the account.</p>
+    {% endif %}
+
+    <p>Deleting the account also removes the user’s read states, listening progress, and
+       bookmarks. This cannot be undone.</p>
+
+    <div class="grid">
+        <button type="submit" class="secondary"
+                onclick="return confirm('Delete user {{ user.username }}? This cannot be undone.');">
+            Delete user
+        </button>
+        <a href="/admin/users" role="button" class="outline">Cancel</a>
+    </div>
+</form>
+{% endblock %}

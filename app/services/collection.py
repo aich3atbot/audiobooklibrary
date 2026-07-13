@@ -1,30 +1,47 @@
 """Collection import: scan the /imports volume for existing audiobooks,
-match them against library books, and move confirmed matches into the
-library. Complements (does not touch) the automatic /downloads pipeline.
+identify each one by searching Hardcover (author/series/title heuristics
+from the folder names), and move confirmed entries into the library.
+
+Imported books are ownerless: no Hardcover shelving happens here. Users who
+have the book in their Hardcover library pick it up automatically on their
+next sync (per-user sync attaches their shelf entry to the shared Book row);
+everyone else sees it as "available" when they search for it.
 
 Unlike download imports, collection imports always MOVE: the point is to
 drain /imports into /audiobooks."""
 
 import hashlib
+import json
 import logging
 import re
 import shutil
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from app.clients.hardcover import HardcoverClient
 from app.config import get_settings
 from app.models import Book, DownloadState
-from app.services.importer import AUDIO_EXTS, ImportFailure, library_dir_for, normalize
+from app.services.importer import (
+    AUDIO_EXTS,
+    ImportFailure,
+    cleanup_empty_parents,
+    library_dir_for,
+    normalize,
+)
+from app.services.sync import _load_caches, delete_state, get_state, set_state, upsert_book_metadata
 
 logger = logging.getLogger(__name__)
 
 DISC_RE = re.compile(r"^(cd|disc|disk|part)[\s._-]*\d+$", re.IGNORECASE)
 HIGH_CONFIDENCE = 0.75
 MIN_CONFIDENCE = 0.5
+MATCH_CACHE_PREFIX = "imports_match:"
+SEARCH_RESULTS = 5
 
 
 @dataclass
@@ -106,33 +123,33 @@ def entry_for(rel: str) -> ImportEntry | None:
     return _make_entry(root, path)
 
 
-def candidate_books(session: Session) -> list[Book]:
-    """Books eligible for matching: not already in the library folder."""
-    return (
-        session.scalars(
-            select(Book)
-            .where(Book.library_path.is_(None))
-            .options(joinedload(Book.author), joinedload(Book.series))
-        )
-        .unique()
-        .all()
-    )
-
-
 def _format_index(index: float) -> str:
     return str(int(index)) if index == int(index) else str(index)
 
 
-def score_match(entry: ImportEntry, book: Book) -> float:
+def hardcover_query(entry: ImportEntry) -> str:
+    """A search string from the entry name with its parent folders as
+    author/series hints, duplicate words collapsed."""
+    tokens: list[str] = []
+    for part in (*Path(entry.rel).parts[:-1], entry.name):
+        for token in normalize(part).split():
+            if token not in tokens:
+                tokens.append(token)
+    return " ".join(tokens)
+
+
+def score_result(entry: ImportEntry, result: dict[str, Any]) -> float:
     """Similarity between an entry (folder name, with parent folders as
-    author/series hints) and a book (title / author+title / series forms)."""
+    author/series hints) and a Hardcover search result."""
     name = normalize(entry.name)
     full = normalize(entry.rel.replace("/", " "))
-    targets = [normalize(book.title), normalize(f"{book.author.name} {book.title}")]
-    if book.series is not None and book.series_index is not None:
-        idx = _format_index(book.series_index)
-        targets.append(normalize(f"{idx} {book.title}"))
-        targets.append(normalize(f"{book.series.name} {idx} {book.title}"))
+    title = result["title"]
+    author = (result.get("authors") or [""])[0]
+    targets = [normalize(title), normalize(f"{author} {title}")]
+    if result.get("series_name") and result.get("series_position") is not None:
+        idx = _format_index(result["series_position"])
+        targets.append(normalize(f"{idx} {title}"))
+        targets.append(normalize(f"{result['series_name']} {idx} {title}"))
 
     scores = [
         SequenceMatcher(None, cand, target).ratio()
@@ -142,29 +159,73 @@ def score_match(entry: ImportEntry, book: Book) -> float:
     ]
     # all title tokens present in the path is a strong signal even when the
     # folder carries extra noise like bitrate tags
-    title_tokens = set(normalize(book.title).split())
+    title_tokens = set(normalize(title).split())
     if title_tokens and title_tokens <= set(full.split()):
         scores.append(0.9)
     return max(scores, default=0.0)
 
 
-def best_matches(session: Session, entries: list[ImportEntry]) -> list[dict]:
-    """For each entry: {entry, book, score} with book None below threshold."""
-    books = candidate_books(session)
-    results = []
-    for entry in entries:
-        best_book, best_score = None, 0.0
-        for book in books:
-            score = score_match(entry, book)
-            if score > best_score:
-                best_book, best_score = book, score
-        if best_score < MIN_CONFIDENCE:
-            best_book = None
-        results.append({"entry": entry, "book": best_book, "score": best_score})
-    return results
+def match_from_result(result: dict[str, Any], score: float | None) -> dict[str, Any]:
+    return {
+        "hardcover_id": result["hardcover_id"],
+        "title": result["title"],
+        "author": (result.get("authors") or [""])[0],
+        "series_name": result.get("series_name"),
+        "series_position": result.get("series_position"),
+        "score": score,
+    }
+
+
+def match_from_book(book: Book) -> dict[str, Any]:
+    return {
+        "hardcover_id": book.hardcover_id,
+        "title": book.title,
+        "author": book.author.name,
+        "series_name": book.series.name if book.series else None,
+        "series_position": book.series_index,
+        "score": None,  # manual
+    }
+
+
+def identify_entry(client: HardcoverClient, entry: ImportEntry) -> dict[str, Any] | None:
+    """Identify an entry by searching Hardcover; best-scoring result, or None
+    below the confidence threshold."""
+    results = client.search_books(hardcover_query(entry), per_page=SEARCH_RESULTS)
+    if not results:
+        results = client.search_books(normalize(entry.name), per_page=SEARCH_RESULTS)
+    best, best_score = None, 0.0
+    for result in results:
+        score = score_result(entry, result)
+        if score > best_score:
+            best, best_score = result, score
+    if best is None or best_score < MIN_CONFIDENCE:
+        return None
+    return match_from_result(best, best_score)
+
+
+def cached_match(session: Session, entry: ImportEntry) -> dict[str, Any] | None:
+    raw = get_state(session, MATCH_CACHE_PREFIX + entry.rel)
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
+
+
+def cache_match(session: Session, rel: str, match: dict[str, Any] | None) -> None:
+    set_state(session, MATCH_CACHE_PREFIX + rel, json.dumps(match))
+    session.commit()
+
+
+def clear_cached_match(session: Session, rel: str) -> None:
+    delete_state(session, MATCH_CACHE_PREFIX + rel)
+    session.commit()
 
 
 def find_local_matches(session: Session, query: str, limit: int = 5) -> list[Book]:
+    """Local, not-yet-imported books matching a search — lets the user match
+    an entry to a book someone already tracks."""
     like = f"%{query.strip()}%"
     from app.models import Author  # local import to avoid cycles at module load
 
@@ -183,11 +244,18 @@ def find_local_matches(session: Session, query: str, limit: int = 5) -> list[Boo
     )
 
 
-def _cleanup_empty_parents(path: Path, root: Path) -> None:
-    current = path
-    while current != root and current.is_dir() and not any(current.iterdir()):
-        current.rmdir()
-        current = current.parent
+def ensure_book(session: Session, client: HardcoverClient, hardcover_id: int) -> Book:
+    """The local Book row for a Hardcover book, creating it from Hardcover
+    metadata if nobody tracks it yet. No shelf membership is created."""
+    book = session.scalar(select(Book).where(Book.hardcover_id == hardcover_id))
+    if book is not None:
+        return book
+    data = client.fetch_book(hardcover_id)
+    if data is None:
+        raise ImportFailure(f"Hardcover book {hardcover_id} not found")
+    book = upsert_book_metadata(session, data, _load_caches(session))
+    session.commit()
+    return book
 
 
 def import_entry(session: Session, book: Book, entry: ImportEntry) -> Path:
@@ -205,7 +273,7 @@ def import_entry(session: Session, book: Book, entry: ImportEntry) -> Path:
         if dest.exists():
             dest.rmdir()  # empty leftover; shutil.move must create it
         shutil.move(str(entry.path), str(dest))
-    _cleanup_empty_parents(entry.path.parent, get_settings().imports_dir)
+    cleanup_empty_parents(entry.path.parent, get_settings().imports_dir)
 
     book.download_state = DownloadState.IMPORTED
     book.library_path = str(dest)

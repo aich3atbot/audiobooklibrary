@@ -1,10 +1,10 @@
 <tr id="row-{{ m.entry.row_id }}">
     <td>
         <input type="checkbox" name="sel" value="{{ m.entry.rel }}"
-               {% if not m.book %}disabled{% endif %}>
+               {% if not m.match %}disabled{% endif %}>
         <input type="hidden" name="rel" value="{{ m.entry.rel }}">
-        <input type="hidden" name="book__{{ m.entry.rel }}"
-               value="{{ m.book.id if m.book else '' }}">
+        <input type="hidden" name="hc__{{ m.entry.rel }}"
+               value="{{ m.match.hardcover_id if m.match else '' }}">
     </td>
     <td>
         <code>{{ m.entry.rel }}</code>
@@ -13,28 +13,33 @@
     <td>{{ m.entry.audio_files }}</td>
     <td>{{ m.entry.size | human_size }}</td>
     <td class="match-cell">
-        {% if m.book %}
-        <strong>{{ m.book.title }}</strong> — {{ m.book.author.name }}
-        {% if m.book.series %}<br><small>{{ m.book.series.name }}{% if m.book.series_index is not none %} #{{ m.book.series_index | int if m.book.series_index == m.book.series_index | int else m.book.series_index }}{% endif %}</small>{% endif %}
-        {% if m.confidence == "high" %}<span class="badge badge-ok">match {{ (m.score * 100) | int }}%</span>
-        {% elif m.confidence == "low" %}<span class="badge badge-pending">low match {{ (m.score * 100) | int }}%</span>
+        {% if m.match %}
+        <strong>{{ m.match.title }}</strong>{% if m.match.author %} — {{ m.match.author }}{% endif %}
+        {% if m.match.series_name %}<br><small>{{ m.match.series_name }}{% if m.match.series_position is not none %} #{{ m.match.series_position | int if m.match.series_position == m.match.series_position | int else m.match.series_position }}{% endif %}</small>{% endif %}
+        {% if m.confidence == "high" %}<span class="badge badge-ok">match {{ (m.match.score * 100) | int }}%</span>
+        {% elif m.confidence == "low" %}<span class="badge badge-pending">low match {{ (m.match.score * 100) | int }}%</span>
         {% elif m.confidence == "manual" %}<span class="badge">manual</span>{% endif %}
+        {% if m.book and m.book.library_path %}<span class="badge badge-dl-available" title="Already in the shared audiobook store">available</span>{% endif %}
         {% else %}
         <em>No match</em>
         {% endif %}
         <details>
             <summary>Change…</summary>
-            <input type="search" placeholder="Search library"
+            <input type="search" placeholder="Search library or Hardcover"
                    hx-get="/imports/search" hx-trigger="keyup changed delay:300ms"
                    hx-target="#opts-{{ m.entry.row_id }}" name="q"
                    hx-vals='{"rel": {{ m.entry.rel | tojson }}}'>
             <div id="opts-{{ m.entry.row_id }}"></div>
+            <form hx-post="/imports/reidentify" hx-target="closest tr" hx-swap="outerHTML">
+                <input type="hidden" name="rel" value="{{ m.entry.rel }}">
+                <button type="submit" class="secondary outline">Re-identify via Hardcover</button>
+            </form>
         </details>
     </td>
     <td>
         <button hx-post="/imports/import" hx-vals='{"mode": "one"}'
                 hx-include="closest tr" hx-target="#imports-table" hx-swap="outerHTML"
-                {% if not m.book %}disabled{% endif %}>
+                {% if not m.match or (m.book and m.book.library_path) %}disabled{% endif %}>
             Import
         </button>
     </td>

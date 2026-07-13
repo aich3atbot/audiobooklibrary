@@ -4,6 +4,18 @@
 {% block content %}
 <h2>Users</h2>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if report %}
+<article>
+    <p>Deleted user <strong>{{ report.username }}</strong>:
+       {{ report.deleted_from_disk | length }} book(s) deleted from disk,
+       {{ report.left_in_place }} left in place,
+       {{ report.removed_metadata }} metadata-only removed.</p>
+    {% if report.deleted_from_disk %}
+    <ul>{% for title in report.deleted_from_disk %}<li>{{ title }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% for e in report.errors %}<p class="error">{{ e }}</p>{% endfor %}
+</article>
+{% endif %}
 
 <table>
     <thead>
@@ -34,10 +46,8 @@
                     <button type="submit" class="outline">Enable</button>
                 </form>
                 {% endif %}
-                <form method="post" action="/admin/users/{{ user.id }}/delete"
-                      onsubmit="return confirm('Delete user {{ user.username }}?');">
-                    <button type="submit" class="secondary outline">Delete</button>
-                </form>
+                <a href="/admin/users/{{ user.id }}/delete" role="button"
+                   class="secondary outline">Delete…</a>
             </td>
         </tr>
         <tr class="user-edit">
