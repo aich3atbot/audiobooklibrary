@@ -30,6 +30,17 @@ Planning complete; no code yet. Implementation follows the milestones in plan.md
 - **Config via env vars** only: `HARDCOVER_TOKEN`, `PROWLARR_URL`, `PROWLARR_API_KEY`,
   `DOWNLOAD_DIR`, `LIBRARY_DIR`, `CONFIG_DIR`, `SYNC_INTERVAL_MINUTES`.
 
+## Sandbox environment
+
+Agents work on this project inside a Docker sandbox (`audiobooklibrary-sbx`) with a
+default-deny network policy. Blocked HTTP requests return a 403 with a
+`Blocked by network policy` body — that means the sandbox policy, not the remote service,
+is the problem. When a needed service (e.g. `api.hardcover.app`, the local Prowlarr) is
+unreachable, **prompt the user to allow it** with `sbx policy allow network <domain>` on
+the host, then retest. The host's Prowlarr runs at `http://host.docker.internal:9696`
+from inside the sandbox (policy entry: `localhost:9696`), never as `localhost`. Both
+`api.hardcover.app` and Prowlarr are confirmed reachable with the current policy.
+
 ## External API gotchas
 
 - **Hardcover** (`https://api.hardcover.app/v1/graphql`, bearer token): the API is beta and
