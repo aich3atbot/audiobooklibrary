@@ -211,4 +211,8 @@ def import_entry(session: Session, book: Book, entry: ImportEntry) -> Path:
     book.library_path = str(dest)
     session.commit()
     logger.info("Collection import: %s -> %s", entry.rel, dest)
+
+    from app.services.importer import _scan_audio  # deferred: import cycle
+
+    _scan_audio(session, book)
     return dest

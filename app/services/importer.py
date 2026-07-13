@@ -146,7 +146,18 @@ def import_release(session: Session, release: Release, source: Path) -> bool:
     book.library_path = str(dest)
     session.commit()
     logger.info("Imported %s -> %s", release.title, dest)
+    _scan_audio(session, book)
     return True
+
+
+def _scan_audio(session: Session, book) -> None:
+    """Audio metadata scan (for the ABS API); never fails the import."""
+    from app.services.audio_meta import scan_book_audio  # deferred: import cycle
+
+    try:
+        scan_book_audio(session, book)
+    except Exception:
+        logger.exception("Audio metadata scan failed for %s", book.title)
 
 
 def scan_downloads_once() -> dict[str, int]:

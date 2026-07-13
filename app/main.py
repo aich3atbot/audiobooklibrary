@@ -11,6 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.abs import routes as abs_routes
 from app.auth import RequireAuthMiddleware, resolve_session_secret
 from app.routes import activity, auth, downloads, imports, search, settings, ui
+from app.services.audio_meta import audio_backfill_task
 from app.services.importer import download_watch_loop
 from app.services.sync import hardcover_sync_loop
 
@@ -22,6 +23,7 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(hardcover_sync_loop()),
         asyncio.create_task(download_watch_loop()),
+        asyncio.create_task(audio_backfill_task()),
     ]
     yield
     for task in tasks:

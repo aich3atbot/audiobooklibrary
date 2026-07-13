@@ -92,6 +92,12 @@ class Book(Base):
     author: Mapped[Author] = relationship(back_populates="books")
     series: Mapped[Series | None] = relationship(back_populates="books")
     releases: Mapped[list["Release"]] = relationship(back_populates="book")
+    audio_files: Mapped[list["AudioFile"]] = relationship(
+        back_populates="book", order_by="AudioFile.index", cascade="all, delete-orphan"
+    )
+    media_progress: Mapped["MediaProgress | None"] = relationship(
+        back_populates="book", cascade="all, delete-orphan"
+    )
 
 
 class Release(Base):
@@ -110,6 +116,45 @@ class Release(Base):
     error: Mapped[str | None] = mapped_column(Text)
 
     book: Mapped[Book] = relationship(back_populates="releases")
+
+
+class AudioFile(Base):
+    """An audio track of an imported book, for the ABS-compatible API.
+    Populated by scanning library_path with mutagen."""
+
+    __tablename__ = "audio_file"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), index=True)
+    index: Mapped[int] = mapped_column(Integer)  # 1-based track order
+    rel_path: Mapped[str] = mapped_column(Text)  # relative to book.library_path
+    size: Mapped[int] = mapped_column(Integer)
+    mtime_ms: Mapped[int] = mapped_column(Integer)
+    duration: Mapped[float | None] = mapped_column(Float)  # seconds
+    mime_type: Mapped[str] = mapped_column(String(50))
+    # JSON [{id, start, end, title}] in seconds; usually only on m4b
+    chapters_json: Mapped[str | None] = mapped_column(Text)
+
+    book: Mapped[Book] = relationship(back_populates="audio_files")
+
+
+class MediaProgress(Base):
+    """Single-user listening progress per book (ABS clients sync this)."""
+
+    __tablename__ = "media_progress"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), unique=True, index=True)
+    current_time: Mapped[float] = mapped_column(Float, default=0.0)
+    duration: Mapped[float] = mapped_column(Float, default=0.0)
+    is_finished: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    book: Mapped[Book] = relationship(back_populates="media_progress")
 
 
 class AppState(Base):
