@@ -43,6 +43,7 @@ Volumes:
 | `/config` | SQLite database |
 | `/downloads` | Your download client's completed-downloads directory |
 | `/audiobooks` | The organized audiobook library (point Audiobookshelf here) |
+| `/imports` | Optional: staging area for an existing collection (see below) |
 
 By default imports **hardlink or copy** files so seeding torrents are left intact; set
 `IMPORT_MODE=move` to relocate them instead. All settings are environment variables — see
@@ -76,3 +77,14 @@ External APIs are mocked in tests (respx); no tokens are needed to run them.
 4. Anything that can't be matched or imported shows up on the **Activity** page with retry,
    manual-import (point it at a folder name in `/downloads`), and cancel actions — the app
    never guesses.
+
+## Importing an existing collection
+
+Mount your current audiobook collection at `/imports` and open the **Imports** page. The
+app scans it recursively (any folder directly containing audio files is one book;
+`CD1`/`Disc 2` folders are grouped; loose `.m4b` files count individually), suggests a
+matching book from your Hardcover library with a confidence badge, and lets you amend any
+match — including searching Hardcover and adding the book to your shelf on the spot.
+Import rows one at a time, bulk-select, or import everything matched. Confirmed books are
+**moved** out of `/imports` into the organized `/audiobooks` layout, and emptied folders
+are cleaned up behind them.

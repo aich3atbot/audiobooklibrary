@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Imports — Audiobook Library{% endblock %}
+
+{% block content %}
+<h2>Imports</h2>
+{% if not available %}
+<p>No <code>/imports</code> volume is mounted. Add one to bring an existing audiobook
+collection into the library:</p>
+<pre>    volumes:
+      - /path/to/existing/collection:/imports</pre>
+<p>Books you confirm here are <strong>moved</strong> out of <code>/imports</code> into the
+organized library.</p>
+{% else %}
+{% include "_imports_table.html" %}
+{% endif %}
+{% endblock %}

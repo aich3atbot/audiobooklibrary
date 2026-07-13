@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.auth import RequireAuthMiddleware, resolve_session_secret
-from app.routes import activity, auth, downloads, search, settings, ui
+from app.routes import activity, auth, downloads, imports, search, settings, ui
 from app.services.importer import download_watch_loop
 from app.services.sync import hardcover_sync_loop
 
@@ -46,6 +46,7 @@ app.include_router(downloads.router)
 app.include_router(activity.router)
 app.include_router(settings.router)
 app.include_router(auth.router)
+app.include_router(imports.router)
 
 
 @app.get("/healthz")

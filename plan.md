@@ -190,6 +190,35 @@ Each milestone ended in a working, verified state (one commit per milestone).
 - Client tests against recorded/mocked HTTP (respx) for Hardcover and Prowlarr.
 - An importer integration test using tmp dirs with fake download layouts (single m4b, multi-file mp3, nested folders).
 
+## Collection import (/imports)
+
+A staging volume + review UI for bringing an *existing* audiobook collection into the
+library. Complements (does not change) the automatic /downloads pipeline.
+
+- **Volume**: optional, hard-coded `/imports` (no env var — the app always runs in Docker;
+  the internal setting exists only so tests can redirect it). The Imports page explains how
+  to mount it when the directory is missing.
+- **Scanner**: recursive; any folder that *directly* contains audio files is one audiobook
+  entry (so `Author/Series/Book/` layouts work). Multi-disc folders (children named like
+  `CD1`, `Disc 2`, `Part 3`) are grouped as a single entry. Loose audio files at a scanned
+  level are single-file entries. Entry = relative path + audio file count + total size.
+- **Matcher**: scores entries against local (Hardcover-synced) books using normalized
+  name similarity of the entry folder (with parent folders as author/series hints) vs
+  title / author+title. High-confidence matches are pre-selected; low-confidence ones are
+  suggestions; below threshold the entry is unmatched. Books already imported
+  (`library_path` set) are excluded from matching.
+- **Amend**: each row's match can be changed — pick from local-library search, or search
+  Hardcover and add-with-state (per-book state dropdown, defaulting to *read*), which
+  shelves the book and syncs its metadata, then matches it.
+- **Import**: per-row button, bulk-select, or import-all-matched. Import always **moves**
+  (regardless of IMPORT_MODE, which remains download-pipeline-only): files go to the
+  standard `Author/Series/{index} - Title/` path, the source folder is removed from
+  /imports, and now-empty parent folders are cleaned up. Book becomes
+  `download_state=imported` with `library_path` set. Destination-exists and other failures
+  are reported per row; nothing is guessed.
+- **Safety**: import paths are validated to stay inside IMPORTS_DIR; a book that already
+  has a `library_path` can't be the target of an import.
+
 ## Future work (out of scope for this build)
 
 - Public REST API: list books, download audio files, update reading state — designed to serve

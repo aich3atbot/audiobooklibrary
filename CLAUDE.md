@@ -27,6 +27,9 @@ APIs are mocked with respx). Future work (public REST API, mobile app) is listed
   no series. Sanitize filesystem-unsafe characters.
 - **Import mode**: default is hardlink-or-copy (seeding torrents keep their files);
   `IMPORT_MODE=move` opts into relocating. Do not change the default back to move.
+- **Collection import** (`/imports` volume, Imports page): hard-coded path, no env var
+  (`Settings.imports_dir` exists only for tests). Always MOVES files (draining /imports is
+  the point) regardless of IMPORT_MODE, which applies to the download pipeline only.
 - **Read state**: two-way sync, but **Hardcover is the source of truth** — push local changes
   first, then pull; Hardcover wins conflicts. Book identity is anchored on the Hardcover
   *book* id (editions collapsed).

@@ -1,0 +1,17 @@
+{% if error %}<p><small class="error">{{ error }}</small></p>{% endif %}
+{% for r in results %}
+<form hx-post="/imports/add-match" hx-target="closest tr" hx-swap="outerHTML" class="hc-option">
+    <input type="hidden" name="rel" value="{{ rel }}">
+    <input type="hidden" name="hardcover_id" value="{{ r.hardcover_id }}">
+    <select name="state" aria-label="Read state">
+        <option value="read" selected>Read</option>
+        <option value="reading">Reading</option>
+        <option value="want_to_read">Want to read</option>
+    </select>
+    <button type="submit" class="secondary">
+        Add &amp; match: {{ r.title }} — {{ r.authors | join(", ") }}{% if r.release_year %} ({{ r.release_year }}){% endif %}
+    </button>
+</form>
+{% else %}
+{% if not error %}<p><small>No Hardcover results.</small></p>{% endif %}
+{% endfor %}

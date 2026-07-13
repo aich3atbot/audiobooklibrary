@@ -20,4 +20,7 @@ services:
       # Must be the same directory your download client writes completed downloads to
       - ./downloads:/downloads
       - ./audiobooks:/audiobooks
+      # Optional: staging area for an existing collection, reviewed and
+      # imported (moved) via the Imports page
+      # - ./imports:/imports
     restart: unless-stopped

@@ -1,0 +1,19 @@
+<div class="match-options">
+    {% for b in books %}
+    <form hx-post="/imports/set-match" hx-target="closest tr" hx-swap="outerHTML">
+        <input type="hidden" name="rel" value="{{ rel }}">
+        <input type="hidden" name="book_id" value="{{ b.id }}">
+        <button type="submit" class="secondary outline">
+            {{ b.title }} — {{ b.author.name }}{% if b.series %} ({{ b.series.name }}){% endif %}
+        </button>
+    </form>
+    {% endfor %}
+    {% if q %}
+    {% if not books %}<p><small>No library matches for “{{ q }}”.</small></p>{% endif %}
+    <form hx-get="/imports/hardcover" hx-target="closest .match-options" hx-swap="innerHTML">
+        <input type="hidden" name="rel" value="{{ rel }}">
+        <input type="hidden" name="q" value="{{ q }}">
+        <button type="submit" class="secondary">Search Hardcover for “{{ q }}”…</button>
+    </form>
+    {% endif %}
+</div>

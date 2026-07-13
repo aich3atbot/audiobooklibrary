@@ -1,0 +1,29 @@
+<div id="imports-table">
+{% if rows %}
+<div class="imports-actions">
+    <button hx-post="/imports/import" hx-vals='{"mode": "selected"}'
+            hx-include="#imports-table" hx-target="#imports-table" hx-swap="outerHTML">
+        Import selected
+    </button>
+    <button hx-post="/imports/import" hx-vals='{"mode": "all"}'
+            hx-include="#imports-table" hx-target="#imports-table" hx-swap="outerHTML"
+            class="secondary">
+        Import all matched
+    </button>
+    <a href="/imports" role="button" class="secondary outline">Rescan</a>
+</div>
+<table class="imports-list">
+    <thead>
+        <tr><th></th><th>Folder</th><th>Audio</th><th>Size</th><th>Match</th><th></th></tr>
+    </thead>
+    <tbody>
+        {% for m in rows %}
+        {% include "_import_row.html" %}
+        {% endfor %}
+    </tbody>
+</table>
+<p><small>Importing <strong>moves</strong> the files out of /imports into the library.</small></p>
+{% else %}
+<p><code>/imports</code> is empty — nothing to review. <a href="/imports">Rescan</a></p>
+{% endif %}
+</div>

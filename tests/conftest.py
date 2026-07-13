@@ -14,6 +14,7 @@ def test_settings(tmp_path_factory):
     os.environ["CONFIG_DIR"] = str(root / "config")
     os.environ["DOWNLOAD_DIR"] = str(root / "downloads")
     os.environ["LIBRARY_DIR"] = str(root / "audiobooks")
+    os.environ["IMPORTS_DIR"] = str(root / "imports")
 
     from app.config import get_settings
     from app.db import get_engine, get_sessionmaker

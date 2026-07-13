@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     download_dir: Path = Path("/downloads")
     library_dir: Path = Path("/audiobooks")
     config_dir: Path = Path("/config")
+    # Hard-coded volume path (undocumented setting; overridden only by tests).
+    imports_dir: Path = Path("/imports")
     sync_interval_minutes: int = 30
     watch_interval_seconds: int = 30
     # A download is considered finished when nothing in it changed for this long.

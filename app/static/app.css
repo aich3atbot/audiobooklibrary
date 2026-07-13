@@ -97,6 +97,55 @@
     margin: 0;
 }
 
+.imports-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.imports-actions button, .imports-actions a {
+    font-size: 0.85rem;
+    padding: 0.3rem 0.8rem;
+    margin: 0;
+    width: auto;
+}
+
+.imports-list {
+    font-size: 0.85rem;
+}
+
+.imports-list button {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    margin: 0;
+}
+
+.match-cell details {
+    margin: 0.25rem 0 0;
+}
+
+.match-cell summary {
+    font-size: 0.75rem;
+}
+
+.match-options form, .hc-option {
+    margin: 0.25rem 0;
+}
+
+.hc-option {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.hc-option select {
+    width: auto;
+    margin: 0;
+    font-size: 0.75rem;
+    padding: 0.2rem 1.5rem 0.2rem 0.4rem;
+    height: auto;
+}
+
 .badge-ok { background: #2e7d32; color: white; }
 .badge-err { background: #b71c1c; color: white; }
 
