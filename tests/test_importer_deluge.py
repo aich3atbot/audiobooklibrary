@@ -8,7 +8,7 @@ import pytest
 
 from app.clients.download_client import DownloadClientError, TorrentStatus
 from app.models import AppState, Author, Book, DownloadState, ReadState, Release, Series
-from app.services import importer
+from app.services import downloads, importer
 from app.services.importer import scan_downloads_once
 
 HASH = "ad5fae5ffda056f9f45131045d140326bbafc4dc"
@@ -91,12 +91,18 @@ class FakeClient:
         self.statuses = statuses or {}
         self.error = error
         self.asked_for = None
+        self.removed = []
 
     def get_status(self, info_hashes):
         if self.error:
             raise self.error
         self.asked_for = list(info_hashes)
         return {h: s for h, s in self.statuses.items() if h in info_hashes}
+
+    def remove_torrent(self, info_hash, remove_data=True):
+        if self.error:
+            raise self.error
+        self.removed.append((info_hash, remove_data))
 
     def close(self):
         pass
@@ -110,6 +116,13 @@ class FakeClient:
 
 def use_client(monkeypatch, client):
     monkeypatch.setattr(importer, "get_download_client", lambda *a, **kw: client)
+    return client
+
+
+def use_client_for_cancel(monkeypatch, client):
+    """Cancel goes through app.services.downloads, which holds its own
+    reference to the factory."""
+    monkeypatch.setattr(downloads, "get_download_client", lambda *a, **kw: client)
     return client
 
 
@@ -249,6 +262,54 @@ def test_release_without_an_info_hash_never_asks_the_client(
     assert client.asked_for is None  # no hashes to ask about
     assert counts["imported"] == 1
     assert release.status == "imported"
+
+
+def test_cancel_removes_the_torrent_and_its_data(
+    client, clean_db, deluge_configured, book, release, monkeypatch
+):
+    fake = use_client_for_cancel(monkeypatch, FakeClient())
+
+    response = client.post(f"/releases/{release.id}/cancel", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert fake.removed == [(HASH, True)]  # data deleted, seeding ended
+    clean_db.refresh(release)
+    clean_db.refresh(book)
+    assert release.status == "cancelled"
+    assert release.error is None
+    assert book.download_state == DownloadState.NONE
+
+
+def test_cancel_still_cancels_when_the_client_cannot_be_reached(
+    client, clean_db, deluge_configured, book, release, monkeypatch
+):
+    use_client_for_cancel(monkeypatch, FakeClient(error=DownloadClientError("refused")))
+
+    response = client.post(f"/releases/{release.id}/cancel", follow_redirects=False)
+
+    assert response.status_code == 303
+    clean_db.refresh(release)
+    clean_db.refresh(book)
+    # A download client we can't reach must not trap the release here...
+    assert release.status == "cancelled"
+    assert book.download_state == DownloadState.NONE
+    # ...but we must not pretend the torrent is gone.
+    assert "may still be downloading or seeding" in release.error
+
+
+def test_cancel_without_an_info_hash_touches_no_client(
+    client, clean_db, deluge_configured, book, release, monkeypatch
+):
+    release.info_hash = None  # grabbed before hashes were recorded
+    clean_db.commit()
+    fake = use_client_for_cancel(monkeypatch, FakeClient())
+
+    response = client.post(f"/releases/{release.id}/cancel", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert fake.removed == []
+    clean_db.refresh(release)
+    assert release.status == "cancelled"
 
 
 def test_progress_is_shown_on_the_activity_page(client, clean_db, release):

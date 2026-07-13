@@ -119,6 +119,16 @@ class DelugeClient:
             for info_hash, status in result.items()
         }
 
+    def remove_torrent(self, info_hash: str, remove_data: bool = True) -> None:
+        try:
+            self._call("core.remove_torrent", [info_hash.lower(), remove_data])
+        except DownloadClientError as exc:
+            # Deluge raises InvalidTorrentError for a hash it doesn't have.
+            # We wanted it gone; it is gone.
+            if "invalid" not in str(exc).lower() and "not in session" not in str(exc).lower():
+                raise
+            logger.info("Deluge no longer has torrent %s", info_hash)
+
     def check(self) -> str:
         version = self._call("daemon.get_version", [])
         return f"Deluge daemon {version}"

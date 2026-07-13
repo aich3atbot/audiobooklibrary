@@ -4,7 +4,8 @@ the download client.
 Grabbing is two steps: the indexer resolves the release's details page to a
 magnet link, and the download client (Deluge) adds it. We record the torrent's
 info hash so the watcher can ask the client how the download is going instead
-of guessing from the download directory.
+of guessing from the download directory — and so cancelling can take the
+torrent back out again.
 """
 
 import logging
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.clients.download_client import get_download_client
 from app.clients.indexer import IndexerRelease, get_indexer
+from app.config import get_settings
 from app.models import Book, DownloadState, Release
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,20 @@ def search_releases(book: Book) -> list[IndexerRelease]:
         if not results:
             results = indexer.search(book.title)
     return results
+
+
+def drop_from_client(release: Release) -> None:
+    """Remove a release's torrent and its downloaded data from the client.
+
+    Called when the user cancels: they want the download gone, so it goes —
+    including any seeding of it. Raises if the client can't be reached, so the
+    caller can tell the user the torrent may still be running.
+    """
+    if not release.info_hash or not get_settings().download_url:
+        return
+    with get_download_client() as client:
+        client.remove_torrent(release.info_hash, remove_data=True)
+    logger.info("Removed torrent %s (with data) for %s", release.info_hash, release.title)
 
 
 def grab_release(

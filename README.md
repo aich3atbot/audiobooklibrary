@@ -88,8 +88,10 @@ External APIs are mocked in tests (respx); no tokens are needed to run them.
    manual-import (point it at a folder name in `/downloads`), and cancel actions — the app
    never guesses.
 
-**Cancel** only stops the app tracking a release. It never removes the torrent or its data
-from Deluge, so seeding is never broken behind your back; remove torrents in Deluge itself.
+**Cancel & delete** on the Activity page removes the torrent *and its downloaded files* from
+Deluge — which also ends any seeding of it — and then stops tracking the release. The UI asks
+you to confirm first. If Deluge can't be reached, the release is still cancelled here and the
+app tells you the torrent may still be running so you can remove it yourself.
 
 ## Audiobookshelf apps
 

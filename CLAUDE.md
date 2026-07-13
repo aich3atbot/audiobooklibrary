@@ -40,9 +40,11 @@ Hardcover via `update_read_state`.
   and completion; the old name-matching directory watch is the fallback (null hash, torrent
   gone from the client, client unreachable). Keep both — a client that is down must never
   block an import.
-- **Cancel never touches the torrent client.** There is deliberately no `remove_torrent`:
-  cancelling only stops the app tracking a release, so seeding is never broken. Don't add
-  one without the user asking.
+- **Cancel deletes.** Cancelling a release removes the torrent *and its data* from the
+  download client (`remove_torrent(hash, remove_data=True)`), ending any seeding of it —
+  the user chose this explicitly over preserving seeds. The UI confirms first. If the
+  client can't be reached, cancel still succeeds locally (a dead client must not trap the
+  release) but records on `release.error` that the torrent may still be running.
 - **Library layout**: `Author/Series/{SeriesIndex} - Title/`, or `Author/Title/` when there is
   no series. Sanitize filesystem-unsafe characters.
 - **Import mode**: default is hardlink-or-copy (seeding torrents keep their files);

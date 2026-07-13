@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import get_settings
 from app.db import get_db
 from app.models import Book, DownloadState, Release
+from app.services.downloads import drop_from_client
 from app.services.importer import ACTIVE_STATUSES, import_release
 from app.templating import templates
 
@@ -62,7 +63,23 @@ def activity(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/releases/{release_id}/cancel")
 def cancel_release(release_id: int, db: Session = Depends(get_db)):
+    """Cancel a release: remove its torrent and downloaded data from the
+    download client, and stop tracking it here. This deletes the data and ends
+    any seeding of it — that is the point of cancelling."""
     release = _get_release(db, release_id)
+    try:
+        drop_from_client(release)
+        release.error = None
+    except Exception as exc:
+        # Cancel locally anyway: a download client we can't reach must not
+        # trap the release here forever. But say so — the torrent is probably
+        # still running, and only the user can go remove it.
+        logger.exception("Could not remove torrent for %s", release.title)
+        release.error = (
+            f"Cancelled here, but the torrent could not be removed from the download "
+            f"client ({exc}). It may still be downloading or seeding — remove it there."
+        )
+
     release.status = "cancelled"
     other_active = db.scalar(
         select(Release.id).where(

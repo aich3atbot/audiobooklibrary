@@ -17,8 +17,9 @@
             <td><small>{{ "%.0f%%" | format(r.progress) if r.progress is not none else "—" }}</small></td>
             <td><small>{{ r.grabbed_at.strftime("%Y-%m-%d %H:%M") if r.grabbed_at }}</small></td>
             <td class="actions">
-                <form method="post" action="/releases/{{ r.id }}/cancel">
-                    <button class="secondary" type="submit">Cancel</button>
+                <form method="post" action="/releases/{{ r.id }}/cancel"
+                      onsubmit="return confirm('Cancel this download? The torrent and its downloaded files will be deleted from the download client.')">
+                    <button class="secondary" type="submit">Cancel &amp; delete</button>
                 </form>
                 <details>
                     <summary role="button" class="secondary outline">Manual import…</summary>
@@ -57,8 +58,9 @@
                         <button type="submit">Import</button>
                     </form>
                 </details>
-                <form method="post" action="/releases/{{ r.id }}/cancel">
-                    <button class="secondary" type="submit">Dismiss</button>
+                <form method="post" action="/releases/{{ r.id }}/cancel"
+                      onsubmit="return confirm('Dismiss this release? The torrent and its downloaded files will be deleted from the download client.')">
+                    <button class="secondary" type="submit">Dismiss &amp; delete</button>
                 </form>
             </td>
         </tr>

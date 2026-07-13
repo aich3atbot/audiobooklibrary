@@ -185,6 +185,56 @@ def test_get_status_maps_torrents(deluge):
 
 
 @respx.mock
+def test_remove_torrent_deletes_the_data_too(deluge):
+    route = respx.post(RPC).mock(
+        side_effect=responder(
+            {
+                "auth.login": ok(True),
+                "web.connected": ok(True),
+                "core.remove_torrent": ok(True),
+            }
+        )
+    )
+
+    deluge.remove_torrent(HASH.upper())
+
+    remove = json.loads(route.calls[-1].request.content)
+    assert remove["method"] == "core.remove_torrent"
+    assert remove["params"] == [HASH, True]  # lowercased hash, remove_data=True
+
+
+@respx.mock
+def test_remove_torrent_is_happy_if_deluge_already_lost_it(deluge):
+    respx.post(RPC).mock(
+        side_effect=responder(
+            {
+                "auth.login": ok(True),
+                "web.connected": ok(True),
+                "core.remove_torrent": rpc_error("InvalidTorrentError: unknown torrent"),
+            }
+        )
+    )
+
+    deluge.remove_torrent(HASH)  # the goal state is "gone", and it is gone
+
+
+@respx.mock
+def test_remove_torrent_propagates_real_errors(deluge):
+    respx.post(RPC).mock(
+        side_effect=responder(
+            {
+                "auth.login": ok(True),
+                "web.connected": ok(True),
+                "core.remove_torrent": rpc_error("Permission denied"),
+            }
+        )
+    )
+
+    with pytest.raises(DownloadClientError, match="Permission denied"):
+        deluge.remove_torrent(HASH)
+
+
+@respx.mock
 def test_get_status_without_hashes_makes_no_call(deluge):
     route = respx.post(RPC)
 

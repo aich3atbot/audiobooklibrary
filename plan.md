@@ -22,7 +22,7 @@ finished audiobooks into a clean library folder. Single container, Python, SQLit
 |---|---|
 | Download flow | App searches a **torrent indexer directly** (AudioBookBay), resolves the chosen release to a **magnet**, and adds it to a **torrent client** (Deluge) itself. It then polls the client **by info hash** for progress/completion, and imports from the download directory. Directory name-matching remains the fallback when the client can't answer. |
 | Indexer / client | Both behind small protocols (`Indexer`, `DownloadClient`) so more can be added. Today: AudioBookBay + Deluge. |
-| Cancelling | Cancel stops the app tracking a release; it **never** removes the torrent or its data from the client (seeding is sacred). There is deliberately no `remove_torrent`. |
+| Cancelling | Cancel **removes the torrent and deletes its data** in the client, ending any seeding of it, and stops tracking the release here. Chosen deliberately over preserving seeds. The UI asks for confirmation; if the client is unreachable the release is still cancelled locally, with the failure recorded so the user knows the torrent may still be running. |
 | Library layout | **Audiobookshelf-style**: `Author/Series/{SeriesIndex} - Title/` (no series: `Author/Title/`). |
 | Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
 | Read-state sync | **Two-way**: UI changes push to Hardcover immediately; a periodic sync pulls Hardcover changes down. Hardcover is the source of truth for read state. |
@@ -172,7 +172,8 @@ Verified against Deluge WebUI 2.2.0.
   posted date; click to grab.
 - **Activity page** (`/activity`) — grabbed/downloading/importing items with the torrent
   client's progress percentage, recent imports, failures needing attention (with retry /
-  manual-match actions). Cancel stops tracking only; it never touches the torrent client.
+  manual-match actions). *Cancel & delete* removes the torrent and its data from the client
+  (confirmation prompt first), then stops tracking the release.
 - **Settings page** (`/settings`) — connection status for Hardcover, the indexer and the
   download client, sync interval, paths (read-only display of env config), "Sync now" button.
 
