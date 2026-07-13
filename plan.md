@@ -372,10 +372,11 @@ and Range serving are covered without binary fixtures; endpoint shapes asserted 
 the researched contracts. Final acceptance is the real app on a real device (phase 6),
 which only the user can perform.
 
-## Multi-user conversion (in progress)
+## Multi-user conversion (complete)
 
 Mandatory accounts replace the optional single-user login. Design summary (fresh database
-assumed; the Alembic history gets squashed to a single initial revision at the end):
+assumed; the Alembic history was squashed to a single initial revision — no data
+migration from the single-user schema exists):
 
 - **Accounts**: `user` table (uuid for the ABS userId, unique username, scrypt password
   hash with parameters embedded in the stored string, per-user `hardcover_token`, `enabled`
@@ -412,7 +413,7 @@ Milestones (commit each; the app stays runnable throughout):
    (library/search/downloads), drop the global `HARDCOVER_TOKEN`.
 4. ✅ **ABS per-user** — progress/bookmarks/sessions filtered by the authenticated user.
 5. ✅ **Imports rework + delete-user orphan review.**
-6. **Squash migrations + final docs pass.**
+6. ✅ **Squash migrations + final docs pass.**
 
 ## Future work (out of scope for this build)
 

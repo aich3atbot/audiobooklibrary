@@ -9,12 +9,16 @@ architecture, data model, workflows, and milestones. Keep it updated as decision
 
 ## Current state
 
-All seven plan.md milestones plus auth, collection import (/imports), an
-Audiobookshelf-compatible API, and the direct torrent pipeline (AudioBookBay + Deluge,
-which replaced Prowlarr) are built, tested, and committed. Run `uv run pytest` (all
-external APIs are mocked with respx). Two things await real-world verification: the ABS
-API with the official app (plan.md phase 6), and one real UI grab → download → import
-through the user's own Deluge.
+All seven plan.md milestones plus collection import (/imports), an
+Audiobookshelf-compatible API, the direct torrent pipeline (AudioBookBay + Deluge, which
+replaced Prowlarr), and the **multi-user conversion** (mandatory accounts, virtual admin,
+per-user Hardcover sync and ABS progress over a shared /audiobooks store — see plan.md
+"Multi-user conversion") are built, tested, and committed. The Alembic history was
+squashed to a single initial revision; there is no migration from the old single-user
+schema (fresh database assumed — set ADMIN_PASSWORD and recreate). Run `uv run pytest`
+(all external APIs are mocked with respx). Awaiting real-world verification: the ABS API
+with the official app (per user account), one real UI grab → download → import through
+the user's own Deluge, and the new admin/imports flows in the browser.
 
 ## ABS-compatible API
 
