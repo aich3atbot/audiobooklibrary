@@ -1,0 +1,18 @@
+<article id="book-{{ book.id }}">
+    {% if book.cover_url %}<img src="{{ book.cover_url }}" alt="Cover of {{ book.title }}" loading="lazy">{% endif %}
+    <h4>{{ book.title }}</h4>
+    <p>{{ book.author.name }}</p>
+    {% if book.series %}<p><small>{{ book.series.name }}{% if book.series_index is not none %} #{{ book.series_index | int if book.series_index == book.series_index | int else book.series_index }}{% endif %}</small></p>{% endif %}
+    <select name="state" aria-label="Read state"
+            hx-post="/books/{{ book.id }}/read-state"
+            hx-target="#book-{{ book.id }}" hx-swap="outerHTML">
+        {% for state, label in [("none", "—"), ("want_to_read", "Want to read"), ("reading", "Reading"), ("read", "Read")] %}
+        <option value="{{ state }}" {% if book.read_state.value == state %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+    <p>
+        {% if book.read_at %}<span class="badge">read {{ book.read_at }}</span>{% endif %}
+        {% if book.download_state.value != 'none' %}<span class="badge">{{ book.download_state.value }}</span>{% endif %}
+        {% if book.pending_push %}<span class="badge badge-pending" title="Change not yet confirmed by Hardcover">sync pending</span>{% endif %}
+    </p>
+</article>

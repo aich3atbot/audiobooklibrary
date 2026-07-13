@@ -38,6 +38,25 @@ query UserBooks($limit: Int!, $offset: Int!) {
 """
 
 
+INSERT_USER_BOOK = """
+mutation InsertUserBook($object: UserBookCreateInput!) {
+  insert_user_book(object: $object) { id error }
+}
+"""
+
+UPDATE_USER_BOOK = """
+mutation UpdateUserBook($id: Int!, $object: UserBookUpdateInput!) {
+  update_user_book(id: $id, object: $object) { id error }
+}
+"""
+
+DELETE_USER_BOOK = """
+mutation DeleteUserBook($id: Int!) {
+  delete_user_book(id: $id) { id }
+}
+"""
+
+
 class HardcoverError(RuntimeError):
     pass
 
@@ -72,6 +91,33 @@ class HardcoverClient:
         if payload.get("errors"):
             raise HardcoverError(f"Hardcover query failed: {payload['errors']}")
         return payload["data"]
+
+    def insert_user_book(
+        self, book_id: int, status_id: int, last_read_date: str | None = None
+    ) -> int:
+        """Add a book to the user's Hardcover shelf; returns the user_book id."""
+        obj: dict[str, Any] = {"book_id": book_id, "status_id": status_id}
+        if last_read_date:
+            obj["last_read_date"] = last_read_date
+        data = self.execute(INSERT_USER_BOOK, {"object": obj})
+        result = data["insert_user_book"]
+        if result.get("error"):
+            raise HardcoverError(f"insert_user_book failed: {result['error']}")
+        return result["id"]
+
+    def update_user_book(
+        self, user_book_id: int, status_id: int, last_read_date: str | None = None
+    ) -> None:
+        obj: dict[str, Any] = {"status_id": status_id}
+        if last_read_date:
+            obj["last_read_date"] = last_read_date
+        data = self.execute(UPDATE_USER_BOOK, {"id": user_book_id, "object": obj})
+        result = data["update_user_book"]
+        if result.get("error"):
+            raise HardcoverError(f"update_user_book failed: {result['error']}")
+
+    def delete_user_book(self, user_book_id: int) -> None:
+        self.execute(DELETE_USER_BOOK, {"id": user_book_id})
 
     def fetch_user_books(self) -> list[dict[str, Any]]:
         """Fetch the authenticated user's full library, paginated."""

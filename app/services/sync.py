@@ -29,6 +29,7 @@ STATUS_TO_READ_STATE = {
     2: ReadState.READING,
     3: ReadState.READ,
 }
+READ_STATE_TO_STATUS = {v: k for k, v in STATUS_TO_READ_STATE.items()}
 
 
 def pick_series(book_series: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, float | None]:
@@ -86,8 +87,6 @@ def sync_from_hardcover(session: Session, client: HardcoverClient) -> dict[str, 
                 series.name = series_data["name"]
 
         cached_image = book_data.get("cached_image") or {}
-        read_state = STATUS_TO_READ_STATE.get(entry["status_id"], ReadState.NONE)
-        read_at = parse_read_at(entry)
 
         book = books.get(book_data["id"])
         if book is None:
@@ -103,8 +102,12 @@ def sync_from_hardcover(session: Session, client: HardcoverClient) -> dict[str, 
         book.series = series
         book.series_index = series_index
         book.cover_url = cached_image.get("url")
-        book.read_state = read_state
-        book.read_at = read_at
+        book.hardcover_user_book_id = entry["id"]
+        # A pending local change hasn't reached Hardcover yet; don't clobber
+        # it with the stale remote state (push happens before pull anyway).
+        if not book.pending_push:
+            book.read_state = STATUS_TO_READ_STATE.get(entry["status_id"], ReadState.NONE)
+            book.read_at = parse_read_at(entry)
 
     now = datetime.now(timezone.utc).isoformat()
     result = f"ok: {created} added, {updated} updated"
@@ -128,12 +131,76 @@ def get_state(session: Session, key: str) -> str | None:
     return row.value if row else None
 
 
+def push_book(session: Session, client: HardcoverClient, book: Book) -> None:
+    """Push one book's read state to Hardcover; clears pending_push on success."""
+    if book.read_state == ReadState.NONE:
+        if book.hardcover_user_book_id:
+            client.delete_user_book(book.hardcover_user_book_id)
+            book.hardcover_user_book_id = None
+    else:
+        status_id = READ_STATE_TO_STATUS[book.read_state]
+        last_read = (
+            book.read_at.isoformat()
+            if book.read_at and book.read_state == ReadState.READ
+            else None
+        )
+        if book.hardcover_user_book_id:
+            client.update_user_book(book.hardcover_user_book_id, status_id, last_read)
+        else:
+            book.hardcover_user_book_id = client.insert_user_book(
+                book.hardcover_id, status_id, last_read
+            )
+    book.pending_push = False
+    session.commit()
+
+
+def push_pending(session: Session, client: HardcoverClient) -> int:
+    """Retry unconfirmed local changes; returns how many were pushed."""
+    pending = session.scalars(select(Book).where(Book.pending_push)).all()
+    pushed = 0
+    for book in pending:
+        try:
+            push_book(session, client, book)
+            pushed += 1
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to push read state for book %s", book.hardcover_id)
+    return pushed
+
+
+def update_read_state(session: Session, book: Book, new_state: ReadState) -> Book:
+    """Apply a UI read-state change locally, then try to push it to Hardcover.
+
+    On push failure the book stays pending_push and the sync loop retries."""
+    book.read_state = new_state
+    if new_state == ReadState.READ:
+        book.read_at = book.read_at or date.today()
+    elif new_state == ReadState.NONE:
+        book.read_at = None
+    book.pending_push = True
+    session.commit()
+
+    settings = get_settings()
+    if not settings.hardcover_token:
+        return book
+    try:
+        with HardcoverClient(settings.hardcover_token) as client:
+            push_book(session, client, book)
+    except Exception:
+        session.rollback()
+        logger.exception(
+            "Push to Hardcover failed for book %s; will retry on next sync", book.hardcover_id
+        )
+    return book
+
+
 def run_sync_once() -> dict[str, int]:
-    """Run one pull sync with its own session and client (thread-safe)."""
+    """Run one sync (push pending, then pull) with its own session and client."""
     settings = get_settings()
     with HardcoverClient(settings.hardcover_token) as client:
         with get_sessionmaker()() as session:
             try:
+                push_pending(session, client)
                 return sync_from_hardcover(session, client)
             except Exception as exc:
                 session.rollback()

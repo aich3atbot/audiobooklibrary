@@ -1,7 +1,18 @@
 import enum
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -59,6 +70,11 @@ class Book(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     hardcover_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    # Hardcover's user_book row id; needed to update/delete the shelf entry.
+    hardcover_user_book_id: Mapped[int | None] = mapped_column(Integer)
+    # Local read-state change not yet confirmed by Hardcover; pull sync must
+    # not overwrite read_state/read_at while this is set.
+    pending_push: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     title: Mapped[str] = mapped_column(String(1000))
     author_id: Mapped[int] = mapped_column(ForeignKey("author.id"))
     series_id: Mapped[int | None] = mapped_column(ForeignKey("series.id"))
