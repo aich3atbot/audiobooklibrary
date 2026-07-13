@@ -22,4 +22,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# app.main:asgi = FastAPI wrapped with the socket.io shim for ABS clients
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:asgi --host 0.0.0.0 --port 8000"]

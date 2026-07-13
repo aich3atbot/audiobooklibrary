@@ -55,7 +55,7 @@ By default imports **hardlink or copy** files so seeding torrents are left intac
 uv sync                      # install dependencies
 cp .env.example .env         # then fill in tokens/paths
 uv run alembic upgrade head  # create/migrate the database
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:asgi --reload
 ```
 
 Run tests:

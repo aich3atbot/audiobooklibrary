@@ -9,7 +9,9 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.abs import library_routes as abs_library_routes
+from app.abs import playback_routes as abs_playback_routes
 from app.abs import routes as abs_routes
+from app.abs.socket import wrap_asgi
 from app.auth import RequireAuthMiddleware, resolve_session_secret
 from app.routes import activity, auth, downloads, imports, search, settings, ui
 from app.services.audio_meta import audio_backfill_task
@@ -53,8 +55,13 @@ app.include_router(auth.router)
 app.include_router(imports.router)
 app.include_router(abs_routes.router)
 app.include_router(abs_library_routes.router)
+app.include_router(abs_playback_routes.router)
 
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# socket.io shim for ABS clients wraps the FastAPI app; serve `asgi`.
+asgi = wrap_asgi(app)
