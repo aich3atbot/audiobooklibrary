@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Activity — Audiobook Library{% endblock %}
+
+{% block content %}
+<h2>Activity</h2>
+
+<h3>Active downloads</h3>
+{% if active %}
+<table>
+    <thead><tr><th>Book</th><th>Release</th><th>Status</th><th>Grabbed</th><th></th></tr></thead>
+    <tbody>
+        {% for r in active %}
+        <tr>
+            <td>{{ r.book.title }}<br><small>{{ r.book.author.name }}</small></td>
+            <td><small>{{ r.title }}</small></td>
+            <td><span class="badge">{{ r.status }}</span></td>
+            <td><small>{{ r.grabbed_at.strftime("%Y-%m-%d %H:%M") if r.grabbed_at }}</small></td>
+            <td class="actions">
+                <form method="post" action="/releases/{{ r.id }}/cancel">
+                    <button class="secondary" type="submit">Cancel</button>
+                </form>
+                <details>
+                    <summary role="button" class="secondary outline">Manual import…</summary>
+                    <form method="post" action="/releases/{{ r.id }}/manual-import">
+                        <input name="folder" placeholder="Folder name in downloads dir" required>
+                        <button type="submit">Import</button>
+                    </form>
+                </details>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No active downloads.</p>
+{% endif %}
+
+<h3>Needs attention</h3>
+{% if failed %}
+<table>
+    <thead><tr><th>Book</th><th>Release</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+        {% for r in failed %}
+        <tr>
+            <td>{{ r.book.title }}<br><small>{{ r.book.author.name }}</small></td>
+            <td><small>{{ r.title }}</small></td>
+            <td><small class="error">{{ r.error }}</small></td>
+            <td class="actions">
+                <form method="post" action="/releases/{{ r.id }}/retry">
+                    <button type="submit">Retry</button>
+                </form>
+                <details>
+                    <summary role="button" class="secondary outline">Manual import…</summary>
+                    <form method="post" action="/releases/{{ r.id }}/manual-import">
+                        <input name="folder" placeholder="Folder name in downloads dir" required>
+                        <button type="submit">Import</button>
+                    </form>
+                </details>
+                <form method="post" action="/releases/{{ r.id }}/cancel">
+                    <button class="secondary" type="submit">Dismiss</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>Nothing needs attention.</p>
+{% endif %}
+
+<h3>Recently imported</h3>
+{% if imported %}
+<table>
+    <thead><tr><th>Book</th><th>Library path</th></tr></thead>
+    <tbody>
+        {% for b in imported %}
+        <tr>
+            <td>{{ b.title }}<br><small>{{ b.author.name }}</small></td>
+            <td><small>{{ b.library_path }}</small></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>Nothing imported yet.</p>
+{% endif %}
+{% endblock %}

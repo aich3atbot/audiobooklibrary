@@ -105,7 +105,9 @@ class Release(Base):
     size: Mapped[int | None] = mapped_column(Integer)
     seeders: Mapped[int | None] = mapped_column(Integer)
     grabbed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # grabbed -> downloading -> imported | failed | cancelled
     status: Mapped[str] = mapped_column(String(50), default="grabbed")
+    error: Mapped[str | None] = mapped_column(Text)
 
     book: Mapped[Book] = relationship(back_populates="releases")
 

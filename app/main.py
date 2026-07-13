@@ -7,7 +7,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.routes import downloads, search, ui
+from app.routes import activity, downloads, search, ui
+from app.services.importer import download_watch_loop
 from app.services.sync import hardcover_sync_loop
 
 logging.basicConfig(level=logging.INFO)
@@ -15,8 +16,10 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    tasks = [asyncio.create_task(hardcover_sync_loop())]
-    # Later milestones add the download watcher and importer here.
+    tasks = [
+        asyncio.create_task(hardcover_sync_loop()),
+        asyncio.create_task(download_watch_loop()),
+    ]
     yield
     for task in tasks:
         task.cancel()
@@ -29,6 +32,7 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 app.include_router(ui.router)
 app.include_router(search.router)
 app.include_router(downloads.router)
+app.include_router(activity.router)
 
 
 @app.get("/healthz")

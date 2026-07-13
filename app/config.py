@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     library_dir: Path = Path("/audiobooks")
     config_dir: Path = Path("/config")
     sync_interval_minutes: int = 30
+    watch_interval_seconds: int = 30
+    # A download is considered finished when nothing in it changed for this long.
+    download_quiet_seconds: int = 120
+    # "copy" hardlinks (falls back to copying) so seeding torrents keep their
+    # files; "move" relocates them out of the download directory.
+    import_mode: str = "copy"
 
     @property
     def category_ids(self) -> tuple[int, ...]:

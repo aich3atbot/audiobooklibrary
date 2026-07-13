@@ -49,6 +49,19 @@
     margin: 0;
 }
 
+.actions form, .actions details {
+    display: inline-block;
+    margin: 0 0.25rem 0 0;
+}
+
+.actions button, .actions summary {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    margin: 0;
+}
+
+.error { color: #d32f2f; }
+
 .badge-dl-imported { background: #2e7d32; color: white; }
 .badge-dl-failed { background: #b71c1c; color: white; }
 
