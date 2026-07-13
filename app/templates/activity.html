@@ -7,13 +7,14 @@
 <h3>Active downloads</h3>
 {% if active %}
 <table>
-    <thead><tr><th>Book</th><th>Release</th><th>Status</th><th>Grabbed</th><th></th></tr></thead>
+    <thead><tr><th>Book</th><th>Release</th><th>Status</th><th>Progress</th><th>Grabbed</th><th></th></tr></thead>
     <tbody>
         {% for r in active %}
         <tr>
             <td>{{ r.book.title }}<br><small>{{ r.book.author.name }}</small></td>
             <td><small>{{ r.title }}</small></td>
             <td><span class="badge">{{ r.status }}</span></td>
+            <td><small>{{ "%.0f%%" | format(r.progress) if r.progress is not none else "—" }}</small></td>
             <td><small>{{ r.grabbed_at.strftime("%Y-%m-%d %H:%M") if r.grabbed_at }}</small></td>
             <td class="actions">
                 <form method="post" action="/releases/{{ r.id }}/cancel">
