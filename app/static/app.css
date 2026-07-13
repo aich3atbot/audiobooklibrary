@@ -82,6 +82,21 @@
 
 .error { color: #d32f2f; }
 
+.login-box {
+    max-width: 24rem;
+    margin: 4rem auto;
+}
+
+.logout-form {
+    margin: 0;
+}
+
+.logout-form button {
+    font-size: 0.8rem;
+    padding: 0.25rem 0.75rem;
+    margin: 0;
+}
+
 .badge-ok { background: #2e7d32; color: white; }
 .badge-err { background: #b71c1c; color: white; }
 

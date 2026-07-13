@@ -7,6 +7,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Single-user login; auth is enforced only when both are set.
+    auth_username: str = ""
+    auth_password: str = ""
+    # Signs the session cookie. Optional: generated and persisted in
+    # config_dir when unset.
+    session_secret: str = ""
+
     hardcover_token: str = ""
     prowlarr_url: str = "http://host.docker.internal:9696"
     prowlarr_api_key: str = ""
@@ -21,6 +28,10 @@ class Settings(BaseSettings):
     # "copy" hardlinks (falls back to copying) so seeding torrents keep their
     # files; "move" relocates them out of the download directory.
     import_mode: str = "copy"
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.auth_username and self.auth_password)
 
     @property
     def category_ids(self) -> tuple[int, ...]:

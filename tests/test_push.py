@@ -126,7 +126,7 @@ def test_pull_skips_pending_books(clean_db, book):
 
 @respx.mock
 def test_update_read_state_marks_read_with_today(clean_db, book, test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings.__class__, "hardcover_token", "token", raising=False)
+    monkeypatch.setattr(test_settings, "hardcover_token", "token")
     respx.post(API_URL).mock(return_value=mutation_response("update_user_book"))
 
     update_read_state(clean_db, book, ReadState.READ)
@@ -140,7 +140,7 @@ def test_update_read_state_marks_read_with_today(clean_db, book, test_settings, 
 def test_update_read_state_stays_pending_when_hardcover_down(
     clean_db, book, test_settings, monkeypatch
 ):
-    monkeypatch.setattr(test_settings.__class__, "hardcover_token", "token", raising=False)
+    monkeypatch.setattr(test_settings, "hardcover_token", "token")
     respx.post(API_URL).mock(side_effect=httpx.ConnectError("down"))
 
     update_read_state(clean_db, book, ReadState.READING)
@@ -152,7 +152,7 @@ def test_update_read_state_stays_pending_when_hardcover_down(
 
 @respx.mock
 def test_read_state_route_returns_updated_card(client, clean_db, book, test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings.__class__, "hardcover_token", "token", raising=False)
+    monkeypatch.setattr(test_settings, "hardcover_token", "token")
     respx.post(API_URL).mock(return_value=mutation_response("update_user_book"))
 
     response = client.post(f"/books/{book.id}/read-state", data={"state": "read"})

@@ -18,7 +18,7 @@ def clean_db(db_session):
 
 @pytest.fixture
 def hardcover_token(test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings.__class__, "hardcover_token", "token", raising=False)
+    monkeypatch.setattr(test_settings, "hardcover_token", "token")
 
 
 def search_doc(**overrides):

@@ -12,6 +12,8 @@ Self-hosted audiobook manager, in a single container:
   `Author/Series/{index} - Title/`.
 - **Web UI** — library grid with filters, Hardcover search to add new books, release picker,
   activity page for downloads and import failures, settings page with connection checks.
+- **Optional login** — set `AUTH_USERNAME` and `AUTH_PASSWORD` to require a single-user
+  login (30-day session cookie); leave them empty to run open on a trusted LAN.
 
 See `plan.md` for the full design.
 

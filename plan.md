@@ -23,7 +23,7 @@ library folder. Single container, Python, SQLite.
 | Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
 | Read-state sync | **Two-way**: UI changes push to Hardcover immediately; a periodic sync pulls Hardcover changes down. Hardcover is the source of truth for read state. |
 | Web stack | **FastAPI + Jinja2 + HTMX** (server-rendered, HTMX for in-page updates). |
-| Users | Single user, single Hardcover account. No app-level auth in v1 (assumed to run behind a reverse proxy / on a trusted LAN). |
+| Users | Single user, single Hardcover account. Optional single-user login (`AUTH_USERNAME`/`AUTH_PASSWORD` env vars) with a signed session cookie; when unset the app runs open (trusted LAN / reverse proxy). |
 | Configuration | Environment variables (12-factor), with a `.env` file for local dev. |
 
 ## Architecture

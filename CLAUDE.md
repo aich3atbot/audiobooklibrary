@@ -30,9 +30,11 @@ APIs are mocked with respx). Future work (public REST API, mobile app) is listed
 - **Read state**: two-way sync, but **Hardcover is the source of truth** — push local changes
   first, then pull; Hardcover wins conflicts. Book identity is anchored on the Hardcover
   *book* id (editions collapsed).
-- **Single user, no app auth** in v1 (assumed trusted LAN / reverse proxy).
-- **Config via env vars** only: `HARDCOVER_TOKEN`, `PROWLARR_URL`, `PROWLARR_API_KEY`,
-  `DOWNLOAD_DIR`, `LIBRARY_DIR`, `CONFIG_DIR`, `SYNC_INTERVAL_MINUTES`.
+- **Single user, optional auth**: setting `AUTH_USERNAME` + `AUTH_PASSWORD` enforces a
+  session-cookie login (all routes redirect to /login except /healthz and /static); leaving
+  them unset runs the app open. Auth lives in `app/auth.py` (middleware) + `app/routes/auth.py`.
+- **Config via env vars** only — see `.env.example` for the full list (auth, Hardcover,
+  Prowlarr, paths, intervals, import mode, session secret).
 
 ## Sandbox environment
 

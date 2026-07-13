@@ -5,6 +5,8 @@ services:
     ports:
       - "8000:8000"
     environment:
+      AUTH_USERNAME: ${AUTH_USERNAME:-}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
       HARDCOVER_TOKEN: ${HARDCOVER_TOKEN:?set in .env}
       PROWLARR_URL: ${PROWLARR_URL:-http://prowlarr:9696}
       PROWLARR_API_KEY: ${PROWLARR_API_KEY:?set in .env}
@@ -16,6 +18,6 @@ services:
     volumes:
       - ./config:/config
       # Must be the same directory your download client writes completed downloads to
-      - /path/to/downloads:/downloads
-      - /path/to/audiobooks:/audiobooks
+      - ./downloads:/downloads
+      - ./audiobooks:/audiobooks
     restart: unless-stopped

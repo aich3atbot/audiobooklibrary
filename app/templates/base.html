@@ -18,6 +18,13 @@
             <li><a href="/search">Search</a></li>
             <li><a href="/activity">Activity</a></li>
             <li><a href="/settings">Settings</a></li>
+            {% if request.session.get("user") %}
+            <li>
+                <form method="post" action="/logout" class="logout-form">
+                    <button type="submit" class="secondary outline">Log out</button>
+                </form>
+            </li>
+            {% endif %}
         </ul>
     </nav>
     <main class="container">

@@ -18,12 +18,12 @@ def clean_db(db_session):
 
 @pytest.fixture
 def hardcover_token(test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings.__class__, "hardcover_token", "token", raising=False)
+    monkeypatch.setattr(test_settings, "hardcover_token", "token")
 
 
 @pytest.fixture
 def prowlarr_key(test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings.__class__, "prowlarr_api_key", "key", raising=False)
+    monkeypatch.setattr(test_settings, "prowlarr_api_key", "key")
 
 
 @pytest.fixture
