@@ -10,9 +10,6 @@ class Settings(BaseSettings):
     # Single-user login; auth is enforced only when both are set.
     auth_username: str = ""
     auth_password: str = ""
-    # Signs the session cookie. Optional: generated and persisted in
-    # config_dir when unset.
-    session_secret: str = ""
 
     hardcover_token: str = ""
     prowlarr_url: str = "http://host.docker.internal:9696"

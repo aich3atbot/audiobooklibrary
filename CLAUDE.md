@@ -34,7 +34,8 @@ APIs are mocked with respx). Future work (public REST API, mobile app) is listed
   session-cookie login (all routes redirect to /login except /healthz and /static); leaving
   them unset runs the app open. Auth lives in `app/auth.py` (middleware) + `app/routes/auth.py`.
 - **Config via env vars** only — see `.env.example` for the full list (auth, Hardcover,
-  Prowlarr, paths, intervals, import mode, session secret).
+  Prowlarr, paths, intervals, import mode). The session-cookie secret is not configurable;
+  it is auto-generated and persisted at `CONFIG_DIR/session_secret`.
 
 ## Sandbox environment
 

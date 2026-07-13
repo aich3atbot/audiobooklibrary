@@ -18,11 +18,9 @@ OPEN_PREFIXES = ("/static/",)
 
 
 def resolve_session_secret() -> str:
-    """Use SESSION_SECRET if set; otherwise generate one and persist it in
-    the config dir so sessions survive restarts."""
+    """Generate the cookie-signing secret once and persist it in the config
+    dir so sessions survive restarts."""
     settings = get_settings()
-    if settings.session_secret:
-        return settings.session_secret
     settings.config_dir.mkdir(parents=True, exist_ok=True)
     path = settings.config_dir / "session_secret"
     if path.exists():
