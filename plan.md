@@ -219,6 +219,68 @@ library. Complements (does not change) the automatic /downloads pipeline.
 - **Safety**: import paths are validated to stay inside IMPORTS_DIR; a book that already
   has a `library_path` can't be the target of an import.
 
+## Audiobookshelf-compatible API
+
+Implement enough of the Audiobookshelf server API (https://api.audiobookshelf.org) that ABS
+client apps can log in, browse, stream, download, and sync progress against this server.
+Primary compatibility target: the **official ABS app** (Android/iOS); third-party clients
+(Plappa, ShelfPlayer) should mostly work as a byproduct and get quirk fixes on demand.
+
+Decisions:
+- **Auth**: same credentials as the UI. `POST /login` (JSON) issues a signed bearer token
+  (same secret as the session cookie); ABS endpoints authenticate via `Authorization:
+  Bearer`. The UI's form login and cookie session are unchanged — `/login` dispatches on
+  content type. `/status`, `/ping` stay public (server discovery).
+- **Streaming**: direct play only — original m4b/mp3 files served with HTTP Range support.
+  No ffmpeg/HLS. (ABS apps direct-play these formats natively.)
+- **Progress**: stored locally per book (cross-device resume). When a client reports a book
+  finished, mark it read on Hardcover with today's date (same code path as the UI toggle).
+- **Catalogue**: tracked books only (`library_path` set); one fixed library
+  ("Audiobooks"). Covers served from a cover image in the book folder when present, else
+  proxied from the Hardcover CDN URL.
+
+New persistence:
+- `audio_file` — per-book audio tracks: index, relative path, size, mime, duration
+  (+ chapters for m4b), read with **mutagen** at import time, with a startup backfill scan
+  for already-imported books.
+- `media_progress` — single-user progress per book: current_time, duration, is_finished,
+  updated_at. Playback sessions are in-memory; each `/api/session/:id/sync` updates the
+  progress row.
+
+Endpoint surface (v1):
+- Discovery/auth: `GET /status`, `GET /ping`, `POST /login`, `POST /api/authorize`,
+  `GET /api/me`
+- Catalogue: `GET /api/libraries`, `/api/libraries/:id`, `/api/libraries/:id/items`
+  (pagination + basic sort), `/api/libraries/:id/personalized` (continue-listening /
+  recently-added shelves for the app home screen), `/api/libraries/:id/series`,
+  `/api/libraries/:id/authors`, `/api/libraries/:id/filterdata`
+- Items: `GET /api/items/:id` (expanded, with audioFiles/chapters/tracks),
+  `GET /api/items/:id/cover`
+- Playback: `POST /api/items/:id/play` (direct-play session), audio file serving with
+  Range, `POST /api/session/:id/sync`, `POST /api/session/:id/close`
+- Progress/downloads: `GET/PATCH /api/me/progress/:itemId`, per-file download endpoints
+  (+ whole-item zip if the app requires it)
+- socket.io: not implemented initially; verify the official app degrades gracefully and
+  add a minimal shim only if required.
+
+Build order (commit per phase):
+1. **Contract research** — pin exact request/response shapes from the ABS docs/source
+   (fetched during implementation, not from memory).
+2. **Auth + discovery** — token issuing/verification, login content negotiation, status/
+   ping/authorize/me; middleware split (cookie redirect for UI, 401 JSON for API).
+3. **Audio metadata** — mutagen dependency, `audio_file` table + migration, import-time
+   scan + startup backfill, cover endpoint.
+4. **Catalogue** — libraries/items/series/authors/filterdata/personalized.
+5. **Playback + progress** — play sessions, Range file serving, sync/close,
+   `media_progress` + finished→Hardcover, progress in `/api/me`.
+6. **Device verification** — user tests with the real app against the container;
+   iterate on quirks (incl. the socket.io question).
+
+Testing: unit tests generate tiny valid silent MP3s programmatically so mutagen scanning
+and Range serving are covered without binary fixtures; endpoint shapes asserted against
+the researched contracts. Final acceptance is the real app on a real device (phase 6),
+which only the user can perform.
+
 ## Future work (out of scope for this build)
 
 - Public REST API: list books, download audio files, update reading state — designed to serve

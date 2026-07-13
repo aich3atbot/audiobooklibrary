@@ -13,8 +13,11 @@ from starlette.responses import RedirectResponse, Response
 from app.config import get_settings
 
 SESSION_USER_KEY = "user"
-OPEN_PATHS = {"/login", "/healthz"}
-OPEN_PREFIXES = ("/static/",)
+# /status, /ping, /healthcheck: ABS client discovery must be public.
+OPEN_PATHS = {"/login", "/healthz", "/status", "/ping", "/healthcheck"}
+# /api/ and /auth/ are the ABS surface: bearer-token auth enforced per-route
+# (app/abs/deps.py), not by this cookie-redirect middleware.
+OPEN_PREFIXES = ("/static/", "/api/", "/auth/")
 
 
 def resolve_session_secret() -> str:

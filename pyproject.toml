@@ -13,6 +13,7 @@ dependencies = [
     "httpx>=0.27",
     "python-multipart>=0.0.9",
     "itsdangerous>=2.2.0",
+    "pyjwt>=2.13.0",
 ]
 
 [dependency-groups]
