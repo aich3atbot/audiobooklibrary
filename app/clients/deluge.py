@@ -1,0 +1,131 @@
+"""Deluge client, over the Web UI's JSON-RPC endpoint (``POST /json``).
+
+Verified against Deluge WebUI 2.2.0:
+- Auth is ``auth.login([password])`` and password-only — there is no username
+  (DOWNLOAD_USERNAME is accepted in config but unused, reserved for future
+  clients). An empty password is valid.
+- Login sets a session cookie, which ``httpx.Client`` persists for us. Sessions
+  expire; an expired one answers "Not authenticated" (error code 1), so calls
+  re-login once and retry.
+- The web process talks to the daemon separately: if ``web.connected()`` is
+  false we ``web.connect()`` to the first host from ``web.get_hosts()``.
+- ``daemon.info`` does *not* exist on 2.2.0 ("Unknown method"); the version
+  comes from ``daemon.get_version``.
+- A finished torrent reports ``is_finished: true`` but its ``state`` may be
+  anything ("Queued", "Seeding", ...) — never key completion off the state.
+"""
+
+import logging
+import re
+from collections.abc import Sequence
+from typing import Any
+
+import httpx
+
+from app.clients.download_client import DownloadClientError, TorrentStatus
+
+logger = logging.getLogger(__name__)
+
+STATUS_KEYS = ["name", "progress", "state", "is_finished", "save_path", "total_size"]
+NOT_AUTHENTICATED = 1
+BTIH_RE = re.compile(r"xt=urn:btih:([0-9a-fA-F]{40})")
+
+
+class DelugeClient:
+    def __init__(self, base_url: str, password: str = "", timeout: float = 30.0):
+        self._url = f"{base_url.rstrip('/')}/json"
+        self._password = password
+        self._client = httpx.Client(timeout=timeout)
+        self._request_id = 0
+        self._connected = False
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> "DelugeClient":
+        return self
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    # -- JSON-RPC plumbing -------------------------------------------------
+
+    def _rpc(self, method: str, params: list[Any]) -> Any:
+        self._request_id += 1
+        response = self._client.post(
+            self._url, json={"method": method, "params": params, "id": self._request_id}
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if error := payload.get("error"):
+            failure = DownloadClientError(f"Deluge {method} failed: {error.get('message')}")
+            failure.code = error.get("code")
+            raise failure
+        return payload.get("result")
+
+    def _call(self, method: str, params: list[Any]) -> Any:
+        """An authenticated call: connects first, and re-logs-in once if the
+        session has expired underneath us."""
+        self._ensure_connected()
+        try:
+            return self._rpc(method, params)
+        except DownloadClientError as exc:
+            if getattr(exc, "code", None) != NOT_AUTHENTICATED:
+                raise
+            logger.info("Deluge session expired, logging in again")
+            self._connected = False
+            self._ensure_connected()
+            return self._rpc(method, params)
+
+    def _ensure_connected(self) -> None:
+        if self._connected:
+            return
+        if self._rpc("auth.login", [self._password]) is not True:
+            raise DownloadClientError("Deluge login failed — check DOWNLOAD_PASSWORD")
+        if not self._rpc("web.connected", []):
+            hosts = self._rpc("web.get_hosts", []) or []
+            if not hosts:
+                raise DownloadClientError("Deluge web UI has no daemon host configured")
+            self._rpc("web.connect", [hosts[0][0]])
+        self._connected = True
+
+    # -- DownloadClient protocol -------------------------------------------
+
+    def add_magnet(self, magnet_uri: str) -> str:
+        try:
+            result = self._call("core.add_torrent_magnet", [magnet_uri, {}])
+        except DownloadClientError as exc:
+            # Re-grabbing a torrent Deluge already has is a success, not an error.
+            if "already" not in str(exc).lower():
+                raise
+            logger.info("Deluge already has this torrent; reusing it")
+            result = None
+        return (result or self._hash_from_magnet(magnet_uri)).lower()
+
+    def get_status(self, info_hashes: Sequence[str]) -> dict[str, TorrentStatus]:
+        if not info_hashes:
+            return {}
+        filter_ = {"id": [h.lower() for h in info_hashes]}
+        result = self._call("core.get_torrents_status", [filter_, STATUS_KEYS]) or {}
+        return {
+            info_hash.lower(): TorrentStatus(
+                info_hash=info_hash.lower(),
+                name=status.get("name") or "",
+                progress=float(status.get("progress") or 0.0),
+                state=status.get("state") or "",
+                is_finished=bool(status.get("is_finished")),
+                save_path=status.get("save_path") or "",
+                total_size=int(status.get("total_size") or 0),
+            )
+            for info_hash, status in result.items()
+        }
+
+    def check(self) -> str:
+        version = self._call("daemon.get_version", [])
+        return f"Deluge daemon {version}"
+
+    @staticmethod
+    def _hash_from_magnet(magnet_uri: str) -> str:
+        match = BTIH_RE.search(magnet_uri)
+        if not match:
+            raise DownloadClientError("Deluge did not return a torrent hash")
+        return match.group(1)

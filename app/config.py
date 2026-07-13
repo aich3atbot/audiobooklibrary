@@ -15,6 +15,16 @@ class Settings(BaseSettings):
     prowlarr_url: str = "http://host.docker.internal:9696"
     prowlarr_api_key: str = ""
     prowlarr_categories: str = "3030"  # comma-separated torznab category ids
+
+    # Torrent indexer (AudioBookBay) and the torrent client that downloads it.
+    index_url: str = ""
+    download_client: str = "deluge"
+    download_url: str = ""
+    # Deluge's web UI authenticates on the password alone; the username is
+    # accepted and unused, reserved for clients that need one.
+    download_username: str = ""
+    download_password: str = ""
+
     download_dir: Path = Path("/downloads")
     library_dir: Path = Path("/audiobooks")
     config_dir: Path = Path("/config")
