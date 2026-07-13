@@ -13,12 +13,16 @@ from app.abs import playback_routes as abs_playback_routes
 from app.abs import routes as abs_routes
 from app.abs.socket import wrap_asgi
 from app.auth import RequireAuthMiddleware, resolve_session_secret
-from app.routes import activity, auth, downloads, imports, search, settings, ui
+from app.config import get_settings
+from app.routes import activity, admin, auth, downloads, imports, search, settings, ui
 from app.services.audio_meta import audio_backfill_task
 from app.services.importer import download_watch_loop
 from app.services.sync import hardcover_sync_loop
 
 logging.basicConfig(level=logging.INFO)
+
+if not get_settings().admin_password:
+    raise RuntimeError("ADMIN_PASSWORD must be set (user accounts are mandatory)")
 
 
 @asynccontextmanager
@@ -52,6 +56,7 @@ app.include_router(downloads.router)
 app.include_router(activity.router)
 app.include_router(settings.router)
 app.include_router(auth.router)
+app.include_router(admin.router)
 app.include_router(imports.router)
 app.include_router(abs_routes.router)
 app.include_router(abs_library_routes.router)

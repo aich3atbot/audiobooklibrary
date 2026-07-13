@@ -13,8 +13,9 @@ Self-hosted audiobook manager, in a single container:
   `Author/Series/{index} - Title/`.
 - **Web UI** — library grid with filters, Hardcover search to add new books, release picker,
   activity page for downloads and import failures, settings page with connection checks.
-- **Optional login** — set `AUTH_USERNAME` and `AUTH_PASSWORD` to require a single-user
-  login (30-day session cookie); leave them empty to run open on a trusted LAN.
+- **User accounts** — login is mandatory (30-day session cookie). The `admin` account
+  (password from `ADMIN_PASSWORD`) manages users; each user gets their own password and
+  Hardcover token.
 
 See `plan.md` for the full design.
 
@@ -98,7 +99,8 @@ app tells you the torrent may still be running so you can remove it yourself.
 The server speaks enough of the [Audiobookshelf](https://www.audiobookshelf.org/) API that
 ABS client apps (the official Android/iOS app, and generally Plappa/ShelfPlayer) can
 connect directly: add it as a server using the same URL as the web UI and log in with
-`AUTH_USERNAME`/`AUTH_PASSWORD`. Imported books appear as an "Audiobooks" library with
+a user account (the admin account has no library and cannot log in to apps). Imported
+books appear as an "Audiobooks" library with
 covers, series, and chapters; streaming (with seeking), offline downloads, and listening
 progress all work. Progress syncs across devices, and finishing a book in the app marks
 it read on Hardcover automatically. Audio is always direct-played (no transcoding) —

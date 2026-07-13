@@ -10,9 +10,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.abs import payloads, tokens
+from app.abs import payloads
 from app.config import get_settings
-from app.models import Book, Bookmark, MediaProgress
+from app.models import Book, Bookmark, MediaProgress, User
 
 COVER_NAMES = ("cover", "folder")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
@@ -290,7 +290,7 @@ def library_json() -> dict[str, Any]:
                 "id": payloads.FOLDER_ID,
                 "fullPath": str(settings.library_dir),
                 "libraryId": payloads.LIBRARY_ID,
-                "addedAt": payloads.USER_CREATED_AT_MS,
+                "addedAt": payloads.LIBRARY_CREATED_AT_MS,
             }
         ],
         "displayOrder": 1,
@@ -313,7 +313,7 @@ def library_json() -> dict[str, Any]:
         },
         "lastScan": None,
         "lastScanVersion": None,
-        "createdAt": payloads.USER_CREATED_AT_MS,
+        "createdAt": payloads.LIBRARY_CREATED_AT_MS,
         "lastUpdate": now,
     }
 
@@ -350,11 +350,11 @@ def sorted_books(books: list[Book], sort: str | None, desc: bool) -> list[Book]:
     return sorted(books, key=key, reverse=desc)
 
 
-def progress_json(progress: MediaProgress) -> dict[str, Any]:
+def progress_json(progress: MediaProgress, user: User) -> dict[str, Any]:
     duration = progress.duration or 0.0
     return {
         "id": f"prog_{progress.id}",
-        "userId": tokens.user_id(),
+        "userId": user.uuid,
         "libraryItemId": payloads.item_id(progress.book_id),
         "episodeId": None,
         "mediaItemId": f"bk_{progress.book_id}",
@@ -372,9 +372,10 @@ def progress_json(progress: MediaProgress) -> dict[str, Any]:
     }
 
 
-def all_media_progress(db: Session) -> list[dict[str, Any]]:
+def all_media_progress(db: Session, user: User) -> list[dict[str, Any]]:
+    # Progress is still global; per-user filtering lands with the data pivot.
     rows = db.scalars(select(MediaProgress)).all()
-    return [progress_json(row) for row in rows]
+    return [progress_json(row, user) for row in rows]
 
 
 def bookmark_json(bookmark: Bookmark) -> dict[str, Any]:
@@ -386,7 +387,8 @@ def bookmark_json(bookmark: Bookmark) -> dict[str, Any]:
     }
 
 
-def all_bookmarks(db: Session) -> list[dict[str, Any]]:
+def all_bookmarks(db: Session, user: User) -> list[dict[str, Any]]:
+    # Bookmarks are still global; per-user filtering lands with the data pivot.
     rows = db.scalars(select(Bookmark)).all()
     return [bookmark_json(row) for row in rows]
 
@@ -399,8 +401,8 @@ def author_entry(book: Book) -> dict[str, Any]:
         "lastFirst": name_last_first(book.author.name),
         "description": None,
         "imagePath": None,
-        "addedAt": payloads.USER_CREATED_AT_MS,
-        "updatedAt": payloads.USER_CREATED_AT_MS,
+        "addedAt": payloads.LIBRARY_CREATED_AT_MS,
+        "updatedAt": payloads.LIBRARY_CREATED_AT_MS,
         "numBooks": 0,
         "libraryId": payloads.LIBRARY_ID,
     }

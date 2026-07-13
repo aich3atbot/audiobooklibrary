@@ -5,13 +5,15 @@ import logging
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.abs import payloads, tokens
 from app.abs.deps import require_abs_user
-from app.auth import check_credentials
-from app.config import get_settings
+from app.auth import ADMIN_USERNAME
 from app.db import get_db
+from app.models import User
+from app.passwords import verify_password
 
 logger = logging.getLogger(__name__)
 
@@ -43,15 +45,20 @@ def healthcheck():
 
 
 def abs_login(request: Request, username: str, password: str, db: Session) -> JSONResponse:
-    """JSON login for ABS clients (the UI form path lives in routes/auth.py)."""
-    settings = get_settings()
-    if settings.auth_enabled and not check_credentials(username, password):
+    """JSON login for ABS clients (the UI form path lives in routes/auth.py).
+    The admin account has no library and cannot use the ABS API."""
+    user = None
+    if username.strip() != ADMIN_USERNAME:
+        user = db.scalar(select(User).where(User.username == username.strip()))
+    if user is None or not user.enabled or not verify_password(password, user.password_hash):
         return JSONResponse({"error": "Invalid username or password"}, status_code=401)
 
     return_tokens = request.headers.get("x-return-tokens") == "true"
-    access_token = tokens.create_access_token()
-    refresh_token = tokens.create_refresh_token()
-    payload = payloads.login_payload(db, access_token, refresh_token if return_tokens else None)
+    access_token = tokens.create_access_token(user)
+    refresh_token = tokens.create_refresh_token(user)
+    payload = payloads.login_payload(
+        db, user, access_token, refresh_token if return_tokens else None
+    )
     response = JSONResponse(payload)
     if not return_tokens:
         response.set_cookie(
@@ -73,10 +80,13 @@ def refresh(request: Request, db: Session = Depends(get_db)):
     payload = tokens.verify_token(refresh_token)
     if payload is None or payload.get("type") != "refresh":
         return JSONResponse({"error": "Invalid refresh token"}, status_code=401)
+    user = db.scalar(select(User).where(User.uuid == payload.get("userId", "")))
+    if user is None or not user.enabled:
+        return JSONResponse({"error": "Invalid refresh token"}, status_code=401)
 
-    new_access = tokens.create_access_token()
-    new_refresh = tokens.create_refresh_token()
-    body = payloads.login_payload(db, new_access, new_refresh if return_refresh else None)
+    new_access = tokens.create_access_token(user)
+    new_refresh = tokens.create_refresh_token(user)
+    body = payloads.login_payload(db, user, new_access, new_refresh if return_refresh else None)
     response = JSONResponse(body)
     if not return_refresh:
         response.set_cookie(
@@ -87,11 +97,15 @@ def refresh(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/api/authorize")
-def authorize(request: Request, db: Session = Depends(get_db), user=Depends(require_abs_user)):
-    access_token = tokens.create_access_token()
-    return payloads.login_payload(db, access_token, None)
+def authorize(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
+    access_token = tokens.create_access_token(user)
+    return payloads.login_payload(db, user, access_token, None)
 
 
 @router.get("/api/me")
-def me(db: Session = Depends(get_db), user=Depends(require_abs_user)):
-    return payloads.user_json(db)
+def me(db: Session = Depends(get_db), user: User = Depends(require_abs_user)):
+    return payloads.user_json(db, user)

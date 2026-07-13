@@ -1,5 +1,6 @@
 import enum
 from datetime import date, datetime
+from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
@@ -43,6 +44,25 @@ def _enum_column(enum_cls, default):
         default=default,
         nullable=False,
     )
+
+
+class User(Base):
+    """A login account. The admin account is virtual (checked against
+    ADMIN_PASSWORD, never stored here); "admin" is a reserved username."""
+
+    __tablename__ = "user"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Stable identity exposed as the ABS API userId.
+    uuid: Mapped[str] = mapped_column(String(36), unique=True, default=lambda: str(uuid4()))
+    username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(300))
+    hardcover_token: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Per-user Hardcover sync cursor and outcome.
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_sync_result: Mapped[str | None] = mapped_column(Text)
 
 
 class Author(Base):

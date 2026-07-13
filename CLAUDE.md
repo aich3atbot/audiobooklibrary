@@ -23,8 +23,9 @@ from the ABS server/app source — do not code ABS endpoints from memory; check 
 and re-verify against source when extending.** JWTs share the UI session secret; /login
 dispatches JSON (ABS) vs form (UI) by content type. The served entrypoint is
 `app.main:asgi` (FastAPI wrapped in a socket.io shim), not `app.main:app`. Only books
-with `library_path` set are exposed. Finishing a book in an app marks it read on
-Hardcover via `update_read_state`.
+with `library_path` set are exposed. ABS logins are user accounts (the virtual admin is
+rejected); token `userId` is the account's stable uuid. Finishing a book in an app marks
+it read on Hardcover via `update_read_state`.
 
 ## Key decisions (do not silently revisit)
 
@@ -55,9 +56,14 @@ Hardcover via `update_read_state`.
 - **Read state**: two-way sync, but **Hardcover is the source of truth** — push local changes
   first, then pull; Hardcover wins conflicts. Book identity is anchored on the Hardcover
   *book* id (editions collapsed).
-- **Single user, optional auth**: setting `AUTH_USERNAME` + `AUTH_PASSWORD` enforces a
-  session-cookie login (all routes redirect to /login except /healthz and /static); leaving
-  them unset runs the app open. Auth lives in `app/auth.py` (middleware) + `app/routes/auth.py`.
+- **Multi-user, mandatory auth**: there is no open mode. Users are DB rows (scrypt
+  password hashes via `app/passwords.py`, per-user Hardcover tokens); the virtual `admin`
+  account (password from `ADMIN_PASSWORD`, required at startup, reserved username) sees
+  only the user-administration UI at /admin/users. Disabling a user locks them out
+  immediately — sessions and ABS tokens are re-checked against the DB per request. Auth
+  lives in `app/auth.py` (middleware + deps) + `app/routes/auth.py`; admin routes in
+  `app/routes/admin.py`. The multi-user conversion is in progress — see plan.md
+  "Multi-user conversion" for design and remaining milestones.
 - **Config via env vars** only — see `.env.example` for the full list (auth, Hardcover,
   indexer, download client, paths, intervals, import mode). `DOWNLOAD_DIR` must be the
   directory the torrent client writes *completed* downloads to. The session-cookie secret

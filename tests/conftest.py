@@ -6,6 +6,27 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+ADMIN_PASSWORD = "admin-pw"
+TEST_USERNAME = "dave"
+TEST_PASSWORD = "hunter2"
+
+_cheap_hash: str | None = None
+
+
+def cheap_password_hash(password: str = TEST_PASSWORD) -> str:
+    """A scrypt hash with cheap parameters (the format embeds them, so
+    verification just works) — production cost would slow every test login."""
+    global _cheap_hash
+    if password != TEST_PASSWORD:
+        from app.passwords import hash_password
+
+        return hash_password(password, n=2**4)
+    if _cheap_hash is None:
+        from app.passwords import hash_password
+
+        _cheap_hash = hash_password(TEST_PASSWORD, n=2**4)
+    return _cheap_hash
+
 
 @pytest.fixture(scope="session", autouse=True)
 def test_settings(tmp_path_factory):
@@ -15,6 +36,7 @@ def test_settings(tmp_path_factory):
     os.environ["DOWNLOAD_DIR"] = str(root / "downloads")
     os.environ["LIBRARY_DIR"] = str(root / "audiobooks")
     os.environ["IMPORTS_DIR"] = str(root / "imports")
+    os.environ["ADMIN_PASSWORD"] = ADMIN_PASSWORD
 
     from app.config import get_settings
     from app.db import get_engine, get_sessionmaker
@@ -30,7 +52,39 @@ def test_settings(tmp_path_factory):
 
 
 @pytest.fixture
-def client(test_settings):
+def db_session(test_settings):
+    from app.db import get_sessionmaker
+
+    with get_sessionmaker()() as session:
+        yield session
+
+
+@pytest.fixture
+def user(db_session):
+    """The default regular account; get-or-create so it survives shared use
+    across tests (the session-scoped DB persists)."""
+    from sqlalchemy import select
+
+    from app.models import User
+
+    existing = db_session.scalar(select(User).where(User.username == TEST_USERNAME))
+    if existing is not None:
+        if not existing.enabled:
+            existing.enabled = True
+            db_session.commit()
+        return existing
+    account = User(
+        username=TEST_USERNAME,
+        password_hash=cheap_password_hash(),
+        hardcover_token="hc-token",
+    )
+    db_session.add(account)
+    db_session.commit()
+    return account
+
+
+@pytest.fixture
+def anon_client(test_settings):
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -39,8 +93,28 @@ def client(test_settings):
 
 
 @pytest.fixture
-def db_session(test_settings):
-    from app.db import get_sessionmaker
+def client(anon_client, user):
+    """A TestClient logged in as the default user (auth is mandatory)."""
+    response = anon_client.post(
+        "/login",
+        data={"username": TEST_USERNAME, "password": TEST_PASSWORD},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, "test login failed"
+    return anon_client
 
-    with get_sessionmaker()() as session:
-        yield session
+
+@pytest.fixture
+def admin_client(test_settings):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    admin = TestClient(app)
+    response = admin.post(
+        "/login",
+        data={"username": "admin", "password": ADMIN_PASSWORD},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, "admin login failed"
+    return admin

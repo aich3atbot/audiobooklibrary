@@ -5,9 +5,11 @@ real-time events are optional pushes we never send."""
 import logging
 
 import socketio
+from sqlalchemy import select
 
 from app.abs.tokens import verify_token
-from app.config import get_settings
+from app.db import get_sessionmaker
+from app.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -21,19 +23,17 @@ async def connect(sid, environ):
 
 @sio.event
 async def auth(sid, token):
-    settings = get_settings()
-    if settings.auth_enabled:
-        payload = verify_token(token) if isinstance(token, str) else None
-        if payload is None or payload.get("type") == "refresh":
-            await sio.emit("auth_failed", {"message": "Invalid token"}, to=sid)
-            return
-        username = payload["username"]
-        user_id = payload["userId"]
-    else:
-        username = settings.auth_username or "user"
-        user_id = "open"
+    payload = verify_token(token) if isinstance(token, str) else None
+    if payload is None or payload.get("type") == "refresh":
+        await sio.emit("auth_failed", {"message": "Invalid token"}, to=sid)
+        return
+    with get_sessionmaker()() as db:
+        user = db.scalar(select(User).where(User.uuid == payload.get("userId", "")))
+    if user is None or not user.enabled:
+        await sio.emit("auth_failed", {"message": "Invalid token"}, to=sid)
+        return
     await sio.emit(
-        "init", {"userId": user_id, "username": username, "usersOnline": []}, to=sid
+        "init", {"userId": user.uuid, "username": user.username, "usersOnline": []}, to=sid
     )
 
 

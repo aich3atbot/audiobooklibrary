@@ -4,7 +4,7 @@ shims, bookmarks, stats, and progress-fraction PATCH."""
 import pytest
 
 from app.models import Bookmark, MediaProgress
-from tests.test_abs_catalogue import auth_enabled, clean_db, get, library, token  # noqa: F401
+from tests.test_abs_catalogue import clean_db, get, library, token  # noqa: F401
 
 
 @pytest.fixture(autouse=True)

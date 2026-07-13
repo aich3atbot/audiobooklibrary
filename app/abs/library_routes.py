@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.abs import catalogue, payloads
 from app.abs.deps import require_abs_user
 from app.db import get_db
+from app.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -154,12 +155,14 @@ def library_collections(library_id: str, limit: int = 0, page: int = 0):
 
 @router.get("/items/{item_id}")
 def get_item(item_id: str, expanded: int = 0, include: str = "",
-             db: Session = Depends(get_db)):
+             db: Session = Depends(get_db), user: User = Depends(require_abs_user)):
     book = _get_book(db, item_id)
     item = catalogue.item_expanded(book) if expanded else catalogue.item_minified(book)
     if "progress" in include:
         item["userMediaProgress"] = (
-            catalogue.progress_json(book.media_progress) if book.media_progress else None
+            catalogue.progress_json(book.media_progress, user)
+            if book.media_progress
+            else None
         )
     return item
 

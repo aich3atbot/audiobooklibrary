@@ -27,7 +27,7 @@ finished audiobooks into a clean library folder. Single container, Python, SQLit
 | Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
 | Read-state sync | **Two-way**: UI changes push to Hardcover immediately; a periodic sync pulls Hardcover changes down. Hardcover is the source of truth for read state. |
 | Web stack | **FastAPI + Jinja2 + HTMX** (server-rendered, HTMX for in-page updates). |
-| Users | Single user, single Hardcover account. Optional single-user login (`AUTH_USERNAME`/`AUTH_PASSWORD` env vars) with a signed session cookie; when unset the app runs open (trusted LAN / reverse proxy). |
+| Users | **Multi-user, mandatory login** (signed session cookie). A virtual `admin` account (password from `ADMIN_PASSWORD`, required at startup) only administers users: add, enable/disable, delete, change passwords/tokens. Regular users are DB rows (scrypt password hashes) created by the admin, each with their own Hardcover token. "admin" is a reserved username. See "Multi-user conversion" below for the full design. |
 | Configuration | Environment variables (12-factor), with a `.env` file for local dev. |
 
 ## Architecture
@@ -180,7 +180,8 @@ Verified against Deluge WebUI 2.2.0.
 ## Configuration (env vars)
 
 ```
-HARDCOVER_TOKEN         # bearer token from hardcover.app settings ("Bearer " prefix tolerated)
+ADMIN_PASSWORD          # password for the virtual "admin" account (required at startup)
+HARDCOVER_TOKEN         # transitional global token, being replaced by per-user tokens
 INDEX_URL               # AudioBookBay base URL (mirrors rotate; http:// may be the working one)
 DOWNLOAD_CLIENT         # default deluge (the only one implemented)
 DOWNLOAD_URL            # Deluge *web UI*, e.g. http://host.docker.internal:8112
@@ -304,10 +305,12 @@ Primary compatibility target: the **official ABS app** (Android/iOS); third-part
 (Plappa, ShelfPlayer) should mostly work as a byproduct and get quirk fixes on demand.
 
 Decisions:
-- **Auth**: same credentials as the UI. `POST /login` (JSON) issues a signed bearer token
-  (same secret as the session cookie); ABS endpoints authenticate via `Authorization:
-  Bearer`. The UI's form login and cookie session are unchanged — `/login` dispatches on
-  content type. `/status`, `/ping` stay public (server discovery).
+- **Auth**: user-account credentials (the virtual admin is rejected — it has no library).
+  `POST /login` (JSON) issues a signed bearer token (same secret as the session cookie)
+  whose `userId` is the account's stable uuid; ABS endpoints authenticate via
+  `Authorization: Bearer` and re-check the account is enabled on every request. The UI's
+  form login and cookie session are unchanged — `/login` dispatches on content type.
+  `/status`, `/ping` stay public (server discovery).
 - **Streaming**: direct play only — original m4b/mp3 files served with HTTP Range support.
   No ffmpeg/HLS. (ABS apps direct-play these formats natively.)
 - **Progress**: stored locally per book (cross-device resume). When a client reports a book
@@ -357,6 +360,48 @@ Testing: unit tests generate tiny valid silent MP3s programmatically so mutagen 
 and Range serving are covered without binary fixtures; endpoint shapes asserted against
 the researched contracts. Final acceptance is the real app on a real device (phase 6),
 which only the user can perform.
+
+## Multi-user conversion (in progress)
+
+Mandatory accounts replace the optional single-user login. Design summary (fresh database
+assumed; the Alembic history gets squashed to a single initial revision at the end):
+
+- **Accounts**: `user` table (uuid for the ABS userId, unique username, scrypt password
+  hash with parameters embedded in the stored string, per-user `hardcover_token`, `enabled`
+  flag, per-user sync cursor/result). The `admin` account is virtual — checked against
+  `ADMIN_PASSWORD`, never stored — and sees only the user-administration UI. Disabling a
+  user takes effect immediately (sessions and ABS tokens are re-checked against the DB per
+  request).
+- **Per-user library**: a `user_book` join row carries `read_state`, `read_at`,
+  `pending_push`, and `hardcover_user_book_id`; those columns leave `book`. Each user's
+  Hardcover sync runs with their own token and maintains their own `user_book` rows over
+  shared `book` metadata rows. `media_progress` and `bookmark` gain `user_id` (ABS progress
+  is per user); `release` records which user grabbed it (Activity stays global).
+- **Shared store**: `/audiobooks`, `download_state`, and `library_path` stay on `book` —
+  download status is three-valued for display (not present / downloading / available; a
+  failed download shows as not present plus a failure badge and the Activity entry). A book
+  another user made available cannot be grabbed again; search offers "add to my library"
+  instead (which shelves it on the searcher's Hardcover). Book rows may belong to no user
+  ("available" only).
+- **Imports**: staged folders are identified by searching Hardcover (author/series/title
+  heuristics from folder names), moved to the canonical path, and imported as ownerless
+  books — users who have the book in their Hardcover library pick it up automatically on
+  their next sync. No Hardcover shelving side-effects.
+- **Deleting a user**: books only they had are reviewed — per-book choice of delete from
+  disk (removes files, book row, everyone's progress) or leave in place (stays available);
+  metadata-only orphans are removed automatically.
+
+Milestones (commit each; the app stays runnable throughout):
+1. ✅ **Auth foundation** — user table + scrypt hashing, `ADMIN_PASSWORD` + startup guard,
+   mandatory-login middleware (admin ↔ user route separation), login/logout rework,
+   minimal admin Users page (list + add), ABS auth switched to DB accounts (tokens carry
+   the user's uuid; admin rejected; disabled users' tokens invalid).
+2. **Admin user management** — enable/disable, change password, change token, simple delete.
+3. **Per-user data pivot** — `user_book`, `user_id` columns, per-user sync loop, UI rework
+   (library/search/downloads), drop the global `HARDCOVER_TOKEN`.
+4. **ABS per-user** — progress/bookmarks/sessions filtered by the authenticated user.
+5. **Imports rework + delete-user orphan review.**
+6. **Squash migrations + final docs pass.**
 
 ## Future work (out of scope for this build)
 

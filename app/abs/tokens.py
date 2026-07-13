@@ -2,32 +2,25 @@
 
 Mirrors ABS TokenManager: HS256, payload {userId, username, type, exp};
 access tokens 1h, refresh 30d, legacy tokens without exp/type accepted
-forever. Signed with the same persisted secret as the UI session cookie."""
+forever. Signed with the same persisted secret as the UI session cookie.
+userId is the User row's stable uuid."""
 
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
 
 from app.auth import resolve_session_secret
-from app.config import get_settings
+from app.models import User
 
 ACCESS_TOKEN_EXPIRY = timedelta(hours=1)
 REFRESH_TOKEN_EXPIRY = timedelta(days=30)
 
-# Deterministic ABS user id for our single user.
-USER_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
-
-def user_id() -> str:
-    return str(uuid.uuid5(USER_NAMESPACE, f"audiobooklibrary-{get_settings().auth_username}"))
-
-
-def _make(token_type: str | None, expiry: timedelta | None) -> str:
+def _make(user: User, token_type: str | None, expiry: timedelta | None) -> str:
     payload: dict[str, Any] = {
-        "userId": user_id(),
-        "username": get_settings().auth_username,
+        "userId": user.uuid,
+        "username": user.username,
     }
     if token_type:
         payload["type"] = token_type
@@ -36,17 +29,17 @@ def _make(token_type: str | None, expiry: timedelta | None) -> str:
     return jwt.encode(payload, resolve_session_secret(), algorithm="HS256")
 
 
-def create_access_token() -> str:
-    return _make("access", ACCESS_TOKEN_EXPIRY)
+def create_access_token(user: User) -> str:
+    return _make(user, "access", ACCESS_TOKEN_EXPIRY)
 
 
-def create_refresh_token() -> str:
-    return _make("refresh", REFRESH_TOKEN_EXPIRY)
+def create_refresh_token(user: User) -> str:
+    return _make(user, "refresh", REFRESH_TOKEN_EXPIRY)
 
 
-def create_legacy_token() -> str:
+def create_legacy_token(user: User) -> str:
     # ABS "old" tokens: no type, no expiry — kept for client compatibility.
-    return _make(None, None)
+    return _make(user, None, None)
 
 
 def verify_token(token: str) -> dict[str, Any] | None:

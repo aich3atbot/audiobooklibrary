@@ -25,16 +25,12 @@ def clean_db(db_session):
 
 
 @pytest.fixture
-def auth_enabled(test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings, "auth_username", "dave")
-    monkeypatch.setattr(test_settings, "auth_password", "hunter2")
+def token(client):
+    from tests.conftest import TEST_PASSWORD, TEST_USERNAME
 
-
-@pytest.fixture
-def token(client, auth_enabled):
     response = client.post(
         "/login",
-        json={"username": "dave", "password": "hunter2"},
+        json={"username": TEST_USERNAME, "password": TEST_PASSWORD},
         headers={"x-return-tokens": "true"},
     )
     return response.json()["user"]["accessToken"]

@@ -5,7 +5,7 @@ import respx
 from app.abs.playback_routes import open_sessions
 from app.clients.hardcover import API_URL
 from app.models import MediaProgress, ReadState
-from tests.test_abs_catalogue import auth_enabled, clean_db, get, library, token  # noqa: F401
+from tests.test_abs_catalogue import clean_db, get, library, token  # noqa: F401
 
 
 @pytest.fixture(autouse=True)

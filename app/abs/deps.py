@@ -1,19 +1,16 @@
-from typing import Any
-
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.abs.tokens import verify_token
-from app.config import get_settings
+from app.db import get_db
+from app.models import User
 
 
-def require_abs_user(request: Request) -> dict[str, Any]:
+def require_abs_user(request: Request, db: Session = Depends(get_db)) -> User:
     """Authenticate an ABS API request: Bearer header or ?token= query param.
-    Refresh tokens are not valid here. When UI auth is disabled the API is
-    open too (trusted-LAN mode), matching the rest of the app."""
-    settings = get_settings()
-    if not settings.auth_enabled:
-        return {"userId": "open", "username": settings.auth_username or "user"}
-
+    Refresh tokens are not valid here. The token must resolve to an enabled
+    account — disabling a user invalidates their tokens immediately."""
     token = None
     authorization = request.headers.get("authorization", "")
     if authorization.lower().startswith("bearer "):
@@ -24,4 +21,8 @@ def require_abs_user(request: Request) -> dict[str, Any]:
     payload = verify_token(token) if token else None
     if payload is None or payload.get("type") == "refresh":
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return payload
+
+    user = db.scalar(select(User).where(User.uuid == payload.get("userId", "")))
+    if user is None or not user.enabled:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return user

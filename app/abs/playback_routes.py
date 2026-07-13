@@ -14,7 +14,7 @@ from app.abs import catalogue, payloads
 from app.abs.deps import require_abs_user
 from app.abs.progress import apply_progress
 from app.db import get_db
-from app.models import AudioFile, Book, Bookmark, MediaProgress
+from app.models import AudioFile, Book, Bookmark, MediaProgress, User
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,12 @@ def _get_audio_file(db: Session, book: Book, ino: str) -> tuple[AudioFile, Path]
 
 
 @router.post("/items/{item_id}/play")
-async def start_playback(item_id: str, request: Request, db: Session = Depends(get_db)):
+async def start_playback(
+    item_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
     book = _get_book(db, item_id)
     if not book.audio_files:
         raise HTTPException(status_code=500, detail="Item has no audio files")
@@ -71,7 +76,7 @@ async def start_playback(item_id: str, request: Request, db: Session = Depends(g
 
     return {
         "id": session_id,
-        "userId": payloads.tokens.user_id(),
+        "userId": user.uuid,
         "libraryId": payloads.LIBRARY_ID,
         "libraryItemId": item_id,
         "bookId": f"bk_{book.id}",
@@ -208,11 +213,13 @@ async def update_progress(item_id: str, request: Request, db: Session = Depends(
 
 
 @router.get("/me/progress/{item_id}")
-def get_progress(item_id: str, db: Session = Depends(get_db)):
+def get_progress(
+    item_id: str, db: Session = Depends(get_db), user: User = Depends(require_abs_user)
+):
     book = _get_book(db, item_id)
     if book.media_progress is None:
         raise HTTPException(status_code=404, detail="No progress")
-    return catalogue.progress_json(book.media_progress)
+    return catalogue.progress_json(book.media_progress, user)
 
 
 @router.post("/me/item/{item_id}/bookmark")

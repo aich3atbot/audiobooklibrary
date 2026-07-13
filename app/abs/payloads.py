@@ -2,18 +2,19 @@
 Shapes are pinned in docs/abs-api-contract.md — change them only against source."""
 
 import time
+from datetime import timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.abs import tokens
-from app.config import get_settings
+from app.models import User
 
 SERVER_VERSION = "2.35.1"  # ABS version we emulate (feature-gating in apps)
 SOURCE = "docker"
 LIBRARY_ID = "lib_audiobooks"
 FOLDER_ID = "fol_audiobooks"
-USER_CREATED_AT_MS = 1704067200000  # fixed epoch; apps only display this
+LIBRARY_CREATED_AT_MS = 1704067200000  # fixed epoch; apps only display this
 
 
 def now_ms() -> int:
@@ -84,23 +85,23 @@ def server_settings() -> dict[str, Any]:
     }
 
 
-def user_json(db: Session, minimal: bool = False) -> dict[str, Any]:
-    """ABS user.toOldJSONForBrowser equivalent for our single user."""
-    settings = get_settings()
+def user_json(db: Session, user: User, minimal: bool = False) -> dict[str, Any]:
+    """ABS user.toOldJSONForBrowser equivalent. Every account gets root
+    permissions — apps only gate features on it (deliberate simplification)."""
     json: dict[str, Any] = {
-        "id": tokens.user_id(),
-        "username": settings.auth_username,
+        "id": user.uuid,
+        "username": user.username,
         "email": None,
         "type": "root",
-        "token": tokens.create_legacy_token(),
+        "token": tokens.create_legacy_token(user),
         "isOldToken": False,
-        "mediaProgress": media_progress_list(db),
+        "mediaProgress": media_progress_list(db, user),
         "seriesHideFromContinueListening": [],
-        "bookmarks": _bookmarks_list(db),
+        "bookmarks": _bookmarks_list(db, user),
         "isActive": True,
         "isLocked": False,
         "lastSeen": now_ms(),
-        "createdAt": USER_CREATED_AT_MS,
+        "createdAt": int(user.created_at.replace(tzinfo=timezone.utc).timestamp() * 1000),
         "permissions": permissions(),
         "librariesAccessible": [],
         "itemTagsSelected": [],
@@ -112,24 +113,26 @@ def user_json(db: Session, minimal: bool = False) -> dict[str, Any]:
     return json
 
 
-def media_progress_list(db: Session) -> list[dict[str, Any]]:
+def media_progress_list(db: Session, user: User) -> list[dict[str, Any]]:
     from app.abs.catalogue import all_media_progress  # late import: avoids cycle
 
-    return all_media_progress(db)
+    return all_media_progress(db, user)
 
 
-def _bookmarks_list(db: Session) -> list[dict[str, Any]]:
+def _bookmarks_list(db: Session, user: User) -> list[dict[str, Any]]:
     from app.abs.catalogue import all_bookmarks  # late import: avoids cycle
 
-    return all_bookmarks(db)
+    return all_bookmarks(db, user)
 
 
-def login_payload(db: Session, access_token: str, refresh_token: str | None) -> dict[str, Any]:
-    user = user_json(db)
-    user["accessToken"] = access_token
-    user["refreshToken"] = refresh_token
+def login_payload(
+    db: Session, user: User, access_token: str, refresh_token: str | None
+) -> dict[str, Any]:
+    user_payload = user_json(db, user)
+    user_payload["accessToken"] = access_token
+    user_payload["refreshToken"] = refresh_token
     return {
-        "user": user,
+        "user": user_payload,
         "userDefaultLibraryId": LIBRARY_ID,
         "serverSettings": server_settings(),
         "ereaderDevices": [],
