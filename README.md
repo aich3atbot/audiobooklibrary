@@ -5,10 +5,11 @@ Self-hosted audiobook manager, in a single container:
 - **Syncs your book list from [Hardcover](https://hardcover.app)** — authors, series, covers,
   and read states (want to read / reading / read, with read dates). Two-way: changing a
   book's state in the UI pushes back to Hardcover.
-- **Finds audiobook releases via [Prowlarr](https://prowlarr.com)** and grabs them through
-  Prowlarr's configured download client.
-- **Watches the download directory** and imports finished audiobooks into an
-  [Audiobookshelf](https://www.audiobookshelf.org/)-style library:
+- **Finds audiobook releases on [AudioBookBay](http://audiobookbay.fi)** and hands the magnet
+  straight to your torrent client — [Deluge](https://deluge-torrent.org) today, others can be
+  added.
+- **Tracks the download** by asking the torrent client about it, and imports the finished
+  audiobook into an [Audiobookshelf](https://www.audiobookshelf.org/)-style library:
   `Author/Series/{index} - Title/`.
 - **Web UI** — library grid with filters, Hardcover search to add new books, release picker,
   activity page for downloads and import failures, settings page with connection checks.
@@ -21,14 +22,19 @@ See `plan.md` for the full design.
 
 - A [Hardcover](https://hardcover.app) account and API token
   (hardcover.app → Settings → Hardcover API).
-- A running [Prowlarr](https://prowlarr.com) with at least one indexer and a download client
-  configured. The download client must write completed downloads to a directory this app can
-  see (the `/downloads` volume).
+- A running [Deluge](https://deluge-torrent.org) with its **web UI** enabled (`DOWNLOAD_URL`
+  points at that, e.g. `http://host.docker.internal:8112`). Deluge authenticates on a
+  password alone — `DOWNLOAD_USERNAME` is accepted but unused.
+- Deluge must write completed downloads somewhere this app can see: mount **the directory it
+  saves completed downloads to** as `/downloads`. If Deluge completes into
+  `/downloads/complete`, that subdirectory is what to mount — not its parent.
+- An `INDEX_URL` for AudioBookBay. Its mirrors rotate domains and some serve expired TLS
+  certificates, so a plain `http://` URL is sometimes the working one.
 
 ## Run with Docker
 
 ```bash
-cp .env.example .env    # fill in HARDCOVER_TOKEN and PROWLARR_API_KEY
+cp .env.example .env    # fill in HARDCOVER_TOKEN, INDEX_URL and DOWNLOAD_URL
 # edit docker-compose.yml volume paths, then:
 docker compose up --build
 ```
@@ -41,7 +47,7 @@ Volumes:
 | Mount | Purpose |
 |---|---|
 | `/config` | SQLite database |
-| `/downloads` | Your download client's completed-downloads directory |
+| `/downloads` | The directory Deluge writes *completed* downloads to |
 | `/audiobooks` | The organized audiobook library (point Audiobookshelf here) |
 | `/imports` | Optional: staging area for an existing collection (see below) |
 
@@ -68,15 +74,22 @@ External APIs are mocked in tests (respx); no tokens are needed to run them.
 
 ## How downloading works
 
-1. Press **Download…** on a book → the app searches Prowlarr (audiobook category) and shows
-   a release picker sorted by seeders.
-2. **Grab** hands the release to Prowlarr, which forwards it to your download client. The
-   app records what it grabbed.
-3. The watcher polls `/downloads`, matches finished downloads to grabbed releases by name,
-   waits until the files stop changing, then imports them into `/audiobooks`.
+1. Press **Download…** on a book → the app searches AudioBookBay for
+   "{author} {title}" (falling back to the title alone) and shows a release picker with
+   size, format and posting date. AudioBookBay publishes no seeder counts, so results keep
+   the site's own ordering rather than a made-up ranking.
+2. **Grab** reads the release's details page for the torrent's info hash, builds a magnet,
+   and adds it to Deluge. The app records the hash.
+3. The watcher asks Deluge about that hash every `WATCH_INTERVAL_SECONDS` — its progress is
+   what the Activity page shows — and imports the download into `/audiobooks` as soon as
+   Deluge reports the torrent finished. If Deluge can't be reached, it falls back to
+   watching `/downloads` for a folder matching the release name that has stopped changing.
 4. Anything that can't be matched or imported shows up on the **Activity** page with retry,
    manual-import (point it at a folder name in `/downloads`), and cancel actions — the app
    never guesses.
+
+**Cancel** only stops the app tracking a release. It never removes the torrent or its data
+from Deluge, so seeding is never broken behind your back; remove torrents in Deluge itself.
 
 ## Audiobookshelf apps
 

@@ -1,14 +1,16 @@
 # Audiobook Library — Build Plan
 
 A self-hosted audiobook manager: syncs your book list from Hardcover, finds audiobook
-releases via Prowlarr, tracks downloads, and organizes finished audiobooks into a clean
-library folder. Single container, Python, SQLite.
+releases on a torrent indexer, downloads them through a torrent client, and organizes
+finished audiobooks into a clean library folder. Single container, Python, SQLite.
 
 ## Goals (from original brief)
 
 - Integrate with the Hardcover API (https://hardcover.app/) to retrieve a user's book list,
   respecting Hardcover's states: *want to read*, *reading*, *read* (including read date).
-- Search for books using Prowlarr's API.
+- Search a torrent indexer (AudioBookBay) for audiobook releases and download them with a
+  torrent client (Deluge). *(Originally built on Prowlarr; replaced by direct indexer +
+  client control so the app owns the whole pipeline and can report real progress.)*
 - Monitor a download directory for finished downloads.
 - Move downloaded books into an audiobooks folder, renaming as necessary.
 - Web UI to list books (author, title, series, cover art, read state, downloaded state),
@@ -18,7 +20,9 @@ library folder. Single container, Python, SQLite.
 
 | Topic | Decision |
 |---|---|
-| Download flow | App triggers a **grab via Prowlarr**; Prowlarr hands the release to its configured download client. The app watches the download directory for the finished files. |
+| Download flow | App searches a **torrent indexer directly** (AudioBookBay), resolves the chosen release to a **magnet**, and adds it to a **torrent client** (Deluge) itself. It then polls the client **by info hash** for progress/completion, and imports from the download directory. Directory name-matching remains the fallback when the client can't answer. |
+| Indexer / client | Both behind small protocols (`Indexer`, `DownloadClient`) so more can be added. Today: AudioBookBay + Deluge. |
+| Cancelling | Cancel stops the app tracking a release; it **never** removes the torrent or its data from the client (seeding is sacred). There is deliberately no `remove_torrent`. |
 | Library layout | **Audiobookshelf-style**: `Author/Series/{SeriesIndex} - Title/` (no series: `Author/Title/`). |
 | Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
 | Read-state sync | **Two-way**: UI changes push to Hardcover immediately; a periodic sync pulls Hardcover changes down. Hardcover is the source of truth for read state. |
@@ -33,7 +37,7 @@ One FastAPI process running:
 - **Web UI** — Jinja2 templates + HTMX partials, styled with a lightweight CSS framework (Pico.css or similar).
 - **Background workers** — asyncio tasks in the same process (no Celery/Redis needed at this scale):
   - *Hardcover sync* — periodic pull of the user's library (default every 30 min, configurable).
-  - *Download watcher* — polls the download directory for completed downloads matched to grabbed releases.
+  - *Download watcher* — polls the torrent client (by info hash) for progress and completion, falling back to polling the download directory.
   - *Importer* — moves/renames completed audiobooks into the library folder.
 - **SQLite** via SQLAlchemy 2.x + Alembic migrations. DB file lives on a mounted volume.
 
@@ -42,11 +46,12 @@ One FastAPI process running:
 │  FastAPI app                                                  │
 │  ├─ UI routes (Jinja/HTMX)                                    │
 │  ├─ Hardcover client (GraphQL, bearer token)                  │
-│  ├─ Prowlarr client (REST, API key)                           │
+│  ├─ Indexer client (AudioBookBay, HTML scraping)              │
+│  ├─ Download client (Deluge, web UI JSON-RPC)                 │
 │  └─ background tasks: sync ▸ watch ▸ import                   │
 │                                                               │
 │  volumes:  /config (sqlite db)                                │
-│            /downloads (watched dir, shared with dl client)    │
+│            /downloads (dl client's completed-downloads dir)   │
 │            /audiobooks (organized library)                    │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -59,8 +64,11 @@ One FastAPI process running:
   cover_url, read_state (`want_to_read` | `reading` | `read` | `none`), read_at (date, nullable),
   download_state (`none` | `wanted` | `grabbed` | `downloading` | `downloaded` | `imported` | `failed`),
   library_path (nullable), created_at, updated_at
-- **release** — id, book_id, prowlarr_guid, indexer_id, title, size, seeders, grabbed_at, status
-  (tracks what we asked Prowlarr to grab, used to match finished downloads)
+- **release** — id, book_id, guid (the release's details-page URL), indexer, title, size,
+  info_hash, magnet_uri, progress, grabbed_at, status
+  (tracks what we handed the torrent client; `info_hash` is how we ask about it later.
+  Rows grabbed before the direct-torrent rewrite have a null `info_hash` and fall back to
+  name matching.)
 - **settings/state** — key-value table for sync cursors (e.g. last Hardcover sync time)
 
 A book's identity is anchored on `hardcover_id` (specifically the Hardcover *book* id; editions
@@ -80,14 +88,44 @@ are collapsed to the canonical book).
 - *First implementation task: verify current schema/field names against the live API with the
   user's token — the Hardcover API is beta and shifts occasionally.*
 
-### Prowlarr (REST, API key)
+### AudioBookBay (HTML scraping — there is no API)
 
-- **Search**: `GET /api/v1/search?query=...&categories=3030` (Audio/Audiobook category),
-  optionally filtered to configured indexers.
-- **Grab**: `POST /api/v1/search` with the release `guid` + `indexerId` — Prowlarr forwards it
-  to its configured download client.
-- The app records the grabbed release title/size so the download watcher can match the
-  resulting folder/files in `/downloads`.
+Verified against the live site; re-verify before changing the parser.
+
+- **Browser User-Agent is mandatory** — ABB blocks tool UAs (this is what the
+  `prowlarr-abb` fork existed to work around).
+- **Search**: `GET /?s={term}&tt=1`, term lowercased with non-word characters collapsed to
+  spaces; page N is `/page/{N}/`. An exhausted page returns **HTTP 200 with zero posts**,
+  not a 404, so paging stops on "no posts parsed".
+- **Results**: `div.post` containing `div.postTitle`; title/link from `div.postTitle h2 a`
+  (href is relative). Format / Bitrate / File Size / Posted live in text lines separated by
+  `<br>` with the values inside inline `<span>`s — parse the element's *text*, not raw HTML.
+  Some mirrors base64-encode post bodies (`div.post.re-ab`); decode before parsing.
+- **No seeder counts exist**, so results keep the site's own order — the release picker
+  shows size/format/date instead of a fabricated "best match".
+- **Grab**: the details page carries the torrent's info hash
+  (`<td>Info Hash:</td><td>{40-hex}</td>`) and its tracker list (`Announce URL:` /
+  `Tracker:` rows). We build a magnet from those (public trackers as fallback).
+- Mirrors rotate domains and some serve expired TLS certs, hence `INDEX_URL` is
+  user-configured and may legitimately be plain `http://`.
+
+### Deluge (web UI JSON-RPC, `POST {DOWNLOAD_URL}/json`)
+
+Verified against Deluge WebUI 2.2.0.
+
+- **Auth** is `auth.login([password])` — password-only, and an empty password is valid.
+  `DOWNLOAD_USERNAME` is accepted but unused (reserved for clients that need one). Login
+  sets a session cookie; an expired session answers "Not authenticated" (code 1), so calls
+  re-login once and retry.
+- The web process connects to the daemon separately: if `web.connected()` is false,
+  `web.connect()` to the first `web.get_hosts()` host.
+- **Add**: `core.add_torrent_magnet(uri, {})` → info hash. A torrent Deluge already has is
+  a success, not an error (the hash is recovered from the magnet).
+- **Poll**: `core.get_torrents_status({"id": [hashes]}, [...])`. **`is_finished` is the
+  completion signal — never the state string**: a finished torrent commonly sits in state
+  "Queued". `save_path` is in *Deluge's* filesystem namespace, so the importer locates the
+  download by the torrent's `name` inside `DOWNLOAD_DIR`, not by that path.
+- `daemon.info` does **not** exist on 2.2.0; the version comes from `daemon.get_version`.
 
 ## Core workflows
 
@@ -96,15 +134,25 @@ are collapsed to the canonical book).
    Local-only unsynced changes are pushed first, then pull (Hardcover wins conflicts).
 
 2. **Want → download**
-   User marks a book *wanted* (or downloads directly from search results) → app searches
-   Prowlarr using `"{author} {title}"` (fallback: title only) → user picks a release from
-   results (with a "best match" suggestion by seeders/size) → app grabs via Prowlarr →
-   `download_state = grabbed`.
+   User marks a book *wanted* (or downloads directly from search results) → app searches the
+   indexer using `"{author} {title}"` (fallback: title only) → user picks a release (size /
+   format / posted date; the indexer's own ordering) → app reads the release's details page
+   for the info hash, builds a magnet, and adds it to the torrent client →
+   `download_state = grabbed`, `info_hash` recorded.
 
 3. **Download watch → import**
-   Watcher polls `/downloads` for entries matching grabbed release names, waits for the
-   download to be complete/stable (size unchanged across polls, no `.part`/incomplete
-   markers) → importer moves audio files (m4b/m4a/mp3/flac/ogg + cover/nfo) into
+   Watcher asks the torrent client about each active release's `info_hash`: it records
+   `progress` (shown on Activity) and, when the client reports the torrent **finished**,
+   imports immediately — the client is authoritative, so the quiet-period and
+   incomplete-marker heuristics are skipped. The download is located by the torrent's own
+   `name` in `/downloads` (its `save_path` is in the client's namespace, not ours); if it
+   isn't there, the release **fails loudly** pointing at the volume mapping rather than
+   spinning forever.
+   *Fallback* (no hash, torrent gone from the client, or client unreachable): the original
+   behavior — match `/downloads` entries by release name and wait for the download to be
+   complete/stable (nothing changed for `DOWNLOAD_QUIET_SECONDS`, no `.part`/incomplete
+   markers). A download client that is down costs progress reporting, never an import.
+   Importer then places audio files (m4b/m4a/mp3/flac/ogg + cover/nfo) into
    `/audiobooks/Author/Series/{index} - Title/`, sanitizing filesystem-unsafe characters →
    `download_state = imported`, `library_path` set. Failures flag the book for manual
    review in the UI rather than guessing.
@@ -120,21 +168,24 @@ are collapsed to the canonical book).
   author/title/recent. Inline actions: change read state, search/download.
 - **Search page** (`/search`) — Hardcover search by title/author/series; results show cover +
   metadata; actions: *add with state* (want to read / reading / read) and *find downloads*.
-- **Release picker** (modal/partial) — Prowlarr results for a book: title, size, indexer,
-  seeders; click to grab.
-- **Activity page** (`/activity`) — grabbed/downloading/importing items, recent imports,
-  failures needing attention (with retry / manual-match actions).
-- **Settings page** (`/settings`) — connection status for Hardcover & Prowlarr, sync interval,
-  paths (read-only display of env config), "Sync now" button.
+- **Release picker** (modal/partial) — indexer results for a book: title, size, format,
+  posted date; click to grab.
+- **Activity page** (`/activity`) — grabbed/downloading/importing items with the torrent
+  client's progress percentage, recent imports, failures needing attention (with retry /
+  manual-match actions). Cancel stops tracking only; it never touches the torrent client.
+- **Settings page** (`/settings`) — connection status for Hardcover, the indexer and the
+  download client, sync interval, paths (read-only display of env config), "Sync now" button.
 
 ## Configuration (env vars)
 
 ```
 HARDCOVER_TOKEN         # bearer token from hardcover.app settings ("Bearer " prefix tolerated)
-PROWLARR_URL            # e.g. http://prowlarr:9696
-PROWLARR_API_KEY
-PROWLARR_CATEGORIES     # default 3030 (Audio/Audiobook), comma-separated
-DOWNLOAD_DIR            # default /downloads
+INDEX_URL               # AudioBookBay base URL (mirrors rotate; http:// may be the working one)
+DOWNLOAD_CLIENT         # default deluge (the only one implemented)
+DOWNLOAD_URL            # Deluge *web UI*, e.g. http://host.docker.internal:8112
+DOWNLOAD_USERNAME       # unused by Deluge (password-only auth); reserved for other clients
+DOWNLOAD_PASSWORD       # may legitimately be empty
+DOWNLOAD_DIR            # default /downloads — the client's *completed*-downloads directory
 LIBRARY_DIR             # default /audiobooks
 CONFIG_DIR              # default /config (sqlite db location)
 SYNC_INTERVAL_MINUTES   # default 30
@@ -146,8 +197,8 @@ IMPORT_MODE             # copy (default, hardlink-or-copy) | move
 ## Container
 
 - Single `Dockerfile` (python:3.12-slim, uv or pip install, uvicorn entrypoint).
-- `docker-compose.yml` example wiring volumes and env vars (Prowlarr/download client are
-  external, run by the user).
+- `docker-compose.yml` example wiring volumes and env vars (the torrent client is external,
+  run by the user).
 - Healthcheck endpoint (`/healthz`).
 
 ## Project layout
@@ -159,7 +210,10 @@ audiobooklibrary/
 │  ├─ config.py             # pydantic-settings
 │  ├─ db.py, models.py      # SQLAlchemy + models
 │  ├─ clients/hardcover.py  # GraphQL client
-│  ├─ clients/prowlarr.py   # REST client
+│  ├─ clients/indexer.py    # Indexer protocol + get_indexer()
+│  ├─ clients/audiobookbay.py       # HTML-scraping indexer
+│  ├─ clients/download_client.py    # DownloadClient protocol + get_download_client()
+│  ├─ clients/deluge.py     # Deluge web JSON-RPC
 │  ├─ services/sync.py      # Hardcover sync logic
 │  ├─ services/downloads.py # grab, watch, import
 │  ├─ routes/               # ui.py, books.py, search.py, activity.py, settings.py
@@ -178,17 +232,39 @@ audiobooklibrary/
 2. ✅ **Hardcover pull** — client + sync task; library page renders synced books with covers and read states.
 3. ✅ **Read-state two-way sync** — UI state changes push to Hardcover; retry/pending handling.
 4. ✅ **Hardcover search & add** — search page; add books with a chosen state.
-5. ✅ **Prowlarr search & grab** — release picker, grab flow, release tracking.
+5. ✅ **Release search & grab** — release picker, grab flow, release tracking.
+   *(Originally Prowlarr; replaced by direct AudioBookBay search + Deluge — see below.)*
 6. ✅ **Watch & import** — download watcher, importer with Audiobookshelf-style renaming, activity page, failure handling.
 7. ✅ **Polish & ship** — settings page with connection checks, library filters/sort, docker-compose example, README, test pass.
 
 Each milestone ended in a working, verified state (one commit per milestone).
 
+### Direct torrent pipeline (replaced Prowlarr) — complete
+
+Prowlarr is gone: the app now owns the whole pipeline, which is what lets it report real
+download progress instead of guessing from file mtimes.
+
+1. ✅ `Indexer` protocol + AudioBookBay scraping client.
+2. ✅ `DownloadClient` protocol + Deluge web JSON-RPC client.
+3. ✅ Cutover — config, `release` schema migration, service/routes/templates, Prowlarr deleted.
+4. ✅ Watcher polls the client by info hash for progress/completion, with the directory
+   watcher as fallback.
+5. ✅ Docs.
+
+Remaining manual check (needs the user's own Deluge and a real book): grab a release from
+the UI and watch it download → import end to end. Search, magnet building, client status
+polling and import-from-a-finished-torrent have each been verified live; only a real grab
+(which permanently adds a torrent to the user's Deluge — the app deliberately cannot remove
+it) is left to the user.
+
 ## Testing
 
 - Unit tests for state mapping, filename sanitization, path templating, release↔download matching.
-- Client tests against recorded/mocked HTTP (respx) for Hardcover and Prowlarr.
+- Client tests against recorded/mocked HTTP (respx): Hardcover, AudioBookBay (canned HTML
+  fixtures in `tests/fixtures/abb/`), Deluge (JSON-RPC answered by request method).
 - An importer integration test using tmp dirs with fake download layouts (single m4b, multi-file mp3, nested folders).
+- Watcher tests for both paths: the download client reporting progress/completion (stubbed
+  client), and the fallback when it is unreachable or doesn't know the hash.
 
 ## Collection import (/imports)
 
