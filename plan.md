@@ -396,7 +396,7 @@ Milestones (commit each; the app stays runnable throughout):
    mandatory-login middleware (admin ↔ user route separation), login/logout rework,
    minimal admin Users page (list + add), ABS auth switched to DB accounts (tokens carry
    the user's uuid; admin rejected; disabled users' tokens invalid).
-2. **Admin user management** — enable/disable, change password, change token, simple delete.
+2. ✅ **Admin user management** — enable/disable, change password, change token, simple delete.
 3. **Per-user data pivot** — `user_book`, `user_id` columns, per-user sync loop, UI rework
    (library/search/downloads), drop the global `HARDCOVER_TOKEN`.
 4. **ABS per-user** — progress/bookmarks/sessions filtered by the authenticated user.

@@ -93,15 +93,20 @@ def anon_client(test_settings):
 
 
 @pytest.fixture
-def client(anon_client, user):
+def client(test_settings, user):
     """A TestClient logged in as the default user (auth is mandatory)."""
-    response = anon_client.post(
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    logged_in = TestClient(app)
+    response = logged_in.post(
         "/login",
         data={"username": TEST_USERNAME, "password": TEST_PASSWORD},
         follow_redirects=False,
     )
     assert response.status_code == 303, "test login failed"
-    return anon_client
+    return logged_in
 
 
 @pytest.fixture

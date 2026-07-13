@@ -13,6 +13,7 @@
             <th>Hardcover token</th>
             <th>Last sync</th>
             <th>Created</th>
+            <th></th>
         </tr>
     </thead>
     <tbody>
@@ -23,9 +24,49 @@
             <td>{{ "set" if user.hardcover_token else "not set" }}</td>
             <td>{{ user.last_sync_result or "—" }}</td>
             <td>{{ user.created_at.strftime("%Y-%m-%d") }}</td>
+            <td class="user-actions">
+                {% if user.enabled %}
+                <form method="post" action="/admin/users/{{ user.id }}/disable">
+                    <button type="submit" class="secondary outline">Disable</button>
+                </form>
+                {% else %}
+                <form method="post" action="/admin/users/{{ user.id }}/enable">
+                    <button type="submit" class="outline">Enable</button>
+                </form>
+                {% endif %}
+                <form method="post" action="/admin/users/{{ user.id }}/delete"
+                      onsubmit="return confirm('Delete user {{ user.username }}?');">
+                    <button type="submit" class="secondary outline">Delete</button>
+                </form>
+            </td>
+        </tr>
+        <tr class="user-edit">
+            <td colspan="6">
+                <details>
+                    <summary>Change password / Hardcover token</summary>
+                    <div class="grid">
+                        <form method="post" action="/admin/users/{{ user.id }}/password">
+                            <label>
+                                New password
+                                <input type="password" name="password"
+                                       autocomplete="new-password" required>
+                            </label>
+                            <button type="submit">Change password</button>
+                        </form>
+                        <form method="post" action="/admin/users/{{ user.id }}/token">
+                            <label>
+                                Hardcover token
+                                <input name="hardcover_token" autocomplete="off"
+                                       value="{{ user.hardcover_token }}">
+                            </label>
+                            <button type="submit">Update token</button>
+                        </form>
+                    </div>
+                </details>
+            </td>
         </tr>
         {% else %}
-        <tr><td colspan="5">No users yet — add the first one below.</td></tr>
+        <tr><td colspan="6">No users yet — add the first one below.</td></tr>
         {% endfor %}
     </tbody>
 </table>

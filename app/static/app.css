@@ -165,3 +165,9 @@
     background: var(--pico-secondary-background);
     color: var(--pico-secondary-inverse);
 }
+
+.user-actions { white-space: nowrap; }
+.user-actions form { display: inline-block; margin: 0 0.25rem 0 0; }
+.user-actions button { padding: 0.15rem 0.6rem; font-size: 0.8rem; width: auto; }
+.user-edit td { border-top: none; padding-top: 0; }
+.user-edit details { margin-bottom: 0; }
