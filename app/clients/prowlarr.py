@@ -35,6 +35,11 @@ class ProwlarrClient:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    def status(self) -> dict[str, Any]:
+        response = self._client.get("/api/v1/system/status")
+        response.raise_for_status()
+        return response.json()
+
     def search(self, query: str, categories: Sequence[int] = (3030,)) -> list[dict[str, Any]]:
         params: list[tuple[str, Any]] = [("query", query), ("type", "search")]
         params.extend(("categories", c) for c in categories)

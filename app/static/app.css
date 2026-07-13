@@ -1,3 +1,23 @@
+.filters {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.filters input, .filters select, .filters button {
+    width: auto;
+    margin: 0;
+    font-size: 0.85rem;
+    padding: 0.3rem 0.6rem;
+    height: auto;
+}
+
+.filters select {
+    padding-right: 1.75rem;
+}
+
 .library-header {
     display: flex;
     align-items: center;
@@ -61,6 +81,9 @@
 }
 
 .error { color: #d32f2f; }
+
+.badge-ok { background: #2e7d32; color: white; }
+.badge-err { background: #b71c1c; color: white; }
 
 .badge-dl-imported { background: #2e7d32; color: white; }
 .badge-dl-failed { background: #b71c1c; color: white; }

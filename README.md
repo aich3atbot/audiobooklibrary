@@ -1,10 +1,50 @@
 # Audiobook Library
 
-Self-hosted audiobook manager: syncs your book list from [Hardcover](https://hardcover.app),
-finds audiobook releases via [Prowlarr](https://prowlarr.com), tracks downloads, and organizes
-finished audiobooks into an Audiobookshelf-style library.
+Self-hosted audiobook manager, in a single container:
 
-See `plan.md` for the full design and roadmap.
+- **Syncs your book list from [Hardcover](https://hardcover.app)** — authors, series, covers,
+  and read states (want to read / reading / read, with read dates). Two-way: changing a
+  book's state in the UI pushes back to Hardcover.
+- **Finds audiobook releases via [Prowlarr](https://prowlarr.com)** and grabs them through
+  Prowlarr's configured download client.
+- **Watches the download directory** and imports finished audiobooks into an
+  [Audiobookshelf](https://www.audiobookshelf.org/)-style library:
+  `Author/Series/{index} - Title/`.
+- **Web UI** — library grid with filters, Hardcover search to add new books, release picker,
+  activity page for downloads and import failures, settings page with connection checks.
+
+See `plan.md` for the full design.
+
+## Requirements
+
+- A [Hardcover](https://hardcover.app) account and API token
+  (hardcover.app → Settings → Hardcover API).
+- A running [Prowlarr](https://prowlarr.com) with at least one indexer and a download client
+  configured. The download client must write completed downloads to a directory this app can
+  see (the `/downloads` volume).
+
+## Run with Docker
+
+```bash
+cp .env.example .env    # fill in HARDCOVER_TOKEN and PROWLARR_API_KEY
+# edit docker-compose.yml volume paths, then:
+docker compose up --build
+```
+
+Open http://localhost:8000. The app syncs your Hardcover library on startup and every
+`SYNC_INTERVAL_MINUTES` after that.
+
+Volumes:
+
+| Mount | Purpose |
+|---|---|
+| `/config` | SQLite database |
+| `/downloads` | Your download client's completed-downloads directory |
+| `/audiobooks` | The organized audiobook library (point Audiobookshelf here) |
+
+By default imports **hardlink or copy** files so seeding torrents are left intact; set
+`IMPORT_MODE=move` to relocate them instead. All settings are environment variables — see
+`.env.example` for the full list.
 
 ## Development
 
@@ -21,11 +61,16 @@ Run tests:
 uv run pytest
 ```
 
-## Docker
+External APIs are mocked in tests (respx); no tokens are needed to run them.
 
-```bash
-docker compose up --build
-```
+## How downloading works
 
-Edit `docker-compose.yml` volume paths first: `/downloads` must match your download client's
-completed-downloads directory, `/audiobooks` is the organized library output.
+1. Press **Download…** on a book → the app searches Prowlarr (audiobook category) and shows
+   a release picker sorted by seeders.
+2. **Grab** hands the release to Prowlarr, which forwards it to your download client. The
+   app records what it grabbed.
+3. The watcher polls `/downloads`, matches finished downloads to grabbed releases by name,
+   waits until the files stop changing, then imports them into `/audiobooks`.
+4. Anything that can't be matched or imported shows up on the **Activity** page with retry,
+   manual-import (point it at a folder name in `/downloads`), and cancel actions — the app
+   never guesses.

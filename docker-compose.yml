@@ -9,6 +9,10 @@ services:
       PROWLARR_URL: ${PROWLARR_URL:-http://prowlarr:9696}
       PROWLARR_API_KEY: ${PROWLARR_API_KEY:?set in .env}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-30}
+      PROWLARR_CATEGORIES: ${PROWLARR_CATEGORIES:-3030}
+      WATCH_INTERVAL_SECONDS: ${WATCH_INTERVAL_SECONDS:-30}
+      DOWNLOAD_QUIET_SECONDS: ${DOWNLOAD_QUIET_SECONDS:-120}
+      IMPORT_MODE: ${IMPORT_MODE:-copy}
     volumes:
       - ./config:/config
       # Must be the same directory your download client writes completed downloads to

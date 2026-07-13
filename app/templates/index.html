@@ -11,12 +11,36 @@
     {% if last_sync %}Last sync: {{ last_sync[:16].replace('T', ' ') }} UTC — {{ last_sync_result }}{% else %}Not synced yet.{% endif %}
 </small></p>
 
+<form method="get" action="/" class="filters">
+    <input type="search" name="q" value="{{ q }}" placeholder="Filter title, author, series">
+    <select name="read" aria-label="Read state">
+        <option value="">Any read state</option>
+        {% for s in read_states %}
+        <option value="{{ s }}" {% if read == s %}selected{% endif %}>{{ s.replace('_', ' ') }}</option>
+        {% endfor %}
+    </select>
+    <select name="dl" aria-label="Download state">
+        <option value="">Any download state</option>
+        {% for s in dl_states %}
+        <option value="{{ s }}" {% if dl == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+    </select>
+    <select name="sort" aria-label="Sort">
+        {% for s, label in [("title", "Title"), ("author", "Author"), ("recent", "Recently updated")] %}
+        <option value="{{ s }}" {% if sort == s %}selected{% endif %}>Sort: {{ label }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="secondary">Apply</button>
+</form>
+
 {% if books %}
 <div class="book-grid">
     {% for book in books %}
     {% include "_card.html" %}
     {% endfor %}
 </div>
+{% elif q or read or dl %}
+<p>No books match these filters.</p>
 {% else %}
 <p>No books yet. Press <em>Sync now</em> to pull your Hardcover library.</p>
 {% endif %}

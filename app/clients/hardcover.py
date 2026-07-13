@@ -142,6 +142,15 @@ class HardcoverClient:
     def delete_user_book(self, user_book_id: int) -> None:
         self.execute(DELETE_USER_BOOK, {"id": user_book_id})
 
+    def me(self) -> dict[str, Any]:
+        """Return the authenticated user (id, username); raises if the token
+        is bad. Note: Hardcover's `me` returns a list."""
+        data = self.execute("{ me { id username } }")
+        users = data.get("me") or []
+        if not users:
+            raise HardcoverError("token accepted but no user returned")
+        return users[0]
+
     def fetch_user_books(self) -> list[dict[str, Any]]:
         """Fetch the authenticated user's full library, paginated."""
         entries: list[dict[str, Any]] = []

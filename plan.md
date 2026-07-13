@@ -20,6 +20,7 @@ library folder. Single container, Python, SQLite.
 |---|---|
 | Download flow | App triggers a **grab via Prowlarr**; Prowlarr hands the release to its configured download client. The app watches the download directory for the finished files. |
 | Library layout | **Audiobookshelf-style**: `Author/Series/{SeriesIndex} - Title/` (no series: `Author/Title/`). |
+| Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
 | Read-state sync | **Two-way**: UI changes push to Hardcover immediately; a periodic sync pulls Hardcover changes down. Hardcover is the source of truth for read state. |
 | Web stack | **FastAPI + Jinja2 + HTMX** (server-rendered, HTMX for in-page updates). |
 | Users | Single user, single Hardcover account. No app-level auth in v1 (assumed to run behind a reverse proxy / on a trusted LAN). |
@@ -129,13 +130,17 @@ are collapsed to the canonical book).
 ## Configuration (env vars)
 
 ```
-HARDCOVER_TOKEN        # bearer token from hardcover.app settings
-PROWLARR_URL           # e.g. http://prowlarr:9696
+HARDCOVER_TOKEN         # bearer token from hardcover.app settings ("Bearer " prefix tolerated)
+PROWLARR_URL            # e.g. http://prowlarr:9696
 PROWLARR_API_KEY
-DOWNLOAD_DIR           # default /downloads
-LIBRARY_DIR            # default /audiobooks
-CONFIG_DIR             # default /config (sqlite db location)
-SYNC_INTERVAL_MINUTES  # default 30
+PROWLARR_CATEGORIES     # default 3030 (Audio/Audiobook), comma-separated
+DOWNLOAD_DIR            # default /downloads
+LIBRARY_DIR             # default /audiobooks
+CONFIG_DIR              # default /config (sqlite db location)
+SYNC_INTERVAL_MINUTES   # default 30
+WATCH_INTERVAL_SECONDS  # default 30 (download dir poll)
+DOWNLOAD_QUIET_SECONDS  # default 120 (download "finished" quiet period)
+IMPORT_MODE             # copy (default, hardlink-or-copy) | move
 ```
 
 ## Container
@@ -167,17 +172,17 @@ audiobooklibrary/
 └─ pyproject.toml
 ```
 
-## Milestones
+## Milestones (all complete)
 
-1. **Skeleton** — project scaffold, config, DB models/migrations, FastAPI app boots, healthcheck, Dockerfile.
-2. **Hardcover pull** — client + sync task; library page renders synced books with covers and read states.
-3. **Read-state two-way sync** — UI state changes push to Hardcover; retry/pending handling.
-4. **Hardcover search & add** — search page; add books with a chosen state.
-5. **Prowlarr search & grab** — release picker, grab flow, release tracking.
-6. **Watch & import** — download watcher, importer with Audiobookshelf-style renaming, activity page, failure handling.
-7. **Polish & ship** — settings page, docker-compose example, README, test pass.
+1. ✅ **Skeleton** — project scaffold, config, DB models/migrations, FastAPI app boots, healthcheck, Dockerfile.
+2. ✅ **Hardcover pull** — client + sync task; library page renders synced books with covers and read states.
+3. ✅ **Read-state two-way sync** — UI state changes push to Hardcover; retry/pending handling.
+4. ✅ **Hardcover search & add** — search page; add books with a chosen state.
+5. ✅ **Prowlarr search & grab** — release picker, grab flow, release tracking.
+6. ✅ **Watch & import** — download watcher, importer with Audiobookshelf-style renaming, activity page, failure handling.
+7. ✅ **Polish & ship** — settings page with connection checks, library filters/sort, docker-compose example, README, test pass.
 
-Each milestone ends in a working, testable state.
+Each milestone ended in a working, verified state (one commit per milestone).
 
 ## Testing
 

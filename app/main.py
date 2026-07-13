@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.routes import activity, downloads, search, ui
+from app.routes import activity, downloads, search, settings, ui
 from app.services.importer import download_watch_loop
 from app.services.sync import hardcover_sync_loop
 
@@ -33,6 +33,7 @@ app.include_router(ui.router)
 app.include_router(search.router)
 app.include_router(downloads.router)
 app.include_router(activity.router)
+app.include_router(settings.router)
 
 
 @app.get("/healthz")

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Settings — Audiobook Library{% endblock %}
+
+{% block content %}
+<h2>Settings</h2>
+
+<h3>Connections</h3>
+<table>
+    <tbody>
+        <tr>
+            <td>Hardcover</td>
+            <td>{% if hardcover[0] %}<span class="badge badge-ok">ok</span>{% else %}<span class="badge badge-err">error</span>{% endif %}</td>
+            <td><small>{{ hardcover[1] }}</small></td>
+        </tr>
+        <tr>
+            <td>Prowlarr</td>
+            <td>{% if prowlarr[0] %}<span class="badge badge-ok">ok</span>{% else %}<span class="badge badge-err">error</span>{% endif %}</td>
+            <td><small>{{ prowlarr[1] }}</small></td>
+        </tr>
+    </tbody>
+</table>
+
+<h3>Hardcover sync</h3>
+<p><small>
+    {% if last_sync %}Last sync: {{ last_sync[:16].replace('T', ' ') }} UTC — {{ last_sync_result }}{% else %}Not synced yet.{% endif %}
+</small></p>
+<form method="post" action="/sync">
+    <button type="submit">Sync now</button>
+</form>
+
+<h3>Configuration</h3>
+<p><small>Set via environment variables; restart the container to change.</small></p>
+<table>
+    <tbody>
+        <tr><td>Prowlarr URL</td><td><code>{{ settings.prowlarr_url }}</code></td></tr>
+        <tr><td>Prowlarr categories</td><td><code>{{ settings.prowlarr_categories }}</code></td></tr>
+        <tr><td>Download directory</td><td><code>{{ settings.download_dir }}</code></td></tr>
+        <tr><td>Library directory</td><td><code>{{ settings.library_dir }}</code></td></tr>
+        <tr><td>Config directory</td><td><code>{{ settings.config_dir }}</code></td></tr>
+        <tr><td>Sync interval</td><td><code>{{ settings.sync_interval_minutes }} min</code></td></tr>
+        <tr><td>Watch interval</td><td><code>{{ settings.watch_interval_seconds }} s</code></td></tr>
+        <tr><td>Download quiet period</td><td><code>{{ settings.download_quiet_seconds }} s</code></td></tr>
+        <tr><td>Import mode</td><td><code>{{ settings.import_mode }}</code></td></tr>
+    </tbody>
+</table>
+{% endblock %}

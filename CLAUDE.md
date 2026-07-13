@@ -9,8 +9,10 @@ architecture, data model, workflows, and milestones. Keep it updated as decision
 
 ## Current state
 
-Planning complete; no code yet. Implementation follows the milestones in plan.md
-(1: skeleton → 7: polish). Check git log to see how far the build has progressed.
+All seven plan.md milestones are built, tested, and committed (one commit per milestone).
+The app is feature-complete for v1: Hardcover two-way sync, search/add, Prowlarr grab,
+download watcher + importer, activity and settings pages. Run `uv run pytest` (all external
+APIs are mocked with respx). Future work (public REST API, mobile app) is listed in plan.md.
 
 ## Key decisions (do not silently revisit)
 
@@ -23,6 +25,8 @@ Planning complete; no code yet. Implementation follows the milestones in plan.md
   the work, and the app watches `DOWNLOAD_DIR` for the finished files.
 - **Library layout**: `Author/Series/{SeriesIndex} - Title/`, or `Author/Title/` when there is
   no series. Sanitize filesystem-unsafe characters.
+- **Import mode**: default is hardlink-or-copy (seeding torrents keep their files);
+  `IMPORT_MODE=move` opts into relocating. Do not change the default back to move.
 - **Read state**: two-way sync, but **Hardcover is the source of truth** — push local changes
   first, then pull; Hardcover wins conflicts. Book identity is anchored on the Hardcover
   *book* id (editions collapsed).
