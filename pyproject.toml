@@ -16,6 +16,7 @@ dependencies = [
     "pyjwt>=2.13.0",
     "mutagen>=1.48.1",
     "python-socketio>=5.16.3",
+    "beautifulsoup4>=4.15.0",
 ]
 
 [dependency-groups]
