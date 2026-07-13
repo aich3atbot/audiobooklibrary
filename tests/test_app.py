@@ -1,6 +1,26 @@
 from datetime import date
 
-from app.models import Author, Book, DownloadState, ReadState, Series
+import pytest
+
+from app.models import (
+    AppState,
+    AudioFile,
+    Author,
+    Book,
+    DownloadState,
+    MediaProgress,
+    ReadState,
+    Release,
+    Series,
+)
+
+
+@pytest.fixture(autouse=True)
+def clean_db(db_session):
+    for model in (AudioFile, MediaProgress, Release, Book, Author, Series, AppState):
+        db_session.query(model).delete()
+    db_session.commit()
+    return db_session
 
 
 def test_healthz(client):

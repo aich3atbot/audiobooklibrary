@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from app.abs import library_routes as abs_library_routes
 from app.abs import routes as abs_routes
 from app.auth import RequireAuthMiddleware, resolve_session_secret
 from app.routes import activity, auth, downloads, imports, search, settings, ui
@@ -51,6 +52,7 @@ app.include_router(settings.router)
 app.include_router(auth.router)
 app.include_router(imports.router)
 app.include_router(abs_routes.router)
+app.include_router(abs_library_routes.router)
 
 
 @app.get("/healthz")
