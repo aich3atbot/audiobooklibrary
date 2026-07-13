@@ -9,10 +9,20 @@ architecture, data model, workflows, and milestones. Keep it updated as decision
 
 ## Current state
 
-All seven plan.md milestones are built, tested, and committed (one commit per milestone).
-The app is feature-complete for v1: Hardcover two-way sync, search/add, Prowlarr grab,
-download watcher + importer, activity and settings pages. Run `uv run pytest` (all external
-APIs are mocked with respx). Future work (public REST API, mobile app) is listed in plan.md.
+All seven plan.md milestones plus auth, collection import (/imports), and an
+Audiobookshelf-compatible API are built, tested, and committed. Run `uv run pytest`
+(all external APIs are mocked with respx). The ABS API awaits real-device verification
+with the official app (plan.md phase 6).
+
+## ABS-compatible API
+
+Lives in `app/abs/`. **docs/abs-api-contract.md pins the exact protocol shapes, verified
+from the ABS server/app source — do not code ABS endpoints from memory; check the doc,
+and re-verify against source when extending.** JWTs share the UI session secret; /login
+dispatches JSON (ABS) vs form (UI) by content type. The served entrypoint is
+`app.main:asgi` (FastAPI wrapped in a socket.io shim), not `app.main:app`. Only books
+with `library_path` set are exposed. Finishing a book in an app marks it read on
+Hardcover via `update_read_state`.
 
 ## Key decisions (do not silently revisit)
 

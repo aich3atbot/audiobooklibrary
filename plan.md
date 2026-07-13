@@ -264,17 +264,17 @@ Endpoint surface (v1):
   add a minimal shim only if required.
 
 Build order (commit per phase):
-1. **Contract research** — pin exact request/response shapes from the ABS docs/source
-   (fetched during implementation, not from memory).
-2. **Auth + discovery** — token issuing/verification, login content negotiation, status/
-   ping/authorize/me; middleware split (cookie redirect for UI, 401 JSON for API).
-3. **Audio metadata** — mutagen dependency, `audio_file` table + migration, import-time
-   scan + startup backfill, cover endpoint.
-4. **Catalogue** — libraries/items/series/authors/filterdata/personalized.
-5. **Playback + progress** — play sessions, Range file serving, sync/close,
-   `media_progress` + finished→Hardcover, progress in `/api/me`.
-6. **Device verification** — user tests with the real app against the container;
-   iterate on quirks (incl. the socket.io question).
+1. ✅ **Contract research** — docs/abs-api-contract.md, pinned from ABS server + app source.
+2. ✅ **Auth + discovery** — JWTs (access/refresh/legacy), login content negotiation,
+   status/ping/authorize/me; middleware split (cookie redirect for UI, 401 JSON for API).
+3. ✅ **Audio metadata** — mutagen, `audio_file` + `media_progress` tables, import-time
+   scan + startup backfill.
+4. ✅ **Catalogue** — libraries/items/series/authors/filterdata/personalized + covers.
+5. ✅ **Playback + progress** — direct-play sessions, Range streaming, per-file downloads,
+   sync/close + local-session sync, finished→Hardcover, socket.io shim
+   (entrypoint is now `app.main:asgi`).
+6. **Device verification (pending)** — user tests with the real app against the
+   container; iterate on quirks.
 
 Testing: unit tests generate tiny valid silent MP3s programmatically so mutagen scanning
 and Range serving are covered without binary fixtures; endpoint shapes asserted against

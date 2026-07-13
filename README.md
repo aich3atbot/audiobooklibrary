@@ -78,6 +78,17 @@ External APIs are mocked in tests (respx); no tokens are needed to run them.
    manual-import (point it at a folder name in `/downloads`), and cancel actions — the app
    never guesses.
 
+## Audiobookshelf apps
+
+The server speaks enough of the [Audiobookshelf](https://www.audiobookshelf.org/) API that
+ABS client apps (the official Android/iOS app, and generally Plappa/ShelfPlayer) can
+connect directly: add it as a server using the same URL as the web UI and log in with
+`AUTH_USERNAME`/`AUTH_PASSWORD`. Imported books appear as an "Audiobooks" library with
+covers, series, and chapters; streaming (with seeking), offline downloads, and listening
+progress all work. Progress syncs across devices, and finishing a book in the app marks
+it read on Hardcover automatically. Audio is always direct-played (no transcoding) —
+m4b/m4a/mp3/flac/ogg all play natively in the apps.
+
 ## Importing an existing collection
 
 Mount your current audiobook collection at `/imports` and open the **Imports** page. The
