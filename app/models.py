@@ -87,6 +87,12 @@ class User(Base):
     user_books: Mapped[list["UserBook"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    media_progress: Mapped[list["MediaProgress"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    bookmarks: Mapped[list["Bookmark"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Author(Base):
@@ -141,7 +147,7 @@ class Book(Base):
     audio_files: Mapped[list["AudioFile"]] = relationship(
         back_populates="book", order_by="AudioFile.index", cascade="all, delete-orphan"
     )
-    media_progress: Mapped["MediaProgress | None"] = relationship(
+    media_progress: Mapped[list["MediaProgress"]] = relationship(
         back_populates="book", cascade="all, delete-orphan"
     )
     bookmarks: Mapped[list["Bookmark"]] = relationship(
@@ -228,12 +234,16 @@ class AudioFile(Base):
 
 
 class MediaProgress(Base):
-    """Single-user listening progress per book (ABS clients sync this)."""
+    """One user's listening progress for one book (ABS clients sync this)."""
 
     __tablename__ = "media_progress"
+    __table_args__ = (UniqueConstraint("user_id", "book_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
+    book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), index=True)
     current_time: Mapped[float] = mapped_column(Float, default=0.0)
     duration: Mapped[float] = mapped_column(Float, default=0.0)
     is_finished: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
@@ -243,20 +253,25 @@ class MediaProgress(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
+    user: Mapped[User] = relationship(back_populates="media_progress")
     book: Mapped[Book] = relationship(back_populates="media_progress")
 
 
 class Bookmark(Base):
-    """ABS player bookmarks: a labelled time position in a book."""
+    """ABS player bookmarks: a user's labelled time position in a book."""
 
     __tablename__ = "bookmark"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
     book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), index=True)
     time: Mapped[float] = mapped_column(Float)  # seconds
     title: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    user: Mapped[User] = relationship(back_populates="bookmarks")
     book: Mapped[Book] = relationship(back_populates="bookmarks")
 
 

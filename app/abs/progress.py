@@ -4,6 +4,8 @@
 import logging
 from datetime import datetime, timezone
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Book, MediaProgress, ReadState, User
@@ -26,12 +28,26 @@ def apply_progress(
     duration: float | None = None,
     is_finished: bool | None = None,
 ) -> MediaProgress:
-    """Upsert a book's progress. is_finished=None means derive it from the
-    remaining time; an explicit value (PATCH /me/progress) wins."""
-    row = book.media_progress
+    """Upsert one user's progress for a book. is_finished=None means derive
+    it from the remaining time; an explicit value (PATCH /me/progress) wins."""
+
+    def _get() -> MediaProgress | None:
+        return db.scalar(
+            select(MediaProgress).where(
+                MediaProgress.user_id == user.id, MediaProgress.book_id == book.id
+            )
+        )
+
+    row = _get()
     if row is None:
-        row = MediaProgress(book=book)
+        row = MediaProgress(user_id=user.id, book=book)
         db.add(row)
+        try:
+            db.flush()
+        except IntegrityError:
+            # ABS apps fire sync bursts; another request created the row first
+            db.rollback()
+            row = _get()
 
     if duration:
         row.duration = float(duration)

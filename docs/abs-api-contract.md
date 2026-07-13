@@ -5,9 +5,11 @@ Shapes verified against the ABS server source (`advplyr/audiobookshelf` @ `82aec
 implementation reference for our ABS-compatible API — do not code these endpoints from
 memory; check here, and when in doubt re-check the source.
 
-Conventions used below: our single user maps to an ABS `root` user; the single library is
-`lib_audiobooks`; library item ids are `li_<book.id>`; audio file "ino" is our audio_file
-row id as a string.
+Conventions used below: each of our user accounts maps to an ABS `root`-permission user
+(a deliberate simplification — apps only gate features on it); the token `userId` is the
+account's stable uuid, and mediaProgress/bookmarks/sessions are scoped to that user. The
+single shared library is `lib_audiobooks` (its catalogue is the same for every user);
+library item ids are `li_<book.id>`; audio file "ino" is our audio_file row id as a string.
 
 ## Auth
 

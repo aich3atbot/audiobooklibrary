@@ -90,11 +90,12 @@ def test_listening_stats_zeroed(client, token, library):
     assert body["recentSessions"] == []
 
 
-def test_year_stats_counts_finished(client, token, library):
+def test_year_stats_counts_finished(client, token, library, user):
     from datetime import datetime
 
     db = library["db"]
-    db.add(MediaProgress(book_id=library["mayor"].id, current_time=100.0, duration=100.0,
+    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id,
+                         current_time=100.0, duration=100.0,
                          is_finished=True, finished_at=datetime(2026, 3, 1)))
     db.commit()
 

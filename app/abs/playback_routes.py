@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_abs_user)])
 
-# In-memory playback sessions: single user, sessions die with the process
-# (matches ABS, which also keeps open sessions in memory).
+# In-memory playback sessions, owned by the user who opened them; sessions
+# die with the process (matches ABS, which also keeps them in memory).
 open_sessions: dict[str, dict[str, Any]] = {}
 
 
@@ -61,7 +61,7 @@ async def start_playback(
     except Exception:
         body = {}
 
-    progress = book.media_progress
+    progress = catalogue.get_progress(db, user, book.id)
     start_time = 0.0
     if progress and not progress.is_finished:
         start_time = progress.current_time
@@ -72,7 +72,11 @@ async def start_playback(
     session_id = f"play_{uuid.uuid4().hex}"
     duration = catalogue.book_duration(book)
 
-    open_sessions[session_id] = {"book_id": book.id, "started_at": payloads.now_ms()}
+    open_sessions[session_id] = {
+        "book_id": book.id,
+        "user_id": user.id,
+        "started_at": payloads.now_ms(),
+    }
 
     return {
         "id": session_id,
@@ -119,9 +123,9 @@ def download_file(item_id: str, ino: str, db: Session = Depends(get_db)):
     return FileResponse(path, media_type=file.mime_type, filename=path.name)
 
 
-def _session_book(db: Session, session_id: str) -> Book:
+def _session_book(db: Session, user: User, session_id: str) -> Book:
     session = open_sessions.get(session_id)
-    if session is None:
+    if session is None or session.get("user_id") != user.id:
         raise HTTPException(status_code=404, detail="Session not found")
     book = db.get(Book, session["book_id"])
     if book is None:
@@ -137,7 +141,7 @@ async def sync_session(
     user: User = Depends(require_abs_user),
 ):
     body = await request.json()
-    book = _session_book(db, session_id)
+    book = _session_book(db, user, session_id)
     apply_progress(
         db, user, book, current_time=body.get("currentTime"), duration=body.get("duration")
     )
@@ -157,7 +161,7 @@ async def close_session(
         body = {}
     if session_id in open_sessions:
         if body.get("currentTime") is not None:
-            book = _session_book(db, session_id)
+            book = _session_book(db, user, session_id)
             apply_progress(
                 db,
                 user,
@@ -223,9 +227,10 @@ async def update_progress(
     duration = body.get("duration")
     if current_time is None and body.get("progress") is not None:
         # clients may send only a completion fraction
+        existing = catalogue.get_progress(db, user, book.id)
         effective_duration = (
             duration
-            or (book.media_progress.duration if book.media_progress else 0)
+            or (existing.duration if existing else 0)
             or catalogue.book_duration(book)
         )
         if effective_duration:
@@ -246,22 +251,38 @@ def get_progress(
     item_id: str, db: Session = Depends(get_db), user: User = Depends(require_abs_user)
 ):
     book = _get_book(db, item_id)
-    if book.media_progress is None:
+    progress = catalogue.get_progress(db, user, book.id)
+    if progress is None:
         raise HTTPException(status_code=404, detail="No progress")
-    return catalogue.progress_json(book.media_progress, user)
+    return catalogue.progress_json(progress, user)
+
+
+def _user_bookmark(db: Session, user: User, book: Book, time: float) -> Bookmark | None:
+    from sqlalchemy import select
+
+    return db.scalar(
+        select(Bookmark).where(
+            Bookmark.user_id == user.id, Bookmark.book_id == book.id, Bookmark.time == time
+        )
+    )
 
 
 @router.post("/me/item/{item_id}/bookmark")
-async def create_bookmark(item_id: str, request: Request, db: Session = Depends(get_db)):
+async def create_bookmark(
+    item_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
     body = await request.json()
     book = _get_book(db, item_id)
     time = body.get("time")
     title = body.get("title")
     if time is None or not isinstance(title, str) or not title:
         raise HTTPException(status_code=400, detail="Invalid time or title")
-    bookmark = next((b for b in book.bookmarks if b.time == float(time)), None)
+    bookmark = _user_bookmark(db, user, book, float(time))
     if bookmark is None:
-        bookmark = Bookmark(book=book, time=float(time), title=title)
+        bookmark = Bookmark(user_id=user.id, book=book, time=float(time), title=title)
         db.add(bookmark)
     else:
         bookmark.title = title
@@ -270,13 +291,16 @@ async def create_bookmark(item_id: str, request: Request, db: Session = Depends(
 
 
 @router.patch("/me/item/{item_id}/bookmark")
-async def update_bookmark(item_id: str, request: Request, db: Session = Depends(get_db)):
+async def update_bookmark(
+    item_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
     body = await request.json()
     book = _get_book(db, item_id)
     time = body.get("time")
-    bookmark = next(
-        (b for b in book.bookmarks if time is not None and b.time == float(time)), None
-    )
+    bookmark = _user_bookmark(db, user, book, float(time)) if time is not None else None
     if bookmark is None:
         raise HTTPException(status_code=404, detail="Bookmark not found")
     if isinstance(body.get("title"), str) and body["title"]:
@@ -286,9 +310,14 @@ async def update_bookmark(item_id: str, request: Request, db: Session = Depends(
 
 
 @router.delete("/me/item/{item_id}/bookmark/{time}")
-def delete_bookmark(item_id: str, time: float, db: Session = Depends(get_db)):
+def delete_bookmark(
+    item_id: str,
+    time: float,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
     book = _get_book(db, item_id)
-    bookmark = next((b for b in book.bookmarks if b.time == time), None)
+    bookmark = _user_bookmark(db, user, book, time)
     if bookmark is None:
         raise HTTPException(status_code=404, detail="Bookmark not found")
     db.delete(bookmark)
@@ -311,9 +340,12 @@ def listening_stats(db: Session = Depends(get_db)):
 
 
 @router.get("/me/stats/year/{year}")
-def year_stats(year: int, db: Session = Depends(get_db)):
+def year_stats(
+    year: int, db: Session = Depends(get_db), user: User = Depends(require_abs_user)
+):
     finished = (
         db.query(MediaProgress)
+        .filter(MediaProgress.user_id == user.id)
         .filter(MediaProgress.is_finished.is_(True))
         .filter(MediaProgress.finished_at.is_not(None))
         .all()

@@ -154,9 +154,9 @@ def test_cover_redirects_to_hardcover(client, token, library):
     assert response.headers["location"] == "https://assets.hardcover.app/phm.jpg"
 
 
-def test_personalized_shelves(client, token, library):
+def test_personalized_shelves(client, token, library, user):
     db = library["db"]
-    db.add(MediaProgress(book_id=library["mayor"].id, current_time=30.0,
+    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id, current_time=30.0,
                          duration=100.0, is_finished=False))
     db.commit()
 
@@ -190,9 +190,9 @@ def test_authors_endpoint(client, token, library):
     assert rimmel["lastFirst"] == "Rimmel, Ryan"
 
 
-def test_me_includes_progress(client, token, library):
+def test_me_includes_progress(client, token, library, user):
     db = library["db"]
-    db.add(MediaProgress(book_id=library["hail"].id, current_time=10.0,
+    db.add(MediaProgress(user_id=user.id, book_id=library["hail"].id, current_time=10.0,
                          duration=50.0, is_finished=False))
     db.commit()
 

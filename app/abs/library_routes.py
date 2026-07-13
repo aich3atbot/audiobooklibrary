@@ -80,9 +80,14 @@ def library_items(
 
 
 @router.get("/libraries/{library_id}/personalized")
-def personalized(library_id: str, limit: int = 10, db: Session = Depends(get_db)):
+def personalized(
+    library_id: str,
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
     _check_library(library_id)
-    return catalogue.personalized_shelves(db, limit)
+    return catalogue.personalized_shelves(db, user, limit)
 
 
 @router.get("/libraries/{library_id}/filterdata")
@@ -159,10 +164,9 @@ def get_item(item_id: str, expanded: int = 0, include: str = "",
     book = _get_book(db, item_id)
     item = catalogue.item_expanded(book) if expanded else catalogue.item_minified(book)
     if "progress" in include:
+        progress = catalogue.get_progress(db, user, book.id)
         item["userMediaProgress"] = (
-            catalogue.progress_json(book.media_progress, user)
-            if book.media_progress
-            else None
+            catalogue.progress_json(progress, user) if progress else None
         )
     return item
 

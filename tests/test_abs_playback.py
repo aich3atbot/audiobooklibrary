@@ -50,18 +50,19 @@ def test_play_creates_direct_session(client, token, library):
     assert body["id"] in open_sessions
 
 
-def test_play_resumes_from_progress(client, token, library):
+def test_play_resumes_from_progress(client, token, library, user):
     db = library["db"]
-    db.add(MediaProgress(book_id=library["mayor"].id, current_time=42.0, duration=100.0))
+    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id,
+                         current_time=42.0, duration=100.0))
     db.commit()
 
     body = play(client, token, f"li_{library['mayor'].id}").json()
     assert body["startTime"] == 42.0
 
 
-def test_play_restarts_finished_book(client, token, library):
+def test_play_restarts_finished_book(client, token, library, user):
     db = library["db"]
-    db.add(MediaProgress(book_id=library["mayor"].id, current_time=100.0,
+    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id, current_time=100.0,
                          duration=100.0, is_finished=True))
     db.commit()
 
@@ -215,11 +216,54 @@ def test_patch_progress_finished_and_unfinished(client, token, library, tokenles
     assert progress.finished_at is None
 
 
-def test_get_progress(client, token, library):
+def test_get_progress(client, token, library, user):
     db = library["db"]
-    db.add(MediaProgress(book_id=library["mayor"].id, current_time=25.0, duration=100.0))
+    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id,
+                         current_time=25.0, duration=100.0))
     db.commit()
 
     body = get(client, token, f"/api/me/progress/li_{library['mayor'].id}").json()
     assert body["currentTime"] == 25.0
     assert body["progress"] == pytest.approx(0.25)
+
+
+def test_progress_isolated_between_users(client, token, library, user, db_session):
+    """User B never sees user A's listening progress or gets their resume
+    point; the shared catalogue stays visible to both."""
+    from app.models import User
+    from tests.conftest import cheap_password_hash
+
+    other = db_session.query(User).filter_by(username="pat").one_or_none()
+    if other is None:
+        other = User(username="pat", password_hash=cheap_password_hash())
+        db_session.add(other)
+        db_session.commit()
+
+    db = library["db"]
+    item_id = f"li_{library['mayor'].id}"
+    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id,
+                         current_time=42.0, duration=100.0))
+    db.commit()
+
+    other_login = client.post(
+        "/login", json={"username": "pat", "password": "hunter2"},
+        headers={"x-return-tokens": "true"},
+    ).json()
+    other_token = other_login["user"]["accessToken"]
+
+    # login payload progress lists are disjoint
+    assert other_login["user"]["mediaProgress"] == []
+
+    # user A resumes at 42s; user B starts from zero on the same shared book
+    assert play(client, token, item_id).json()["startTime"] == 42.0
+    assert play(client, other_token, item_id).json()["startTime"] == 0.0
+
+    # explicit progress fetch 404s for the user without any
+    assert get(client, other_token, f"/api/me/progress/{item_id}").status_code == 404
+    assert get(client, token, f"/api/me/progress/{item_id}").status_code == 200
+
+    # a session opened by A cannot be synced by B
+    session_id = play(client, token, item_id).json()["id"]
+    response = post(client, other_token, f"/api/session/{session_id}/sync",
+                    json={"currentTime": 50.0, "duration": 100.0})
+    assert response.status_code == 404

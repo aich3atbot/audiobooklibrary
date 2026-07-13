@@ -34,7 +34,6 @@ def eligible_books(db: Session) -> list[Book]:
                 joinedload(Book.author),
                 joinedload(Book.series),
                 joinedload(Book.audio_files),
-                joinedload(Book.media_progress),
             )
         )
         .unique()
@@ -372,9 +371,22 @@ def progress_json(progress: MediaProgress, user: User) -> dict[str, Any]:
     }
 
 
+def get_progress(db: Session, user: User, book_id: int) -> MediaProgress | None:
+    return db.scalar(
+        select(MediaProgress).where(
+            MediaProgress.user_id == user.id, MediaProgress.book_id == book_id
+        )
+    )
+
+
+def progress_map(db: Session, user: User) -> dict[int, MediaProgress]:
+    """The user's progress rows keyed by book id."""
+    rows = db.scalars(select(MediaProgress).where(MediaProgress.user_id == user.id))
+    return {row.book_id: row for row in rows}
+
+
 def all_media_progress(db: Session, user: User) -> list[dict[str, Any]]:
-    # Progress is still global; per-user filtering lands with the data pivot.
-    rows = db.scalars(select(MediaProgress)).all()
+    rows = db.scalars(select(MediaProgress).where(MediaProgress.user_id == user.id)).all()
     return [progress_json(row, user) for row in rows]
 
 
@@ -388,8 +400,7 @@ def bookmark_json(bookmark: Bookmark) -> dict[str, Any]:
 
 
 def all_bookmarks(db: Session, user: User) -> list[dict[str, Any]]:
-    # Bookmarks are still global; per-user filtering lands with the data pivot.
-    rows = db.scalars(select(Bookmark)).all()
+    rows = db.scalars(select(Bookmark).where(Bookmark.user_id == user.id)).all()
     return [bookmark_json(row) for row in rows]
 
 
@@ -447,21 +458,24 @@ def search_library(db: Session, query: str, limit: int) -> dict[str, Any]:
     }
 
 
-def personalized_shelves(db: Session, limit: int = 10) -> list[dict[str, Any]]:
+def personalized_shelves(db: Session, user: User, limit: int = 10) -> list[dict[str, Any]]:
     books = eligible_books(db)
+    progress = progress_map(db, user)
+
+    def prog(b: Book) -> MediaProgress | None:
+        return progress.get(b.id)
 
     in_progress = [
         b for b in books
-        if b.media_progress and not b.media_progress.is_finished
-        and b.media_progress.current_time > 0
+        if prog(b) and not prog(b).is_finished and prog(b).current_time > 0
     ]
-    in_progress.sort(key=lambda b: b.media_progress.updated_at, reverse=True)
+    in_progress.sort(key=lambda b: prog(b).updated_at, reverse=True)
 
     recent = sorted(books, key=lambda b: b.created_at, reverse=True)
 
-    finished = [b for b in books if b.media_progress and b.media_progress.is_finished]
+    finished = [b for b in books if prog(b) and prog(b).is_finished]
     finished.sort(
-        key=lambda b: b.media_progress.finished_at or b.media_progress.updated_at, reverse=True
+        key=lambda b: prog(b).finished_at or prog(b).updated_at, reverse=True
     )
 
     shelves = []
