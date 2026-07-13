@@ -1,9 +1,7 @@
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,11 +10,11 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import Book, ReadState
 from app.services.sync import add_book
+from app.templating import templates
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 ADDABLE_STATES = (ReadState.WANT_TO_READ, ReadState.READING, ReadState.READ)
 

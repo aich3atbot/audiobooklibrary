@@ -1,4 +1,4 @@
-<article id="book-{{ book.id }}">
+<article id="book-{{ book.id }}"{% if oob is defined and oob %} hx-swap-oob="outerHTML"{% endif %}>
     {% if book.cover_url %}<img src="{{ book.cover_url }}" alt="Cover of {{ book.title }}" loading="lazy">{% endif %}
     <h4>{{ book.title }}</h4>
     <p>{{ book.author.name }}</p>
@@ -12,7 +12,10 @@
     </select>
     <p>
         {% if book.read_at %}<span class="badge">read {{ book.read_at }}</span>{% endif %}
-        {% if book.download_state.value != 'none' %}<span class="badge">{{ book.download_state.value }}</span>{% endif %}
+        {% if book.download_state.value != 'none' %}<span class="badge badge-dl-{{ book.download_state.value }}">{{ book.download_state.value }}</span>{% endif %}
         {% if book.pending_push %}<span class="badge badge-pending" title="Change not yet confirmed by Hardcover">sync pending</span>{% endif %}
     </p>
+    {% if book.download_state.value in ('none', 'failed') %}
+    <button class="secondary download-btn" hx-get="/books/{{ book.id }}/releases" hx-target="#modal" hx-swap="outerHTML">Download…</button>
+    {% endif %}
 </article>

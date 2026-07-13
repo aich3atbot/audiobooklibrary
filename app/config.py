@@ -10,10 +10,15 @@ class Settings(BaseSettings):
     hardcover_token: str = ""
     prowlarr_url: str = "http://host.docker.internal:9696"
     prowlarr_api_key: str = ""
+    prowlarr_categories: str = "3030"  # comma-separated torznab category ids
     download_dir: Path = Path("/downloads")
     library_dir: Path = Path("/audiobooks")
     config_dir: Path = Path("/config")
     sync_interval_minutes: int = 30
+
+    @property
+    def category_ids(self) -> tuple[int, ...]:
+        return tuple(int(c) for c in self.prowlarr_categories.split(",") if c.strip())
 
     @property
     def database_url(self) -> str:

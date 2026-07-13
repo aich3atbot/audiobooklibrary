@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.routes import search, ui
+from app.routes import downloads, search, ui
 from app.services.sync import hardcover_sync_loop
 
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +28,7 @@ app = FastAPI(title="Audiobook Library", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 app.include_router(ui.router)
 app.include_router(search.router)
+app.include_router(downloads.router)
 
 
 @app.get("/healthz")

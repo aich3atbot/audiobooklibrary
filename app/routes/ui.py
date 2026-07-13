@@ -1,8 +1,5 @@
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
@@ -15,9 +12,9 @@ from app.services.sync import (
     run_sync_once,
     update_read_state,
 )
+from app.templating import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 
 @router.get("/", response_class=HTMLResponse)

@@ -1,0 +1,38 @@
+<div id="modal">
+<dialog open>
+    <article class="release-dialog">
+        <header>
+            <button aria-label="Close" rel="prev" onclick="this.closest('dialog').remove()"></button>
+            <strong>Releases — {{ book.title }}</strong>
+        </header>
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+        {% if releases %}
+        <table>
+            <thead><tr><th>Release</th><th>Size</th><th>Seeders</th><th>Indexer</th><th></th></tr></thead>
+            <tbody>
+                {% for r in releases %}
+                <tr>
+                    <td>{{ r.title }}{% if loop.first %} <span class="badge">best match</span>{% endif %}</td>
+                    <td>{{ r.size | human_size }}</td>
+                    <td>{{ r.seeders if r.seeders is not none else "?" }}</td>
+                    <td>{{ r.indexer }}</td>
+                    <td>
+                        <form hx-post="/books/{{ book.id }}/grab" hx-target="#modal" hx-swap="outerHTML">
+                            <input type="hidden" name="guid" value="{{ r.guid }}">
+                            <input type="hidden" name="indexer_id" value="{{ r.indexerId }}">
+                            <input type="hidden" name="title" value="{{ r.title }}">
+                            <input type="hidden" name="size" value="{{ r.size or '' }}">
+                            <input type="hidden" name="seeders" value="{{ r.seeders if r.seeders is not none else '' }}">
+                            <button type="submit">Grab</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% elif not error %}
+        <p>No releases found for this book.</p>
+        {% endif %}
+    </article>
+</dialog>
+</div>

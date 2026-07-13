@@ -29,6 +29,29 @@
     height: auto;
 }
 
+.download-btn {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    margin: 0;
+    width: 100%;
+}
+
+.release-dialog {
+    max-width: 90vw;
+    width: 60rem;
+}
+
+.release-dialog table {
+    font-size: 0.85rem;
+}
+
+.release-dialog form {
+    margin: 0;
+}
+
+.badge-dl-imported { background: #2e7d32; color: white; }
+.badge-dl-failed { background: #b71c1c; color: white; }
+
 .badge-pending {
     background: var(--pico-mark-background-color, #ffdd57);
     color: #333;
