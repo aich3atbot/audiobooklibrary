@@ -1,7 +1,7 @@
 [project]
 name = "audiobooklibrary"
 version = "0.1.0"
-description = "Self-hosted audiobook manager: Hardcover sync, Prowlarr search, download import"
+description = "Self-hosted audiobook manager: Hardcover sync, torrent search, download import"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

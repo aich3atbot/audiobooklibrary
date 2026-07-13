@@ -108,11 +108,16 @@ class Release(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), index=True)
-    prowlarr_guid: Mapped[str] = mapped_column(Text)
-    indexer_id: Mapped[int] = mapped_column(Integer)
+    guid: Mapped[str] = mapped_column(Text)  # the release's details-page URL
+    indexer: Mapped[str] = mapped_column(String(100), default="")
     title: Mapped[str] = mapped_column(Text)
     size: Mapped[int | None] = mapped_column(Integer)
-    seeders: Mapped[int | None] = mapped_column(Integer)
+    # What the download client is doing with it. info_hash is how we find the
+    # torrent again; it is null on releases grabbed before the direct-torrent
+    # rewrite, which fall back to matching the download folder by name.
+    info_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    magnet_uri: Mapped[str | None] = mapped_column(Text)
+    progress: Mapped[float | None] = mapped_column(Float)  # percent, 0–100
     grabbed_at: Mapped[datetime | None] = mapped_column(DateTime)
     # grabbed -> downloading -> imported | failed | cancelled
     status: Mapped[str] = mapped_column(String(50), default="grabbed")

@@ -12,9 +12,6 @@ class Settings(BaseSettings):
     auth_password: str = ""
 
     hardcover_token: str = ""
-    prowlarr_url: str = "http://host.docker.internal:9696"
-    prowlarr_api_key: str = ""
-    prowlarr_categories: str = "3030"  # comma-separated torznab category ids
 
     # Torrent indexer (AudioBookBay) and the torrent client that downloads it.
     index_url: str = ""
@@ -41,10 +38,6 @@ class Settings(BaseSettings):
     @property
     def auth_enabled(self) -> bool:
         return bool(self.auth_username and self.auth_password)
-
-    @property
-    def category_ids(self) -> tuple[int, ...]:
-        return tuple(int(c) for c in self.prowlarr_categories.split(",") if c.strip())
 
     @property
     def database_url(self) -> str:

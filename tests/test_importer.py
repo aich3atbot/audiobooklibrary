@@ -57,11 +57,10 @@ def book(clean_db):
 def release(clean_db, book):
     release = Release(
         book=book,
-        prowlarr_guid="guid-1",
-        indexer_id=1,
+        guid="http://abb.test/abss/mayor-of-noobtown/",
+        indexer="AudioBookBay",
         title="The Mayor of Noobtown - Ryan Rimmel [M4B] [32 Kbps]",
         size=1000,
-        seeders=5,
         grabbed_at=datetime.now(timezone.utc),
         status="grabbed",
     )

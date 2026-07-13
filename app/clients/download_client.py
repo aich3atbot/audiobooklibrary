@@ -49,7 +49,7 @@ class DownloadClient(Protocol):
     def close(self) -> None: ...
 
 
-def get_download_client() -> DownloadClient:
+def get_download_client(timeout: float = 30.0) -> DownloadClient:
     """Build the configured download client from settings."""
     from app.clients.deluge import DelugeClient
     from app.config import get_settings
@@ -61,4 +61,4 @@ def get_download_client() -> DownloadClient:
         )
     if not settings.download_url:
         raise DownloadClientError("DOWNLOAD_URL is not set")
-    return DelugeClient(settings.download_url, settings.download_password)
+    return DelugeClient(settings.download_url, settings.download_password, timeout=timeout)

@@ -13,9 +13,14 @@
             <td><small>{{ hardcover[1] }}</small></td>
         </tr>
         <tr>
-            <td>Prowlarr</td>
-            <td>{% if prowlarr[0] %}<span class="badge badge-ok">ok</span>{% else %}<span class="badge badge-err">error</span>{% endif %}</td>
-            <td><small>{{ prowlarr[1] }}</small></td>
+            <td>Indexer</td>
+            <td>{% if indexer[0] %}<span class="badge badge-ok">ok</span>{% else %}<span class="badge badge-err">error</span>{% endif %}</td>
+            <td><small>{{ indexer[1] }}</small></td>
+        </tr>
+        <tr>
+            <td>Download client</td>
+            <td>{% if download_client[0] %}<span class="badge badge-ok">ok</span>{% else %}<span class="badge badge-err">error</span>{% endif %}</td>
+            <td><small>{{ download_client[1] }}</small></td>
         </tr>
     </tbody>
 </table>
@@ -32,8 +37,9 @@
 <p><small>Set via environment variables; restart the container to change.</small></p>
 <table>
     <tbody>
-        <tr><td>Prowlarr URL</td><td><code>{{ settings.prowlarr_url }}</code></td></tr>
-        <tr><td>Prowlarr categories</td><td><code>{{ settings.prowlarr_categories }}</code></td></tr>
+        <tr><td>Indexer URL</td><td><code>{{ settings.index_url }}</code></td></tr>
+        <tr><td>Download client</td><td><code>{{ settings.download_client }}</code></td></tr>
+        <tr><td>Download client URL</td><td><code>{{ settings.download_url }}</code></td></tr>
         <tr><td>Download directory</td><td><code>{{ settings.download_dir }}</code></td></tr>
         <tr><td>Library directory</td><td><code>{{ settings.library_dir }}</code></td></tr>
         <tr><td>Config directory</td><td><code>{{ settings.config_dir }}</code></td></tr>

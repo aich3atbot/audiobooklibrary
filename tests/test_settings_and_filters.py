@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 import respx
@@ -5,7 +7,8 @@ import respx
 from app.clients.hardcover import API_URL
 from app.models import AppState, Author, Book, DownloadState, ReadState, Release, Series
 
-PROWLARR = "http://host.docker.internal:9696"
+ABB = "http://abb.test"
+DELUGE = "http://deluge.test:8112"
 
 
 @pytest.fixture
@@ -22,8 +25,11 @@ def hardcover_token(test_settings, monkeypatch):
 
 
 @pytest.fixture
-def prowlarr_key(test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings, "prowlarr_api_key", "key")
+def download_config(test_settings, monkeypatch):
+    monkeypatch.setattr(test_settings, "index_url", ABB)
+    monkeypatch.setattr(test_settings, "download_url", DELUGE)
+    monkeypatch.setattr(test_settings, "download_client", "deluge")
+    monkeypatch.setattr(test_settings, "download_password", "")
 
 
 @pytest.fixture
@@ -84,31 +90,48 @@ def test_bad_filter_values_ignored(client, library):
     assert len(titles(response)) == 3
 
 
+def deluge_ok(request):
+    method = json.loads(request.content)["method"]
+    results = {"auth.login": True, "web.connected": True, "daemon.get_version": "2.2.0"}
+    return httpx.Response(200, json={"result": results[method], "error": None})
+
+
 @respx.mock
-def test_settings_page_all_connected(client, clean_db, hardcover_token, prowlarr_key):
+def test_settings_page_all_connected(client, clean_db, hardcover_token, download_config):
     respx.post(API_URL).mock(
         return_value=httpx.Response(
             200, json={"data": {"me": [{"id": 1, "username": "davidr"}]}}
         )
     )
-    respx.get(f"{PROWLARR}/api/v1/system/status").mock(
-        return_value=httpx.Response(200, json={"appName": "Prowlarr", "version": "10.0.0"})
-    )
+    respx.get(f"{ABB}/").mock(return_value=httpx.Response(200, text="<html></html>"))
+    respx.post(f"{DELUGE}/json").mock(side_effect=deluge_ok)
 
     response = client.get("/settings")
 
     assert response.status_code == 200
     assert "connected as davidr" in response.text
-    assert "Prowlarr 10.0.0" in response.text
-    assert response.text.count(">ok</span>") == 2
+    assert "reachable" in response.text
+    assert "Deluge daemon 2.2.0" in response.text
+    assert response.text.count(">ok</span>") == 3
 
 
 @respx.mock
-def test_settings_page_shows_errors(client, clean_db, hardcover_token, prowlarr_key):
+def test_settings_page_shows_errors(client, clean_db, hardcover_token, download_config):
     respx.post(API_URL).mock(side_effect=httpx.ConnectError("down"))
-    respx.get(f"{PROWLARR}/api/v1/system/status").mock(return_value=httpx.Response(401))
+    respx.get(f"{ABB}/").mock(return_value=httpx.Response(503))
+    respx.post(f"{DELUGE}/json").mock(side_effect=httpx.ConnectError("down"))
 
     response = client.get("/settings")
 
     assert response.status_code == 200
-    assert response.text.count(">error</span>") == 2
+    assert response.text.count(">error</span>") == 3
+
+
+def test_settings_page_reports_unset_connections(client, clean_db, test_settings, monkeypatch):
+    monkeypatch.setattr(test_settings, "index_url", "")
+    monkeypatch.setattr(test_settings, "download_url", "")
+
+    response = client.get("/settings")
+
+    assert "INDEX_URL not set" in response.text
+    assert "DOWNLOAD_URL not set" in response.text

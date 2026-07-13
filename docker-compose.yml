@@ -8,16 +8,19 @@ services:
       AUTH_USERNAME: ${AUTH_USERNAME:-}
       AUTH_PASSWORD: ${AUTH_PASSWORD:-}
       HARDCOVER_TOKEN: ${HARDCOVER_TOKEN:?set in .env}
-      PROWLARR_URL: ${PROWLARR_URL:-http://prowlarr:9696}
-      PROWLARR_API_KEY: ${PROWLARR_API_KEY:?set in .env}
+      INDEX_URL: ${INDEX_URL:?set in .env}
+      DOWNLOAD_CLIENT: ${DOWNLOAD_CLIENT:-deluge}
+      DOWNLOAD_URL: ${DOWNLOAD_URL:?set in .env}
+      DOWNLOAD_USERNAME: ${DOWNLOAD_USERNAME:-}
+      DOWNLOAD_PASSWORD: ${DOWNLOAD_PASSWORD:-}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-30}
-      PROWLARR_CATEGORIES: ${PROWLARR_CATEGORIES:-3030}
       WATCH_INTERVAL_SECONDS: ${WATCH_INTERVAL_SECONDS:-30}
       DOWNLOAD_QUIET_SECONDS: ${DOWNLOAD_QUIET_SECONDS:-120}
       IMPORT_MODE: ${IMPORT_MODE:-copy}
     volumes:
       - ./config:/config
-      # Must be the same directory your download client writes completed downloads to
+      # Must be the directory Deluge writes *completed* downloads to — if Deluge
+      # saves to /downloads/complete, mount that path here, not its parent.
       - ./downloads:/downloads
       - ./audiobooks:/audiobooks
       # Optional: staging area for an existing collection, reviewed and

@@ -29,8 +29,8 @@ def list_releases(book_id: int, request: Request, db: Session = Depends(get_db))
     try:
         releases = search_releases(book)
     except Exception:
-        logger.exception("Prowlarr search failed for %s", book.title)
-        error = "Prowlarr search failed — check the connection and try again."
+        logger.exception("Indexer search failed for %s", book.title)
+        error = "Search failed — check the indexer connection and try again."
     return templates.TemplateResponse(
         request,
         "_releases.html",
@@ -43,15 +43,14 @@ def grab(
     book_id: int,
     request: Request,
     guid: str = Form(...),
-    indexer_id: int = Form(...),
+    indexer: str = Form(...),
     title: str = Form(...),
     size: int | None = Form(None),
-    seeders: int | None = Form(None),
     db: Session = Depends(get_db),
 ):
     book = _get_book(db, book_id)
     try:
-        grab_release(db, book, guid, indexer_id, title, size, seeders)
+        grab_release(db, book, guid, indexer, title, size)
     except Exception:
         logger.exception("Grab failed for %s", book.title)
         return templates.TemplateResponse(
