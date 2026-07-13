@@ -98,6 +98,9 @@ class Book(Base):
     media_progress: Mapped["MediaProgress | None"] = relationship(
         back_populates="book", cascade="all, delete-orphan"
     )
+    bookmarks: Mapped[list["Bookmark"]] = relationship(
+        back_populates="book", order_by="Bookmark.time", cascade="all, delete-orphan"
+    )
 
 
 class Release(Base):
@@ -155,6 +158,20 @@ class MediaProgress(Base):
     )
 
     book: Mapped[Book] = relationship(back_populates="media_progress")
+
+
+class Bookmark(Base):
+    """ABS player bookmarks: a labelled time position in a book."""
+
+    __tablename__ = "bookmark"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), index=True)
+    time: Mapped[float] = mapped_column(Float)  # seconds
+    title: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    book: Mapped[Book] = relationship(back_populates="bookmarks")
 
 
 class AppState(Base):

@@ -120,20 +120,36 @@ def library_series(library_id: str, limit: int = 0, page: int = 0,
 @router.get("/libraries/{library_id}/authors")
 def library_authors(library_id: str, db: Session = Depends(get_db)):
     _check_library(library_id)
-    books = catalogue.eligible_books(db)
     counts: dict[int, dict] = {}
-    for book in books:
-        entry = counts.setdefault(
-            book.author_id,
-            {"id": f"aut_{book.author_id}", "asin": None, "name": book.author.name,
-             "lastFirst": catalogue.name_last_first(book.author.name),
-             "description": None, "imagePath": None,
-             "addedAt": payloads.USER_CREATED_AT_MS,
-             "updatedAt": payloads.USER_CREATED_AT_MS,
-             "numBooks": 0, "libraryId": payloads.LIBRARY_ID},
-        )
+    for book in catalogue.eligible_books(db):
+        entry = counts.setdefault(book.author_id, catalogue.author_entry(book))
         entry["numBooks"] += 1
     return {"authors": sorted(counts.values(), key=lambda a: a["name"].lower())}
+
+
+@router.get("/libraries/{library_id}/search")
+def library_search(library_id: str, q: str = "", limit: int = 12,
+                   db: Session = Depends(get_db)):
+    _check_library(library_id)
+    if not q.strip():
+        raise HTTPException(status_code=400, detail='Query param "q" must be a string')
+    return catalogue.search_library(db, q, limit)
+
+
+@router.get("/libraries/{library_id}/playlists")
+def library_playlists(library_id: str, limit: int = 0, page: int = 0):
+    # Playlists aren't supported; empty result keeps the app's tab rendering.
+    _check_library(library_id)
+    return {"results": [], "total": 0, "limit": limit, "page": page}
+
+
+@router.get("/libraries/{library_id}/collections")
+def library_collections(library_id: str, limit: int = 0, page: int = 0):
+    # Collections aren't supported; empty result keeps the app's tab rendering.
+    _check_library(library_id)
+    return {"results": [], "total": 0, "limit": limit, "page": page,
+            "sortBy": None, "sortDesc": False, "filterBy": None,
+            "minified": False, "include": ""}
 
 
 @router.get("/items/{item_id}")

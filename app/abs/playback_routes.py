@@ -14,7 +14,7 @@ from app.abs import catalogue, payloads
 from app.abs.deps import require_abs_user
 from app.abs.progress import apply_progress
 from app.db import get_db
-from app.models import AudioFile, Book
+from app.models import AudioFile, Book, Bookmark, MediaProgress
 
 logger = logging.getLogger(__name__)
 
@@ -186,11 +186,22 @@ async def sync_local_sessions(request: Request, db: Session = Depends(get_db)):
 async def update_progress(item_id: str, request: Request, db: Session = Depends(get_db)):
     body = await request.json()
     book = _get_book(db, item_id)
+    current_time = body.get("currentTime")
+    duration = body.get("duration")
+    if current_time is None and body.get("progress") is not None:
+        # clients may send only a completion fraction
+        effective_duration = (
+            duration
+            or (book.media_progress.duration if book.media_progress else 0)
+            or catalogue.book_duration(book)
+        )
+        if effective_duration:
+            current_time = float(body["progress"]) * effective_duration
     apply_progress(
         db,
         book,
-        current_time=body.get("currentTime"),
-        duration=body.get("duration"),
+        current_time=current_time,
+        duration=duration,
         is_finished=body.get("isFinished"),
     )
     return Response(status_code=200)
@@ -202,3 +213,88 @@ def get_progress(item_id: str, db: Session = Depends(get_db)):
     if book.media_progress is None:
         raise HTTPException(status_code=404, detail="No progress")
     return catalogue.progress_json(book.media_progress)
+
+
+@router.post("/me/item/{item_id}/bookmark")
+async def create_bookmark(item_id: str, request: Request, db: Session = Depends(get_db)):
+    body = await request.json()
+    book = _get_book(db, item_id)
+    time = body.get("time")
+    title = body.get("title")
+    if time is None or not isinstance(title, str) or not title:
+        raise HTTPException(status_code=400, detail="Invalid time or title")
+    bookmark = next((b for b in book.bookmarks if b.time == float(time)), None)
+    if bookmark is None:
+        bookmark = Bookmark(book=book, time=float(time), title=title)
+        db.add(bookmark)
+    else:
+        bookmark.title = title
+    db.commit()
+    return catalogue.bookmark_json(bookmark)
+
+
+@router.patch("/me/item/{item_id}/bookmark")
+async def update_bookmark(item_id: str, request: Request, db: Session = Depends(get_db)):
+    body = await request.json()
+    book = _get_book(db, item_id)
+    time = body.get("time")
+    bookmark = next(
+        (b for b in book.bookmarks if time is not None and b.time == float(time)), None
+    )
+    if bookmark is None:
+        raise HTTPException(status_code=404, detail="Bookmark not found")
+    if isinstance(body.get("title"), str) and body["title"]:
+        bookmark.title = body["title"]
+    db.commit()
+    return catalogue.bookmark_json(bookmark)
+
+
+@router.delete("/me/item/{item_id}/bookmark/{time}")
+def delete_bookmark(item_id: str, time: float, db: Session = Depends(get_db)):
+    book = _get_book(db, item_id)
+    bookmark = next((b for b in book.bookmarks if b.time == time), None)
+    if bookmark is None:
+        raise HTTPException(status_code=404, detail="Bookmark not found")
+    db.delete(bookmark)
+    db.commit()
+    return Response(status_code=200)
+
+
+@router.get("/me/listening-stats")
+def listening_stats(db: Session = Depends(get_db)):
+    # We don't persist listening sessions; zeroed stats keep the app's
+    # stats screen rendering.
+    return {
+        "totalTime": 0,
+        "items": {},
+        "days": {},
+        "dayOfWeek": {},
+        "today": 0,
+        "recentSessions": [],
+    }
+
+
+@router.get("/me/stats/year/{year}")
+def year_stats(year: int, db: Session = Depends(get_db)):
+    finished = (
+        db.query(MediaProgress)
+        .filter(MediaProgress.is_finished.is_(True))
+        .filter(MediaProgress.finished_at.is_not(None))
+        .all()
+    )
+    finished_in_year = [p for p in finished if p.finished_at.year == year]
+    return {
+        "totalListeningSessions": 0,
+        "totalListeningTime": 0,
+        "totalBookListeningTime": 0,
+        "totalPodcastListeningTime": 0,
+        "topAuthors": [],
+        "topGenres": [],
+        "mostListenedNarrator": None,
+        "mostListenedMonth": None,
+        "numBooksFinished": len(finished_in_year),
+        "numBooksListened": len(finished_in_year),
+        "longestAudiobookFinished": None,
+        "booksWithCovers": [],
+        "finishedBooksWithCovers": [],
+    }

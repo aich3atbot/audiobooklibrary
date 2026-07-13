@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.abs import payloads, tokens
 from app.config import get_settings
-from app.models import Book, MediaProgress
+from app.models import Book, Bookmark, MediaProgress
 
 COVER_NAMES = ("cover", "folder")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
@@ -375,6 +375,74 @@ def progress_json(progress: MediaProgress) -> dict[str, Any]:
 def all_media_progress(db: Session) -> list[dict[str, Any]]:
     rows = db.scalars(select(MediaProgress)).all()
     return [progress_json(row) for row in rows]
+
+
+def bookmark_json(bookmark: Bookmark) -> dict[str, Any]:
+    return {
+        "libraryItemId": payloads.item_id(bookmark.book_id),
+        "title": bookmark.title,
+        "time": bookmark.time,
+        "createdAt": _ms(bookmark.created_at),
+    }
+
+
+def all_bookmarks(db: Session) -> list[dict[str, Any]]:
+    rows = db.scalars(select(Bookmark)).all()
+    return [bookmark_json(row) for row in rows]
+
+
+def author_entry(book: Book) -> dict[str, Any]:
+    return {
+        "id": f"aut_{book.author_id}",
+        "asin": None,
+        "name": book.author.name,
+        "lastFirst": name_last_first(book.author.name),
+        "description": None,
+        "imagePath": None,
+        "addedAt": payloads.USER_CREATED_AT_MS,
+        "updatedAt": payloads.USER_CREATED_AT_MS,
+        "numBooks": 0,
+        "libraryId": payloads.LIBRARY_ID,
+    }
+
+
+def search_library(db: Session, query: str, limit: int) -> dict[str, Any]:
+    """GET /api/libraries/:id/search response: books matching title/author/
+    series, plus matched series (with their books) and authors."""
+    q = query.strip().lower()
+    books = eligible_books(db)
+
+    book_matches = [
+        b for b in books
+        if q in b.title.lower()
+        or q in b.author.name.lower()
+        or (b.series and q in b.series.name.lower())
+    ][:limit]
+
+    series_matches: dict[int, dict[str, Any]] = {}
+    for book in books:
+        if book.series and q in book.series.name.lower():
+            group = series_matches.setdefault(
+                book.series_id,
+                {"series": {"id": f"ser_{book.series_id}", "name": book.series.name},
+                 "books": []},
+            )
+            group["books"].append(item_minified(book))
+
+    author_matches: dict[int, dict[str, Any]] = {}
+    for book in books:
+        if q in book.author.name.lower():
+            entry = author_matches.setdefault(book.author_id, author_entry(book))
+            entry["numBooks"] += 1
+
+    return {
+        "book": [{"libraryItem": item_expanded(b)} for b in book_matches],
+        "narrators": [],
+        "tags": [],
+        "genres": [],
+        "series": list(series_matches.values())[:limit],
+        "authors": list(author_matches.values())[:limit],
+    }
 
 
 def personalized_shelves(db: Session, limit: int = 10) -> list[dict[str, Any]]:

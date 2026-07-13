@@ -96,7 +96,7 @@ def user_json(db: Session, minimal: bool = False) -> dict[str, Any]:
         "isOldToken": False,
         "mediaProgress": media_progress_list(db),
         "seriesHideFromContinueListening": [],
-        "bookmarks": [],
+        "bookmarks": _bookmarks_list(db),
         "isActive": True,
         "isLocked": False,
         "lastSeen": now_ms(),
@@ -113,10 +113,15 @@ def user_json(db: Session, minimal: bool = False) -> dict[str, Any]:
 
 
 def media_progress_list(db: Session) -> list[dict[str, Any]]:
-    # Populated in the playback/progress phase; empty list until then.
     from app.abs.catalogue import all_media_progress  # late import: avoids cycle
 
     return all_media_progress(db)
+
+
+def _bookmarks_list(db: Session) -> list[dict[str, Any]]:
+    from app.abs.catalogue import all_bookmarks  # late import: avoids cycle
+
+    return all_bookmarks(db)
 
 
 def login_payload(db: Session, access_token: str, refresh_token: str | None) -> dict[str, Any]:

@@ -152,6 +152,26 @@ language: null, explicit: false, abridged: false}`
 - `POST /api/session/local-all` — `{sessions: [...], deviceInfo}` → same, batch; 200
   `{results: []}`-ish.
 
+## Search, playlists/collections, bookmarks, stats (post-audit additions)
+
+- `GET /api/libraries/:id/search?q=&limit=12` — the app's Search tab. Response (current
+  source shape; the docs-site `matchKey`/`matchText` fields were removed):
+  `{book: [{libraryItem: <expanded item>}], narrators: [], tags: [], genres: [],
+  series: [{series: {id, name}, books: [<minified item>]}], authors: [<author entry
+  with numBooks>]}`. 400 when `q` is empty.
+- `GET /api/libraries/:id/playlists` and `/collections` — we return empty paged results
+  (`{results: [], total: 0, limit, page}`) so those app tabs render instead of erroring.
+- Bookmarks (`user.bookmarks` in the login payload):
+  `POST /api/me/item/:id/bookmark` `{time, title}` → bookmark JSON
+  `{libraryItemId, title, time, createdAt}` (400 invalid); `PATCH` same body updates the
+  bookmark matched **by time** (404 unknown); `DELETE /api/me/item/:id/bookmark/:time`.
+- `GET /api/me/listening-stats` — zeroed `{totalTime, items: {}, days: {}, dayOfWeek: {},
+  today: 0, recentSessions: []}` (we don't persist listening sessions).
+- `GET /api/me/stats/year/:year` — zeroed year-in-review stats except
+  `numBooksFinished`/`numBooksListened`, counted from media_progress finished_at.
+- `PATCH /api/me/progress/:id` also accepts a bare `progress` fraction (0–1); when
+  `currentTime` is absent it maps to `progress × duration`.
+
 ## Me / progress
 
 `oldMediaProgress`:
