@@ -89,6 +89,10 @@ are collapsed to the canonical book).
 - **Push**: mutations to insert/update `user_books` when read state changes in the UI
   (including setting the read date when marking *read*).
 - **Search**: Hardcover's search API for the UI's "add book" search (by title/author/series).
+  Search documents carry `featured_series.series.id`, which links results to the series page.
+- **Series**: `book_series` filtered by `series_id` with `book: {canonical_id: {_is_null: true}}`
+  (a series row exists per edition/boxset — HP has 112 rows for 7 books); order by position
+  then `users_count desc` and keep the first book per position. Verified live 2026-07.
 - Rate limiting: modest request rate, cache search results briefly; sync is incremental where
   possible (updated-since cursor), full refresh as fallback.
 - *First implementation task: verify current schema/field names against the live API with the
@@ -174,6 +178,12 @@ Verified against Deluge WebUI 2.2.0.
   author/title/recent. Inline actions: change read state, search/download.
 - **Search page** (`/search`) — Hardcover search by title/author/series; results show cover +
   metadata; actions: *add with state* (want to read / reading / read) and *find downloads*.
+- **Series page** (`/series/{hardcover_series_id}`) — the full series fetched live from
+  Hardcover, merged with local state: books on the user's shelf render as normal library
+  cards (read state, download), the rest as addable search results with a Download button.
+  Downloading an unshelved book auto-shelves it as *want to read* first (downloading implies
+  wanting it; the shelf is the source of truth), then opens the release picker. Series names
+  on library cards and search results link here.
 - **Release picker** (modal/partial) — indexer results for a book: title, size, format,
   posted date; click to grab.
 - **Activity page** (`/activity`) — grabbed/downloading/importing items with the torrent

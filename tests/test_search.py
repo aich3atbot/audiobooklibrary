@@ -66,6 +66,7 @@ def test_parse_search_document_filters_narrators():
     parsed = _parse_search_document(search_doc())
     assert parsed["authors"] == ["Brandon Sanderson"]
     assert parsed["hardcover_id"] == 1000
+    assert parsed["series_id"] == 300
     assert parsed["series_name"] == "The Stormlight Archive"
     assert parsed["series_position"] == 1.0
     assert parsed["has_audiobook"] is True
@@ -80,6 +81,7 @@ def test_parse_search_document_falls_back_to_author_names():
 
 def test_parse_search_document_no_series():
     parsed = _parse_search_document(search_doc(featured_series=None))
+    assert parsed["series_id"] is None
     assert parsed["series_name"] is None
     assert parsed["series_position"] is None
 
@@ -206,6 +208,8 @@ def test_search_page_marks_available_books(client, clean_db, user):
     assert "badge-dl-available" in response.text
     assert "Add to my library" in response.text
     assert "/releases" not in response.text  # no download button
+    assert "/download" not in response.text  # series-page-only button stays off search
+    assert 'href="/series/300"' in response.text  # series name links to the series page
 
 
 @respx.mock

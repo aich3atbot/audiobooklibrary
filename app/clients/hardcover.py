@@ -71,6 +71,30 @@ query BookById($id: Int!) {
 }
 """
 
+# All books in a series, verified live 2026-07. A series carries every
+# edition/boxset (HP: 112 rows for 7 books); canonical_id null keeps canonical
+# books only, and the users_count ordering lets fetch_series keep the most
+# popular edition per position.
+SERIES_BOOKS_QUERY = """
+query SeriesBooks($sid: Int!) {
+  series(where: {id: {_eq: $sid}}) { name }
+  book_series(where: {series_id: {_eq: $sid}, book: {canonical_id: {_is_null: true}}},
+              order_by: [{position: asc}, {book: {users_count: desc}}]) {
+    position
+    book {
+      id
+      title
+      release_year
+      cached_image
+      users_count
+      contributions {
+        author { id name }
+      }
+    }
+  }
+}
+"""
+
 # search results is raw Typesense JSON (jsonb), not typed GraphQL fields
 SEARCH_QUERY = """
 query Search($query: String!, $perPage: Int!, $page: Int!) {
@@ -208,6 +232,40 @@ class HardcoverClient:
         results = (data.get("search") or {}).get("results") or {}
         return [_parse_search_document(hit["document"]) for hit in results.get("hits", [])]
 
+    def fetch_series(self, series_id: int) -> tuple[str | None, list[dict[str, Any]]]:
+        """The series name and its books, one per position (most-shelved
+        canonical edition wins), in the search-result dict shape."""
+        data = self.execute(SERIES_BOOKS_QUERY, {"sid": series_id})
+        series_rows = data.get("series") or []
+        name = series_rows[0]["name"] if series_rows else None
+        books = []
+        seen_positions: set[float] = set()
+        # ponytail: null-position rows (companions) aren't deduped; dedupe by
+        # book id if duplicate editions of those ever show up.
+        for row in data.get("book_series") or []:
+            position = row.get("position")
+            if position is not None:
+                if position in seen_positions:
+                    continue
+                seen_positions.add(position)
+            book = row["book"]
+            contributions = book.get("contributions") or []
+            books.append(
+                {
+                    "hardcover_id": int(book["id"]),
+                    "title": book["title"],
+                    "authors": [c["author"]["name"] for c in contributions if c.get("author")][:1],
+                    "series_id": series_id,
+                    "series_name": name,
+                    "series_position": position,
+                    "cover_url": (book.get("cached_image") or {}).get("url"),
+                    "release_year": book.get("release_year"),
+                    "has_audiobook": False,
+                    "users_count": book.get("users_count") or 0,
+                }
+            )
+        return name, books
+
 
 def _parse_search_document(doc: dict[str, Any]) -> dict[str, Any]:
     # author_names mixes authors with narrators; contribution_types (aligned
@@ -222,12 +280,14 @@ def _parse_search_document(doc: dict[str, Any]) -> dict[str, Any]:
         authors = (doc.get("author_names") or [])[:1]
 
     featured = doc.get("featured_series") or {}
+    featured_series = featured.get("series") or {}
     image = doc.get("image") or {}
     return {
         "hardcover_id": int(doc["id"]),
         "title": doc["title"],
         "authors": authors,
-        "series_name": (featured.get("series") or {}).get("name"),
+        "series_id": int(featured_series["id"]) if featured_series.get("id") is not None else None,
+        "series_name": featured_series.get("name"),
         "series_position": featured.get("position"),
         "cover_url": image.get("url"),
         "release_year": doc.get("release_year"),

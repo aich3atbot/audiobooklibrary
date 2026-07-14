@@ -63,6 +63,8 @@ def titles(response):
 def test_filter_by_text_matches_series(client, library):
     response = client.get("/", params={"q": "noobtown"})
     assert sorted(titles(response)) == ["The Mayor of Noobtown", "Village of Noobtown"]
+    # the card's series name links to the series page
+    assert 'href="/series/10"' in response.text
 
 
 def test_filter_by_author_name(client, library):
