@@ -11,7 +11,9 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY . .
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
+COPY app/ ./app/
 RUN uv sync --frozen --no-dev
 
 ENV PATH="/opt/venv/bin:$PATH"

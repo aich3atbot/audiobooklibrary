@@ -16,12 +16,13 @@ services:
       DOWNLOAD_QUIET_SECONDS: ${DOWNLOAD_QUIET_SECONDS:-120}
       IMPORT_MODE: ${IMPORT_MODE:-copy}
     volumes:
-      - ./config:/config
+      - ${CONFIG_DIR}:/config
       # Must be the directory Deluge writes *completed* downloads to — if Deluge
       # saves to /downloads/complete, mount that path here, not its parent.
-      - ./downloads:/downloads
-      - ./audiobooks:/audiobooks
-      # Optional: staging area for an existing collection, reviewed and
-      # imported (moved) via the Imports page
-      # - ./imports:/imports
+      - ${DOWNLOAD_DIR}:/downloads
+      - ${LIBRARY_DIR}:/audiobooks
+      - ${IMPORTS_DIR}:/imports
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+

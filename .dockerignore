@@ -1,0 +1,20 @@
+# .env holds host-side paths (compose volume interpolation / local dev). If it
+# leaks into the image, app/config.py's env_file loading overrides the
+# in-container mount points (/config, /downloads, ...) with host paths.
+.env
+
+# Local dev data (databases, downloaded audio) must never end up in the image.
+data/
+config/
+downloads/
+audiobooks/
+imports/
+
+.git/
+.gitignore
+.dockerignore
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
