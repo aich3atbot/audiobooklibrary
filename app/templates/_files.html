@@ -20,10 +20,12 @@
                 {% endfor %}
             </tbody>
         </table>
+        {% if downloads_enabled() %}
         <footer>
             <button class="secondary" hx-get="/books/{{ book.id }}/releases?replace=1"
                     hx-target="#modal" hx-swap="outerHTML">Search for a replacement download…</button>
         </footer>
+        {% endif %}
         {% endif %}
     </article>
 </dialog>

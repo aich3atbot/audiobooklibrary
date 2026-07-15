@@ -20,7 +20,7 @@
         </fieldset>
     </form>
     {# Series page only: downloading an unshelved book shelves it as want-to-read first. #}
-    {% if downloadable and dl == 'not_present' %}
+    {% if downloadable and dl == 'not_present' and downloads_enabled() %}
     <button class="secondary download-btn" hx-post="/series/{{ r.hardcover_id }}/download"
             hx-target="#modal" hx-swap="outerHTML">Download…</button>
     {% endif %}

@@ -353,6 +353,44 @@ def test_replace_grab_immediately_removes_files(client, clean_db, imported_book)
     assert get_state(clean_db, replace_key(release)) is None
 
 
+@pytest.fixture
+def downloads_disabled(download_config, test_settings, monkeypatch):
+    monkeypatch.setattr(test_settings, "download_client", "")
+
+
+def test_no_download_button_when_downloads_disabled(client, book, downloads_disabled):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "The Mayor of Noobtown" in response.text
+    assert "Download…" not in response.text
+
+
+def test_release_picker_refuses_when_downloads_disabled(client, book, downloads_disabled):
+    response = client.get(f"/books/{book.id}/releases")
+
+    assert response.status_code == 200
+    assert "not configured" in response.text
+    assert "Grab" not in response.text
+
+
+def test_grab_refuses_when_downloads_disabled(client, clean_db, book, downloads_disabled):
+    response = client.post(f"/books/{book.id}/grab", data=grab_data())
+
+    assert response.status_code == 409
+    assert clean_db.query(Release).count() == 0
+
+
+def test_files_dialog_hides_replace_when_downloads_disabled(
+    client, imported_book, downloads_disabled
+):
+    response = client.get(f"/books/{imported_book.id}/files")
+
+    assert response.status_code == 200
+    assert "Part 01.mp3" in response.text  # file details still shown
+    assert "replace=1" not in response.text
+
+
 @respx.mock
 def test_replace_grab_deferred_keeps_files(client, clean_db, imported_book):
     mock_details()

@@ -370,3 +370,7 @@ def test_get_download_client_dispatch(test_settings, monkeypatch):
     monkeypatch.setattr(test_settings, "download_url", "")
     with pytest.raises(DownloadClientError, match="DOWNLOAD_URL is not set"):
         get_download_client()
+
+    monkeypatch.setattr(test_settings, "download_client", "")
+    with pytest.raises(DownloadClientError, match="downloads are disabled"):
+        get_download_client()

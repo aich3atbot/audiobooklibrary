@@ -44,6 +44,8 @@ def check_indexer() -> tuple[bool, str]:
 
 def check_download_client() -> tuple[bool, str]:
     settings = get_settings()
+    if not settings.download_client:
+        return False, "DOWNLOAD_CLIENT not set — downloading disabled"
     # Deluge authenticates on the password alone, and an empty one is valid, so
     # the URL is all we can require here.
     if not settings.download_url:

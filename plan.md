@@ -232,7 +232,9 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
 ADMIN_PASSWORD          # password for the virtual "admin" account (required at startup)
                         # (Hardcover tokens are per-user, set on the admin's Users page)
 INDEX_URL               # AudioBookBay base URL (mirrors rotate; http:// may be the working one)
-DOWNLOAD_CLIENT         # "deluge" (default) or "qbittorrent"
+DOWNLOAD_CLIENT         # "deluge" or "qbittorrent"; optional — empty/unset disables
+                        # downloading (download UI hidden, DOWNLOAD_* below not needed;
+                        # manual import and the rest keep working)
 DOWNLOAD_URL            # the client's *web UI*, e.g. http://host.docker.internal:8112
 DOWNLOAD_USERNAME       # required by qBittorrent; unused by Deluge (password-only auth)
 DOWNLOAD_PASSWORD       # may legitimately be empty (Deluge)

@@ -17,7 +17,7 @@
         {% if book.download_state.value == 'failed' %}<span class="badge badge-dl-failed" title="Last download failed — see Activity">failed</span>{% endif %}
         {% if ub.pending_push %}<span class="badge badge-pending" title="Change not yet confirmed by Hardcover">sync pending</span>{% endif %}
     </p>
-    {% if dl == 'not_present' %}
+    {% if dl == 'not_present' and downloads_enabled() %}
     <button class="secondary download-btn" hx-get="/books/{{ book.id }}/releases" hx-target="#modal" hx-swap="outerHTML">Download…</button>
     {% endif %}
 </article>

@@ -12,8 +12,10 @@ class Settings(BaseSettings):
     admin_password: str = ""
 
     # Torrent indexer (AudioBookBay) and the torrent client that downloads it.
+    # DOWNLOAD_CLIENT is optional: empty disables downloading entirely (the
+    # download UI is hidden; manual import and the rest keep working).
     index_url: str = ""
-    download_client: str = "deluge"
+    download_client: str = ""
     download_url: str = ""
     # qBittorrent needs both; Deluge's web UI authenticates on the password
     # alone and ignores the username.
@@ -43,6 +45,10 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         return f"sqlite:///{self.config_dir / 'audiobooklibrary.db'}"
+
+    @property
+    def downloads_enabled(self) -> bool:
+        return bool(self.download_client)
 
 
 @lru_cache

@@ -19,7 +19,7 @@
         </tr>
         <tr>
             <td>Download client</td>
-            <td>{% if download_client[0] %}<span class="badge badge-ok">ok</span>{% else %}<span class="badge badge-err">error</span>{% endif %}</td>
+            <td>{% if not settings.download_client %}<span class="badge">disabled</span>{% elif download_client[0] %}<span class="badge badge-ok">ok</span>{% else %}<span class="badge badge-err">error</span>{% endif %}</td>
             <td><small>{{ download_client[1] }}</small></td>
         </tr>
     </tbody>

@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
+from app.config import get_settings
 from app.db import get_db
 from app.models import Book, User, display_status
 from app.services.downloads import grab_release, search_releases
@@ -17,6 +18,8 @@ from app.templating import templates
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+DISABLED_ERROR = "Downloading is not configured (DOWNLOAD_CLIENT is not set)."
 
 
 def _get_book(db: Session, book_id: int) -> Book:
@@ -77,6 +80,12 @@ def list_releases(
     book_id: int, request: Request, replace: bool = False, db: Session = Depends(get_db)
 ):
     book = _get_book(db, book_id)
+    if not get_settings().downloads_enabled:
+        return templates.TemplateResponse(
+            request,
+            "_releases.html",
+            {"book": book, "releases": [], "error": DISABLED_ERROR},
+        )
     replacing = replace and display_status(book.download_state) == "available"
     blocked = None if replacing else _grab_blocked(book)
     if blocked:
@@ -111,6 +120,8 @@ def grab(
     user: User = Depends(get_current_user),
 ):
     book = _get_book(db, book_id)
+    if not get_settings().downloads_enabled:
+        raise HTTPException(status_code=409, detail=DISABLED_ERROR)
     replacing = replace and display_status(book.download_state) == "available"
     blocked = _grab_blocked(book)
     if blocked and not replacing:

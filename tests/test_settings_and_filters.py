@@ -148,6 +148,19 @@ def test_settings_page_shows_errors(client, clean_db, download_config):
     assert response.text.count(">error</span>") == 3
 
 
+def test_settings_page_downloads_disabled(
+    client, clean_db, tokenless_user, test_settings, monkeypatch
+):
+    monkeypatch.setattr(test_settings, "index_url", "")
+    monkeypatch.setattr(test_settings, "download_client", "")
+
+    response = client.get("/settings")
+
+    assert ">disabled</span>" in response.text
+    assert "DOWNLOAD_CLIENT not set" in response.text
+    assert "DOWNLOAD_URL not set" not in response.text
+
+
 def test_settings_page_reports_unset_connections(
     client, clean_db, tokenless_user, test_settings, monkeypatch
 ):
