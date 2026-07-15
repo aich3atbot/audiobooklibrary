@@ -16,19 +16,21 @@ Verified against Deluge WebUI 2.2.0:
 """
 
 import logging
-import re
 from collections.abc import Sequence
 from typing import Any
 
 import httpx
 
-from app.clients.download_client import DownloadClientError, TorrentStatus
+from app.clients.download_client import (
+    DownloadClientError,
+    TorrentStatus,
+    hash_from_magnet,
+)
 
 logger = logging.getLogger(__name__)
 
 STATUS_KEYS = ["name", "progress", "state", "is_finished", "save_path", "total_size"]
 NOT_AUTHENTICATED = 1
-BTIH_RE = re.compile(r"xt=urn:btih:([0-9a-fA-F]{40})")
 
 
 class DelugeClient:
@@ -103,7 +105,7 @@ class DelugeClient:
                 raise
             logger.info("Deluge already has this torrent; reusing it")
             result = None
-        info_hash = (result or self._hash_from_magnet(magnet_uri)).lower()
+        info_hash = (result or hash_from_magnet(magnet_uri)).lower()
         self._apply_label(info_hash)
         return info_hash
 
@@ -150,10 +152,3 @@ class DelugeClient:
     def check(self) -> str:
         version = self._call("daemon.get_version", [])
         return f"Deluge daemon {version}"
-
-    @staticmethod
-    def _hash_from_magnet(magnet_uri: str) -> str:
-        match = BTIH_RE.search(magnet_uri)
-        if not match:
-            raise DownloadClientError("Deluge did not return a torrent hash")
-        return match.group(1)

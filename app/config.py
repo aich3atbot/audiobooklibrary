@@ -15,12 +15,12 @@ class Settings(BaseSettings):
     index_url: str = ""
     download_client: str = "deluge"
     download_url: str = ""
-    # Deluge's web UI authenticates on the password alone; the username is
-    # accepted and unused, reserved for clients that need one.
+    # qBittorrent needs both; Deluge's web UI authenticates on the password
+    # alone and ignores the username.
     download_username: str = ""
     download_password: str = ""
-    # Label to tag the app's torrents with in the client (Deluge Label plugin).
-    # Empty (the default) disables labeling.
+    # Label to tag the app's torrents with in the client (Deluge Label plugin /
+    # qBittorrent category). Empty (the default) disables labeling.
     download_label: str = ""
 
     download_dir: Path = Path("/downloads")

@@ -351,10 +351,16 @@ def test_expired_session_logs_in_again_and_retries(deluge):
 
 
 def test_get_download_client_dispatch(test_settings, monkeypatch):
+    from app.clients.qbittorrent import QBittorrentClient
+
     monkeypatch.setattr(test_settings, "download_url", DELUGE)
     monkeypatch.setattr(test_settings, "download_client", "deluge")
     with get_download_client() as client:
         assert isinstance(client, DelugeClient)
+
+    monkeypatch.setattr(test_settings, "download_client", "qbittorrent")
+    with get_download_client() as client:
+        assert isinstance(client, QBittorrentClient)
 
     monkeypatch.setattr(test_settings, "download_client", "transmission")
     with pytest.raises(DownloadClientError, match="unsupported DOWNLOAD_CLIENT"):

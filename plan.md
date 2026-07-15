@@ -21,7 +21,7 @@ finished audiobooks into a clean library folder. Single container, Python, SQLit
 | Topic | Decision |
 |---|---|
 | Download flow | App searches a **torrent indexer directly** (AudioBookBay), resolves the chosen release to a **magnet**, and adds it to a **torrent client** (Deluge) itself. It then polls the client **by info hash** for progress/completion, and imports from the download directory. Directory name-matching remains the fallback when the client can't answer. |
-| Indexer / client | Both behind small protocols (`Indexer`, `DownloadClient`) so more can be added. Today: AudioBookBay + Deluge. |
+| Indexer / client | Both behind small protocols (`Indexer`, `DownloadClient`) so more can be added. Today: AudioBookBay + Deluge or qBittorrent. |
 | Cancelling | Cancel **removes the torrent and deletes its data** in the client, ending any seeding of it, and stops tracking the release here. Chosen deliberately over preserving seeds. The UI asks for confirmation; if the client is unreachable the release is still cancelled locally, with the failure recorded so the user knows the torrent may still be running. |
 | Library layout | **Audiobookshelf-style**: `Author/Series/{SeriesIndex} - Title/` (no series: `Author/Title/`). |
 | Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
@@ -137,6 +137,24 @@ Verified against Deluge WebUI 2.2.0.
   download by the torrent's `name` inside `DOWNLOAD_DIR`, not by that path.
 - `daemon.info` does **not** exist on 2.2.0; the version comes from `daemon.get_version`.
 
+### qBittorrent (Web UI API, `{DOWNLOAD_URL}/api/v2/...`)
+
+Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
+
+- **Auth**: `POST auth/login` (form username+password) answers **204** (docs say 200
+  "Ok."); bad credentials answer 401 (pre-5.x: 200 "Fails."). The session is the SID
+  cookie; an expired session answers **403** on any call, so calls re-login once and retry.
+- **Add**: `POST torrents/add` (form `urls=`) answers JSON with `added_torrent_ids`
+  (pre-5.x: bare "Ok." → hash parsed from the magnet). A duplicate add answers **409** —
+  treated as success. Passing `category=` **auto-creates the category**; `DOWNLOAD_LABEL`
+  maps to a category (the Sonarr/Radarr convention).
+- **Poll**: `GET torrents/info?hashes=h1|h2`. `progress` is **0..1** (scaled to 0..100).
+  **`amount_left` is 0 for a metadata-less torrent, so completion is `progress >= 1.0`**,
+  never `amount_left == 0`. `total_size` is -1 before metadata (clamped to 0). Unknown
+  hashes are simply absent. `save_path` is in qBittorrent's namespace, same caveat as Deluge.
+- **Remove**: `POST torrents/delete` (form `hashes`, `deleteFiles`) answers 200 even for
+  hashes it doesn't have.
+
 ## Core workflows
 
 1. **Hardcover sync (periodic + manual "Sync now")**
@@ -199,10 +217,11 @@ Verified against Deluge WebUI 2.2.0.
 ADMIN_PASSWORD          # password for the virtual "admin" account (required at startup)
                         # (Hardcover tokens are per-user, set on the admin's Users page)
 INDEX_URL               # AudioBookBay base URL (mirrors rotate; http:// may be the working one)
-DOWNLOAD_CLIENT         # default deluge (the only one implemented)
-DOWNLOAD_URL            # Deluge *web UI*, e.g. http://host.docker.internal:8112
-DOWNLOAD_USERNAME       # unused by Deluge (password-only auth); reserved for other clients
-DOWNLOAD_PASSWORD       # may legitimately be empty
+DOWNLOAD_CLIENT         # "deluge" (default) or "qbittorrent"
+DOWNLOAD_URL            # the client's *web UI*, e.g. http://host.docker.internal:8112
+DOWNLOAD_USERNAME       # required by qBittorrent; unused by Deluge (password-only auth)
+DOWNLOAD_PASSWORD       # may legitimately be empty (Deluge)
+DOWNLOAD_LABEL          # optional label/category for the app's torrents; empty = none
 DOWNLOAD_DIR            # default /downloads — the client's *completed*-downloads directory
 LIBRARY_DIR             # default /audiobooks
 CONFIG_DIR              # default /config (sqlite db location)
@@ -232,6 +251,7 @@ audiobooklibrary/
 │  ├─ clients/audiobookbay.py       # HTML-scraping indexer
 │  ├─ clients/download_client.py    # DownloadClient protocol + get_download_client()
 │  ├─ clients/deluge.py     # Deluge web JSON-RPC
+│  ├─ clients/qbittorrent.py        # qBittorrent Web API v2
 │  ├─ services/sync.py      # Hardcover sync logic
 │  ├─ services/downloads.py # grab, watch, import
 │  ├─ routes/               # ui.py, books.py, search.py, activity.py, settings.py

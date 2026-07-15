@@ -107,6 +107,13 @@ with the current policy.
   string** (finished torrents commonly sit in state "Queued"). `save_path` is in Deluge's
   filesystem namespace, so find downloads by the torrent's `name` inside `DOWNLOAD_DIR`.
   `daemon.info` does not exist on 2.2.0 — use `daemon.get_version`.
+- **qBittorrent** (Web UI API at `{DOWNLOAD_URL}/api/v2`, verified against 5.2.3 / API
+  2.15.1): login answers **204**, not the documented 200 "Ok."; expired sessions answer 403
+  (re-login once and retry). `torrents/add` answers JSON with `added_torrent_ids` and a
+  duplicate add is a **409** (treat as success); `category=` on add auto-creates the
+  category. In `torrents/info`, `progress` is 0..1 and **`amount_left` is 0 for a
+  metadata-less torrent — completion is `progress >= 1.0`, never `amount_left == 0`**;
+  `total_size` is -1 before metadata arrives.
 
 ## Conventions
 
