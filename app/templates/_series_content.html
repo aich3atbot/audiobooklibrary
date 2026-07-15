@@ -1,0 +1,24 @@
+<div id="series-content">
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+{% if addable %}
+<form hx-post="/series/{{ series_id }}/add-all" hx-target="#series-content" hx-swap="outerHTML"
+      onsubmit="return confirm('Add {{ addable }} unshelved book{{ 's' if addable != 1 }} in this series to your Hardcover shelf as want to read?')">
+    <button type="submit">Add all ({{ addable }})</button>
+</form>
+{% endif %}
+
+{% if results %}
+<div class="book-grid">
+    {% for r in results %}
+    {% if r.hardcover_id in mine %}
+    {% with book = known[r.hardcover_id], ub = mine[r.hardcover_id] %}{% include "_card.html" %}{% endwith %}
+    {% else %}
+    {% with existing = known.get(r.hardcover_id), downloadable = true %}{% include "_search_result.html" %}{% endwith %}
+    {% endif %}
+    {% endfor %}
+</div>
+{% elif not error %}
+<p>Hardcover lists no books for this series.</p>
+{% endif %}
+</div>

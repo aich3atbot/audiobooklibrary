@@ -126,6 +126,79 @@ def test_series_page_without_token(client, tokenless_user):
     assert "No Hardcover token" in response.text
 
 
+@respx.mock
+def test_add_all_shelves_unshelved_books_only(client, clean_db, user):
+    """Add-all shelves the known-but-unshelved and unknown books as
+    want-to-read; the user's existing shelf entry is untouched."""
+    author = Author(hardcover_id=500, name="Test Author")
+    shelved = Book(hardcover_id=1000, title="The Way of Kings", author=author)
+    available = Book(hardcover_id=2000, title="Words of Radiance", author=author,
+                     download_state=DownloadState.IMPORTED, library_path="/audiobooks/x")
+    clean_db.add_all([shelved, available])
+    clean_db.commit()
+    make_user_book(clean_db, user, shelved, read_state=ReadState.READ)
+    rows = [
+        series_book(1000, "The Way of Kings", 1.0),
+        series_book(2000, "Words of Radiance", 2.0),
+        series_book(3000, "Oathbringer", 3.0),
+    ]
+    hardcover = respx.post(API_URL)
+    hardcover.side_effect = [
+        series_response("The Stormlight Archive", rows),
+        # 2000 is already a local Book: shelving pushes insert_user_book only
+        httpx.Response(200, json={"data": {"insert_user_book": {"id": 91, "error": None}}}),
+        # 3000 is new: insert, then pull its metadata
+        httpx.Response(200, json={"data": {"insert_user_book": {"id": 92, "error": None}}}),
+        me_response([entry(ub_id=92, status_id=1, book_id=3000, title="Oathbringer")]),
+    ]
+
+    response = client.post("/series/300/add-all")
+
+    assert response.status_code == 200
+    states = {
+        ub.book.hardcover_id: ub.read_state
+        for ub in clean_db.query(UserBook).filter(UserBook.user_id == user.id)
+    }
+    assert states == {
+        1000: ReadState.READ,  # unchanged
+        2000: ReadState.WANT_TO_READ,
+        3000: ReadState.WANT_TO_READ,
+    }
+    # everything is shelved now: all cards, no add forms, no add-all button
+    assert response.text.count('hx-post="/books/') == 3
+    assert 'hx-post="/search/add"' not in response.text
+    assert "Add all" not in response.text
+
+
+@respx.mock
+def test_add_all_survives_per_book_failures(client, clean_db, user):
+    hardcover = respx.post(API_URL)
+    hardcover.side_effect = [
+        series_response("S", [series_book(1000, "A", 1.0), series_book(2000, "B", 2.0)]),
+        httpx.ConnectError("boom"),  # first insert fails
+        httpx.Response(200, json={"data": {"insert_user_book": {"id": 91, "error": None}}}),
+        me_response([entry(ub_id=91, status_id=1, book_id=2000, title="B")]),
+    ]
+
+    response = client.post("/series/300/add-all")
+
+    assert response.status_code == 200
+    assert "Added 1 of 2 books" in response.text
+    states = [
+        ub.book.hardcover_id
+        for ub in clean_db.query(UserBook).filter(UserBook.user_id == user.id)
+    ]
+    assert states == [2000]
+    assert "Add all (1)" in response.text  # the failed one is still addable
+
+
+def test_add_all_without_token(client, clean_db, tokenless_user):
+    response = client.post("/series/300/add-all")
+
+    assert response.status_code == 200
+    assert "No Hardcover token" in response.text
+
+
 @pytest.fixture
 def abb_config(test_settings, monkeypatch):
     monkeypatch.setattr(test_settings, "index_url", ABB)

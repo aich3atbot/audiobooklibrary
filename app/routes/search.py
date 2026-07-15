@@ -100,15 +100,8 @@ def search_add(
     return templates.TemplateResponse(request, "_card.html", {"book": book, "ub": user_book})
 
 
-@router.get("/series/{series_id}", response_class=HTMLResponse)
-def series_page(
-    series_id: int,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """The full series as Hardcover knows it, merged with local state: shelved
-    books render as live library cards, the rest as addable search results."""
+def _series_context(db: Session, user: User, series_id: int) -> dict:
+    """The full series as Hardcover knows it, merged with local state."""
     name = None
     books = []
     error = None
@@ -127,18 +120,61 @@ def series_page(
     if name is None:
         local = db.scalar(select(Series).where(Series.hardcover_id == series_id))
         name = local.name if local else "Series"
+    return {
+        "series_name": name,
+        "series_id": series_id,
+        "results": books,
+        "known": known,
+        "mine": mine,
+        "error": error,
+        "addable": sum(1 for b in books if b["hardcover_id"] not in mine),
+    }
+
+
+@router.get("/series/{series_id}", response_class=HTMLResponse)
+def series_page(
+    series_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Shelved books render as live library cards, the rest as addable search
+    results."""
     return templates.TemplateResponse(
-        request,
-        "series.html",
-        {
-            "series_name": name,
-            "series_id": series_id,
-            "results": books,
-            "known": known,
-            "mine": mine,
-            "error": error,
-        },
+        request, "series.html", _series_context(db, user, series_id)
     )
+
+
+@router.post("/series/{series_id}/add-all", response_class=HTMLResponse)
+def series_add_all(
+    series_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Shelve every series book the user hasn't shelved yet as want-to-read.
+    Books already on their shelf (any state) are left untouched. Per-book
+    failures don't abort the rest; they surface in the error banner."""
+    context = _series_context(db, user, series_id)
+    added = failed = 0
+    for entry in context["results"]:
+        if entry["hardcover_id"] in context["mine"]:
+            continue
+        try:
+            add_book(db, user, entry["hardcover_id"], ReadState.WANT_TO_READ)
+            added += 1
+        except Exception:
+            logger.exception("Add-all: adding hardcover id %s failed", entry["hardcover_id"])
+            failed += 1
+    known, mine = _local_state(db, user, [b["hardcover_id"] for b in context["results"]])
+    context.update(
+        known=known,
+        mine=mine,
+        addable=sum(1 for b in context["results"] if b["hardcover_id"] not in mine),
+    )
+    if failed:
+        context["error"] = f"Added {added} of {added + failed} books; the rest failed — try again."
+    return templates.TemplateResponse(request, "_series_content.html", context)
 
 
 @router.post("/series/{hardcover_id}/download", response_class=HTMLResponse)
