@@ -54,6 +54,9 @@ it read on Hardcover via `update_read_state`.
   no series. Sanitize filesystem-unsafe characters.
 - **Import mode**: default is hardlink-or-copy (seeding torrents keep their files);
   `IMPORT_MODE=move` opts into relocating. Do not change the default back to move.
+  Seeding also survives import by default: `DOWNLOAD_REMOVE_IMMEDIATELY=true` opts into
+  removing the torrent + data from the client right after a successful import (a failed
+  removal never un-imports; it is noted on the release for the Activity page).
 - **Collection import** (`/imports` volume, Imports page): hard-coded path, no env var
   (`Settings.imports_dir` exists only for tests). Entries are identified by **searching
   Hardcover** (folder-name heuristics; cached in app_state per entry), never by shelving —

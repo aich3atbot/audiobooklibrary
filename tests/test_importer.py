@@ -162,6 +162,71 @@ def test_import_release_existing_destination_fails(clean_db, book, release, clea
     assert "destination already exists" in release.error
 
 
+class FakeDownloadClient:
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.removed: list[tuple[str, bool]] = []
+
+    def remove_torrent(self, info_hash, remove_data=True):
+        if self.fail:
+            raise RuntimeError("client unreachable")
+        self.removed.append((info_hash, remove_data))
+
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        pass
+
+
+@pytest.fixture
+def remove_immediately(test_settings, monkeypatch):
+    """Flag on, with a fake download client capturing removals."""
+    import app.services.downloads as downloads
+
+    monkeypatch.setattr(test_settings, "download_remove_immediately", True)
+    monkeypatch.setattr(test_settings, "download_url", "http://deluge.test:8112")
+    fake = FakeDownloadClient()
+    monkeypatch.setattr(downloads, "get_download_client", lambda **kw: fake)
+    return fake
+
+
+def test_import_removes_torrent_when_configured(clean_db, book, release, clean_dirs,
+                                                remove_immediately):
+    release.info_hash = "a" * 40
+    source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown")
+
+    assert import_release(clean_db, release, source) is True
+
+    assert remove_immediately.removed == [("a" * 40, True)]
+    assert release.status == "imported"
+    assert release.error is None
+
+
+def test_failed_removal_never_unimports(clean_db, book, release, clean_dirs,
+                                         remove_immediately):
+    remove_immediately.fail = True
+    release.info_hash = "a" * 40
+    source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown")
+
+    assert import_release(clean_db, release, source) is True
+
+    assert release.status == "imported"
+    assert book.download_state == DownloadState.IMPORTED
+    assert "may still be seeding" in release.error
+
+
+def test_import_leaves_torrent_by_default(clean_db, book, release, clean_dirs, monkeypatch):
+    import app.services.downloads as downloads
+
+    release.info_hash = "a" * 40
+    fake = FakeDownloadClient()
+    monkeypatch.setattr(downloads, "get_download_client", lambda **kw: fake)
+    source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown")
+
+    assert import_release(clean_db, release, source) is True
+    assert fake.removed == []
+
+
 def test_scan_imports_stable_download(clean_db, book, release, clean_dirs):
     make_download(clean_dirs.download_dir,
                   "The Mayor of Noobtown - Ryan Rimmel [M4B] [32 Kbps]")

@@ -30,13 +30,23 @@ def cheap_password_hash(password: str = TEST_PASSWORD) -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def test_settings(tmp_path_factory):
-    """Point all paths at temp dirs before the app is imported anywhere."""
+    """Point all paths at temp dirs before the app is imported anywhere, and
+    pin the indexer/download-client config to inert defaults so the
+    developer's real .env never leaks into tests."""
     root = tmp_path_factory.mktemp("abl")
     os.environ["CONFIG_DIR"] = str(root / "config")
     os.environ["DOWNLOAD_DIR"] = str(root / "downloads")
     os.environ["LIBRARY_DIR"] = str(root / "audiobooks")
     os.environ["IMPORTS_DIR"] = str(root / "imports")
     os.environ["ADMIN_PASSWORD"] = ADMIN_PASSWORD
+    os.environ["INDEX_URL"] = ""
+    os.environ["DOWNLOAD_CLIENT"] = "deluge"
+    os.environ["DOWNLOAD_URL"] = ""
+    os.environ["DOWNLOAD_USERNAME"] = ""
+    os.environ["DOWNLOAD_PASSWORD"] = ""
+    os.environ["DOWNLOAD_LABEL"] = ""
+    os.environ["DOWNLOAD_REMOVE_IMMEDIATELY"] = "false"
+    os.environ["IMPORT_MODE"] = "copy"
 
     from app.config import get_settings
     from app.db import get_engine, get_sessionmaker

@@ -30,6 +30,7 @@ from app.clients.download_client import TorrentStatus, get_download_client
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.models import Book, DownloadState, Release
+from app.services.downloads import drop_from_client
 
 logger = logging.getLogger(__name__)
 
@@ -161,8 +162,25 @@ def import_release(session: Session, release: Release, source: Path) -> bool:
     book.library_path = str(dest)
     session.commit()
     logger.info("Imported %s -> %s", release.title, dest)
+    if get_settings().download_remove_immediately:
+        _drop_after_import(session, release)
     _scan_audio(session, book)
     return True
+
+
+def _drop_after_import(session: Session, release: Release) -> None:
+    """Remove the imported torrent (and its data) from the client. The library
+    files are already placed, so a failure never un-imports — it is noted on
+    the release for the Activity page."""
+    try:
+        drop_from_client(release)
+    except Exception as exc:
+        release.error = (
+            f"imported, but removing the torrent from the download client failed: {exc} — "
+            "it may still be seeding and holding data"
+        )
+        session.commit()
+        logger.warning("Could not remove imported torrent %s: %s", release.info_hash, exc)
 
 
 def _scan_audio(session: Session, book) -> None:

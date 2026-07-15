@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # Label to tag the app's torrents with in the client (Deluge Label plugin /
     # qBittorrent category). Empty (the default) disables labeling.
     download_label: str = ""
+    # Remove the torrent (and its data) from the client right after a
+    # successful import. Off by default: the torrent keeps seeding per the
+    # client's own settings.
+    download_remove_immediately: bool = False
 
     download_dir: Path = Path("/downloads")
     library_dir: Path = Path("/audiobooks")

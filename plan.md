@@ -182,7 +182,10 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
    markers). A download client that is down costs progress reporting, never an import.
    Importer then places audio files (m4b/m4a/mp3/flac/ogg + cover/nfo) into
    `/audiobooks/Author/Series/{index} - Title/`, sanitizing filesystem-unsafe characters →
-   `download_state = imported`, `library_path` set. Failures flag the book for manual
+   `download_state = imported`, `library_path` set. With `DOWNLOAD_REMOVE_IMMEDIATELY=true`
+   the torrent (and its data) is then removed from the client — otherwise it keeps seeding
+   per the client's settings; a failed removal never un-imports, it is noted on the
+   release's Activity row. Failures flag the book for manual
    review in the UI rather than guessing.
 
 4. **Read-state update**
@@ -222,6 +225,7 @@ DOWNLOAD_URL            # the client's *web UI*, e.g. http://host.docker.interna
 DOWNLOAD_USERNAME       # required by qBittorrent; unused by Deluge (password-only auth)
 DOWNLOAD_PASSWORD       # may legitimately be empty (Deluge)
 DOWNLOAD_LABEL          # optional label/category for the app's torrents; empty = none
+DOWNLOAD_REMOVE_IMMEDIATELY  # default false — true removes torrent+data after import (no seeding)
 DOWNLOAD_DIR            # default /downloads — the client's *completed*-downloads directory
 LIBRARY_DIR             # default /audiobooks
 CONFIG_DIR              # default /config (sqlite db location)
