@@ -115,6 +115,70 @@ def test_add_magnet_returns_hash(deluge):
     assert add["params"] == [MAGNET, {}]
 
 
+@pytest.fixture
+def labeled_deluge():
+    with DelugeClient(DELUGE, password="", label="ABL") as client:  # lowercased by the client
+        yield client
+
+
+@respx.mock
+def test_add_magnet_labels_the_torrent(labeled_deluge):
+    route = respx.post(RPC).mock(
+        side_effect=responder(
+            {
+                "auth.login": ok(True),
+                "web.connected": ok(True),
+                "core.add_torrent_magnet": ok(HASH),
+                "label.get_labels": ok(["other"]),
+                "label.add": ok(None),
+                "label.set_torrent": ok(None),
+            }
+        )
+    )
+
+    assert labeled_deluge.add_magnet(MAGNET) == HASH
+
+    calls = [json.loads(c.request.content) for c in route.calls]
+    by_method = {c["method"]: c["params"] for c in calls}
+    assert by_method["label.add"] == ["abl"]  # created because get_labels lacked it
+    assert by_method["label.set_torrent"] == [HASH, "abl"]
+
+
+@respx.mock
+def test_add_magnet_survives_missing_label_plugin(labeled_deluge):
+    respx.post(RPC).mock(
+        side_effect=responder(
+            {
+                "auth.login": ok(True),
+                "web.connected": ok(True),
+                "core.add_torrent_magnet": ok(HASH),
+                "label.get_labels": rpc_error("Unknown method"),
+            }
+        )
+    )
+
+    # Labeling is best-effort: the plugin being disabled must not fail the grab.
+    assert labeled_deluge.add_magnet(MAGNET) == HASH
+
+
+@respx.mock
+def test_add_magnet_without_label_makes_no_label_calls(deluge):
+    route = respx.post(RPC).mock(
+        side_effect=responder(
+            {
+                "auth.login": ok(True),
+                "web.connected": ok(True),
+                "core.add_torrent_magnet": ok(HASH),
+            }
+        )
+    )
+
+    deluge.add_magnet(MAGNET)
+
+    methods = [json.loads(c.request.content)["method"] for c in route.calls]
+    assert not [m for m in methods if m.startswith("label.")]
+
+
 @respx.mock
 def test_add_magnet_treats_duplicate_as_success(deluge):
     respx.post(RPC).mock(

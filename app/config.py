@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # accepted and unused, reserved for clients that need one.
     download_username: str = ""
     download_password: str = ""
+    # Label to tag the app's torrents with in the client (Deluge Label plugin).
+    # Empty (the default) disables labeling.
+    download_label: str = ""
 
     download_dir: Path = Path("/downloads")
     library_dir: Path = Path("/audiobooks")

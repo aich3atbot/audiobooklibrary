@@ -67,4 +67,9 @@ def get_download_client(timeout: float = 30.0) -> DownloadClient:
         )
     if not settings.download_url:
         raise DownloadClientError("DOWNLOAD_URL is not set")
-    return DelugeClient(settings.download_url, settings.download_password, timeout=timeout)
+    return DelugeClient(
+        settings.download_url,
+        settings.download_password,
+        timeout=timeout,
+        label=settings.download_label,
+    )

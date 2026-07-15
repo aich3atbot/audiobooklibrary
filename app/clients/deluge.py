@@ -32,9 +32,13 @@ BTIH_RE = re.compile(r"xt=urn:btih:([0-9a-fA-F]{40})")
 
 
 class DelugeClient:
-    def __init__(self, base_url: str, password: str = "", timeout: float = 30.0):
+    def __init__(
+        self, base_url: str, password: str = "", timeout: float = 30.0, label: str = ""
+    ):
         self._url = f"{base_url.rstrip('/')}/json"
         self._password = password
+        # Deluge's Label plugin only accepts lowercase names.
+        self._label = label.strip().lower()
         self._client = httpx.Client(timeout=timeout)
         self._request_id = 0
         self._connected = False
@@ -99,7 +103,21 @@ class DelugeClient:
                 raise
             logger.info("Deluge already has this torrent; reusing it")
             result = None
-        return (result or self._hash_from_magnet(magnet_uri)).lower()
+        info_hash = (result or self._hash_from_magnet(magnet_uri)).lower()
+        self._apply_label(info_hash)
+        return info_hash
+
+    def _apply_label(self, info_hash: str) -> None:
+        """Best-effort: labeling needs the Label plugin, and a torrent without
+        its label is still a perfectly good download."""
+        if not self._label:
+            return
+        try:
+            if self._label not in (self._call("label.get_labels", []) or []):
+                self._call("label.add", [self._label])
+            self._call("label.set_torrent", [info_hash, self._label])
+        except DownloadClientError as exc:
+            logger.warning("Could not label torrent %s as %r: %s", info_hash, self._label, exc)
 
     def get_status(self, info_hashes: Sequence[str]) -> dict[str, TorrentStatus]:
         if not info_hashes:
