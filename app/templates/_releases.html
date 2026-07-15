@@ -3,9 +3,16 @@
     <article class="release-dialog">
         <header>
             <button aria-label="Close" rel="prev" onclick="this.closest('dialog').remove()"></button>
-            <strong>Releases — {{ book.title }}</strong>
+            <strong>{{ "Replace" if replace else "Releases" }} — {{ book.title }}</strong>
         </header>
         {% if error %}<p class="error">{{ error }}</p>{% endif %}
+        {% if replace and releases %}
+        <fieldset id="replace-options">
+            <input type="hidden" name="replace" value="1">
+            <label><input type="radio" name="remove" value="after_import" checked> Remove current files after the new download imports</label>
+            <label><input type="radio" name="remove" value="immediately"> Remove current files immediately</label>
+        </fieldset>
+        {% endif %}
         {% if releases %}
         <table>
             <thead><tr><th>Release</th><th>Size</th><th>Format</th><th>Posted</th><th></th></tr></thead>
@@ -17,7 +24,7 @@
                     <td>{{ r.format or "?" }}</td>
                     <td>{{ r.published.strftime("%d %b %Y") if r.published else "?" }}</td>
                     <td>
-                        <form hx-post="/books/{{ book.id }}/grab" hx-target="#modal" hx-swap="outerHTML">
+                        <form hx-post="/books/{{ book.id }}/grab" hx-target="#modal" hx-swap="outerHTML"{% if replace %} hx-include="#replace-options"{% endif %}>
                             <input type="hidden" name="guid" value="{{ r.guid }}">
                             <input type="hidden" name="indexer" value="{{ r.indexer }}">
                             <input type="hidden" name="title" value="{{ r.title }}">

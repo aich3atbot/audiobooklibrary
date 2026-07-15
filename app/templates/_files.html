@@ -1,0 +1,30 @@
+<div id="modal">
+<dialog open>
+    <article class="release-dialog">
+        <header>
+            <button aria-label="Close" rel="prev" onclick="this.closest('dialog').remove()"></button>
+            <strong>Files — {{ book.title }}</strong>
+        </header>
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+        {% if files %}
+        <p><small>{{ book.library_path }}</small></p>
+        <table>
+            <thead><tr><th>File</th><th>Size</th><th>Bitrate</th></tr></thead>
+            <tbody>
+                {% for f in files %}
+                <tr>
+                    <td>{{ f.rel_path }}</td>
+                    <td>{{ f.size | human_size }}</td>
+                    <td>{{ ((f.bitrate / 1000) | round | int ~ " kb/s") if f.bitrate else "?" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <footer>
+            <button class="secondary" hx-get="/books/{{ book.id }}/releases?replace=1"
+                    hx-target="#modal" hx-swap="outerHTML">Search for a replacement download…</button>
+        </footer>
+        {% endif %}
+    </article>
+</dialog>
+</div>

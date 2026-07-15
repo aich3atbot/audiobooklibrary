@@ -202,4 +202,4 @@ def series_download(
                     "error": "Adding the book to your Hardcover shelf failed — try again.",
                 },
             )
-    return list_releases(book.id, request, db)
+    return list_releases(book.id, request, db=db)

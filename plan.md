@@ -188,7 +188,19 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
    release's Activity row. Failures flag the book for manual
    review in the UI rather than guessing.
 
-4. **Read-state update**
+4. **Replace an available book's files**
+   Clicking the *available* badge on a library card opens a files dialog (every file under
+   `library_path` with size and mutagen bitrate) with a "Search for a replacement download"
+   action. The replace picker is the normal release picker plus a radio choice: remove the
+   current files **after the new download imports** (default — the deferred intent is an
+   `app_state` key `replace:{release_id}`, consumed by the importer, which clears the old
+   `library_path` dir before placing the new files) or **immediately** (files deleted at
+   grab time; the book drops out of the ABS API until the new import lands). Replacing
+   touches library files only — the old torrent is never removed from the client. A failed
+   replacement import whose old files survived leaves the book available; cancelling the
+   replacing release restores *available* when `library_path` is intact.
+
+5. **Read-state update**
    UI toggle → optimistic local update → push mutation to Hardcover → on failure, mark
    pending and retry on next sync.
 

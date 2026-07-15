@@ -31,6 +31,7 @@ from app.config import get_settings
 from app.db import get_sessionmaker
 from app.models import Book, DownloadState, Release
 from app.services.downloads import drop_from_client
+from app.services.sync import delete_state, get_state
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,23 @@ def _place(src: Path, dest: Path, mode: str) -> None:
         shutil.copy2(src, dest)
 
 
+def remove_library_files(book: Book) -> None:
+    """Delete a book's imported files and forget them (replace flow). Clearing
+    library_path also drops the book from the ABS API. Caller commits."""
+    library_dir = get_settings().library_dir
+    root = Path(book.library_path) if book.library_path else None
+    if root and root.is_dir() and root.resolve().is_relative_to(library_dir.resolve()):
+        shutil.rmtree(root)
+        cleanup_empty_parents(root.parent, library_dir)
+    book.library_path = None
+    book.audio_files.clear()
+
+
+def replace_key(release: Release) -> str:
+    """app_state key marking that this release replaces the book's files."""
+    return f"replace:{release.id}"
+
+
 def import_release(session: Session, release: Release, source: Path) -> bool:
     """Import a finished download; returns True on success. On failure the
     release is marked failed with the reason and the book flagged."""
@@ -139,6 +157,11 @@ def import_release(session: Session, release: Release, source: Path) -> bool:
         files = collect_files(source)
         if not any(src.suffix.lower() in AUDIO_EXTS for src, _ in files):
             raise ImportFailure(f"no audio files found in {source.name}")
+        if get_state(session, replace_key(release)) is not None:
+            # This release replaces the book's files: clear the OLD path (it
+            # may differ from the computed dest if metadata changed since).
+            remove_library_files(book)
+            delete_state(session, replace_key(release))
         dest = library_dir_for(book)
         if dest.exists() and any(dest.iterdir()):
             raise ImportFailure(f"destination already exists: {dest}")
@@ -152,7 +175,10 @@ def import_release(session: Session, release: Release, source: Path) -> bool:
         logger.exception("Import failed for release %s", release.title)
         release.status = "failed"
         release.error = str(exc)
-        book.download_state = DownloadState.FAILED
+        # A failed replace whose old files survived leaves the book available.
+        book.download_state = (
+            DownloadState.IMPORTED if book.library_path else DownloadState.FAILED
+        )
         session.commit()
         return False
 

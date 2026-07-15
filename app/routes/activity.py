@@ -10,7 +10,8 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import Book, DownloadState, Release
 from app.services.downloads import drop_from_client
-from app.services.importer import ACTIVE_STATUSES, import_release
+from app.services.importer import ACTIVE_STATUSES, import_release, replace_key
+from app.services.sync import delete_state
 from app.templating import templates
 
 logger = logging.getLogger(__name__)
@@ -91,8 +92,12 @@ def cancel_release(release_id: int, db: Session = Depends(get_db)):
             Release.status.in_(ACTIVE_STATUSES),
         )
     )
+    delete_state(db, replace_key(release))
     if other_active is None:
-        release.book.download_state = DownloadState.NONE
+        # A cancelled replace whose old files survived stays available.
+        release.book.download_state = (
+            DownloadState.IMPORTED if release.book.library_path else DownloadState.NONE
+        )
     db.commit()
     return RedirectResponse(url="/activity", status_code=303)
 

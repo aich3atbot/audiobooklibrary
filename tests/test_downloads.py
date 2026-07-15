@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 
 import httpx
@@ -7,6 +8,7 @@ import respx
 
 from app.models import (
     AppState,
+    AudioFile,
     Author,
     Book,
     DownloadState,
@@ -15,7 +17,10 @@ from app.models import (
     UserBook,
 )
 from app.services.downloads import grab_release, search_releases
+from app.services.importer import replace_key
+from app.services.sync import get_state
 from tests.conftest import make_user_book
+from tests.test_audio_meta import write_mp3
 
 ABB = "http://abb.test"
 DELUGE = "http://deluge.test:8112"
@@ -259,3 +264,107 @@ def test_release_picker_refuses_available_book(client, clean_db, book):
 
     assert response.status_code == 200
     assert "already available" in response.text
+
+
+@pytest.fixture
+def imported_book(clean_db, book, test_settings):
+    """The book imported for real: files on disk, audio rows, IMPORTED."""
+    lib = test_settings.library_dir / "Ryan Rimmel" / "The Mayor of Noobtown"
+    if lib.exists():
+        shutil.rmtree(lib)
+    lib.mkdir(parents=True)
+    write_mp3(lib / "Part 01.mp3", frames=100)
+    (lib / "cover.jpg").write_bytes(b"img")
+    book.download_state = DownloadState.IMPORTED
+    book.library_path = str(lib)
+    book.audio_files.append(
+        AudioFile(index=1, rel_path="Part 01.mp3", size=100, mtime_ms=0, mime_type="audio/mpeg")
+    )
+    clean_db.commit()
+    return book
+
+
+def test_files_dialog_lists_files(client, imported_book):
+    response = client.get(f"/books/{imported_book.id}/files")
+
+    assert response.status_code == 200
+    assert "Part 01.mp3" in response.text
+    assert "cover.jpg" in response.text
+    assert "128 kb/s" in response.text  # mutagen bitrate for the mp3
+    assert response.text.count("<td>?</td>") == 1  # no bitrate for the jpg
+    assert f"/books/{imported_book.id}/releases?replace=1" in response.text
+
+
+def test_files_dialog_when_not_available(client, book):
+    response = client.get(f"/books/{book.id}/files")
+
+    assert response.status_code == 200
+    assert "no downloaded files" in response.text
+    assert "replace=1" not in response.text
+
+
+@respx.mock
+def test_replace_picker_bypasses_available_block(client, imported_book):
+    mock_search()
+
+    response = client.get(f"/books/{imported_book.id}/releases?replace=1")
+
+    assert response.status_code == 200
+    assert "already available" not in response.text
+    assert 'value="after_import"' in response.text
+    assert 'value="immediately"' in response.text
+    assert 'hx-include="#replace-options"' in response.text
+
+
+@respx.mock
+def test_replace_picker_still_blocks_downloading_book(client, clean_db, book):
+    book.download_state = DownloadState.DOWNLOADING
+    clean_db.commit()
+
+    response = client.get(f"/books/{book.id}/releases?replace=1")
+
+    assert response.status_code == 200
+    assert "already downloading" in response.text
+
+
+def grab_data(**extra):
+    return {"guid": GUID, "indexer": "AudioBookBay", "title": "Noobtown", "size": "", **extra}
+
+
+@respx.mock
+def test_replace_grab_immediately_removes_files(client, clean_db, imported_book):
+    mock_details()
+    mock_deluge()
+    lib = Path(imported_book.library_path)
+
+    response = client.post(
+        f"/books/{imported_book.id}/grab", data=grab_data(replace="1", remove="immediately")
+    )
+
+    assert response.status_code == 200
+    assert '<div id="modal"></div>' in response.text
+    assert "downloading" in response.text
+    assert not lib.exists()
+    clean_db.expire_all()
+    assert imported_book.library_path is None
+    assert imported_book.audio_files == []
+    assert imported_book.download_state == DownloadState.GRABBED
+    release = clean_db.query(Release).one()
+    assert get_state(clean_db, replace_key(release)) is None
+
+
+@respx.mock
+def test_replace_grab_deferred_keeps_files(client, clean_db, imported_book):
+    mock_details()
+    mock_deluge()
+    lib = Path(imported_book.library_path)
+
+    response = client.post(f"/books/{imported_book.id}/grab", data=grab_data(replace="1"))
+
+    assert response.status_code == 200
+    assert (lib / "Part 01.mp3").exists()
+    clean_db.expire_all()
+    assert imported_book.library_path == str(lib)
+    assert imported_book.download_state == DownloadState.GRABBED
+    release = clean_db.query(Release).one()
+    assert get_state(clean_db, replace_key(release)) == "1"

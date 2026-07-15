@@ -9,9 +9,11 @@ from app.services.importer import (
     import_release,
     library_dir_for,
     matches,
+    replace_key,
     sanitize,
     scan_downloads_once,
 )
+from app.services.sync import get_state, set_state
 
 
 @pytest.fixture
@@ -162,6 +164,59 @@ def test_import_release_existing_destination_fails(clean_db, book, release, clea
     assert "destination already exists" in release.error
 
 
+def make_replaced_book(db, book, release, old_dir):
+    """An already-imported book whose release is marked as a replacement."""
+    old_dir.mkdir(parents=True)
+    (old_dir / "old.mp3").write_bytes(b"old")
+    book.download_state = DownloadState.IMPORTED
+    book.library_path = str(old_dir)
+    set_state(db, replace_key(release), "1")
+    db.commit()
+
+
+def test_import_replace_clears_old_files_first(clean_db, book, release, clean_dirs):
+    dest = clean_dirs.library_dir / "Ryan Rimmel" / "Noobtown" / "1 - The Mayor of Noobtown"
+    make_replaced_book(clean_db, book, release, dest)
+    source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown")
+
+    assert import_release(clean_db, release, source) is True
+
+    assert not (dest / "old.mp3").exists()
+    assert (dest / "Book Part 01.mp3").exists()
+    assert book.download_state == DownloadState.IMPORTED
+    assert book.library_path == str(dest)
+    assert get_state(clean_db, replace_key(release)) is None
+
+
+def test_import_replace_removes_old_path_when_it_differs(clean_db, book, release, clean_dirs):
+    old = clean_dirs.library_dir / "Old Author" / "Old Title"
+    make_replaced_book(clean_db, book, release, old)
+    source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown")
+
+    assert import_release(clean_db, release, source) is True
+
+    assert not old.parent.exists()  # old dir gone, empty parents cleaned up
+    dest = clean_dirs.library_dir / "Ryan Rimmel" / "Noobtown" / "1 - The Mayor of Noobtown"
+    assert (dest / "Book Part 01.mp3").exists()
+    assert book.library_path == str(dest)
+
+
+def test_import_replace_failure_keeps_old_files(clean_db, book, release, clean_dirs):
+    dest = clean_dirs.library_dir / "Ryan Rimmel" / "Noobtown" / "1 - The Mayor of Noobtown"
+    make_replaced_book(clean_db, book, release, dest)
+    source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown",
+                           files=("readme.txt",))
+
+    assert import_release(clean_db, release, source) is False
+
+    assert (dest / "old.mp3").exists()
+    assert release.status == "failed"
+    # the old files survived, so the book is still genuinely available
+    assert book.download_state == DownloadState.IMPORTED
+    assert book.library_path == str(dest)
+    assert get_state(clean_db, replace_key(release)) == "1"
+
+
 class FakeDownloadClient:
     def __init__(self, fail: bool = False):
         self.fail = fail
@@ -289,6 +344,21 @@ def test_cancel_release(client, clean_db, book, release):
     clean_db.refresh(book)
     assert release.status == "cancelled"
     assert book.download_state == DownloadState.NONE
+
+
+def test_cancel_replace_restores_available(client, clean_db, book, release):
+    book.download_state = DownloadState.GRABBED
+    book.library_path = "/audiobooks/kept"  # old files never removed (deferred)
+    set_state(clean_db, replace_key(release), "1")
+    clean_db.commit()
+
+    response = client.post(f"/releases/{release.id}/cancel", follow_redirects=False)
+
+    assert response.status_code == 303
+    clean_db.expire_all()
+    assert release.status == "cancelled"
+    assert book.download_state == DownloadState.IMPORTED
+    assert get_state(clean_db, replace_key(release)) is None
 
 
 def test_retry_failed_release(client, clean_db, book, release):

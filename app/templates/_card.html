@@ -13,7 +13,7 @@
     {% set dl = display_status(book.download_state) %}
     <p>
         {% if ub.read_at %}<span class="badge">read {{ ub.read_at }}</span>{% endif %}
-        {% if dl != 'not_present' %}<span class="badge badge-dl-{{ dl }}">{{ dl.replace('_', ' ') }}</span>{% endif %}
+        {% if dl != 'not_present' %}<span class="badge badge-dl-{{ dl }}"{% if dl == 'available' %} role="button" tabindex="0" title="Downloaded files" hx-get="/books/{{ book.id }}/files" hx-target="#modal" hx-swap="outerHTML"{% endif %}>{{ dl.replace('_', ' ') }}</span>{% endif %}
         {% if book.download_state.value == 'failed' %}<span class="badge badge-dl-failed" title="Last download failed — see Activity">failed</span>{% endif %}
         {% if ub.pending_push %}<span class="badge badge-pending" title="Change not yet confirmed by Hardcover">sync pending</span>{% endif %}
     </p>
