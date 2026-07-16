@@ -146,12 +146,32 @@ def test_get_status_maps_torrents(qbit):
 
     status = qbit.get_status([HASH.upper()])[HASH]  # keyed by lowercase hash
 
-    assert status.name == "Project Hail Mary"
+    assert status.name == "Project Hail Mary"  # no content_path yet → display name
     assert status.progress == 42.5  # qBittorrent's 0..1 scaled to 0..100
     assert status.state == "downloading"
     assert status.is_finished is False
     assert status.total_size == 881000000
     assert route.calls[0].request.url.params["hashes"] == HASH
+
+
+@respx.mock
+def test_name_comes_from_content_path_not_display_name(qbit):
+    # A magnet's dn sticks as the display name even after metadata arrives, so
+    # ``name`` may not match the folder on disk — content_path's basename does.
+    login_ok()
+    respx.get(f"{API}/torrents/info").respond(
+        200,
+        json=[
+            {"hash": HASH, "name": "Chamber of Secrets (Full Cast) - J.K. Rowling",
+             "content_path": "/downloads/Chamber of Secrets (Full-Cast Edition) MP3",
+             "progress": 1.0, "state": "stoppedUP", "save_path": "/downloads",
+             "total_size": 100},
+        ],
+    )
+
+    status = qbit.get_status([HASH])[HASH]
+
+    assert status.name == "Chamber of Secrets (Full-Cast Edition) MP3"
 
 
 @respx.mock

@@ -116,7 +116,9 @@ with the current policy.
   duplicate add is a **409** (treat as success); `category=` on add auto-creates the
   category. In `torrents/info`, `progress` is 0..1 and **`amount_left` is 0 for a
   metadata-less torrent — completion is `progress >= 1.0`, never `amount_left == 0`**;
-  `total_size` is -1 before metadata arrives.
+  `total_size` is -1 before metadata arrives. `name` is the *display* name — a magnet's
+  `dn` sticks even after metadata arrives, so it can differ from the on-disk folder;
+  use `content_path`'s basename to locate the download.
 
 ## Conventions
 

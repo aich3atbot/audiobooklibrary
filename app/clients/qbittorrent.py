@@ -12,6 +12,9 @@ Verified against qBittorrent 5.2.3 / Web API 2.15.1:
   that has no metadata yet, so it is *not* a completion signal —
   ``progress >= 1.0`` is. ``total_size`` is -1 before metadata arrives.
 - ``torrents/delete`` answers 200 even for hashes it doesn't have.
+- ``name`` is the *display* name: a magnet's ``dn`` sticks even after metadata
+  arrives, so it can differ from the folder on disk. ``content_path`` holds the
+  real content location; we report its basename as the torrent's name.
 """
 
 import logging
@@ -117,9 +120,16 @@ class QBittorrentClient:
         for torrent in response.json():
             info_hash = torrent["hash"].lower()
             progress = float(torrent.get("progress") or 0.0)
+            # ``name`` is the display name — for a magnet add it stays the
+            # magnet's dn and never updates to the metadata name, so it may not
+            # match anything on disk. ``content_path`` points at the actual
+            # root folder/file; its basename is the on-disk name.
+            content_path = (torrent.get("content_path") or "").replace("\\", "/")
             statuses[info_hash] = TorrentStatus(
                 info_hash=info_hash,
-                name=torrent.get("name") or "",
+                name=content_path.rstrip("/").rsplit("/", 1)[-1]
+                or torrent.get("name")
+                or "",
                 progress=progress * 100,
                 state=torrent.get("state") or "",
                 # amount_left is 0 before metadata arrives, so it can't be the
