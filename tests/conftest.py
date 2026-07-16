@@ -41,7 +41,9 @@ def test_settings(tmp_path_factory):
     os.environ["ADMIN_PASSWORD"] = ADMIN_PASSWORD
     os.environ["INDEX_URL"] = ""
     os.environ["DOWNLOAD_CLIENT"] = "deluge"
-    os.environ["DOWNLOAD_URL"] = ""
+    # Downloads count as enabled only with both CLIENT and URL set; a fake URL
+    # keeps the baseline "enabled" (respx blocks any real request anyway).
+    os.environ["DOWNLOAD_URL"] = "http://deluge.test:8112"
     os.environ["DOWNLOAD_USERNAME"] = ""
     os.environ["DOWNLOAD_PASSWORD"] = ""
     os.environ["DOWNLOAD_LABEL"] = ""

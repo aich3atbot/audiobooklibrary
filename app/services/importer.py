@@ -226,7 +226,7 @@ def poll_download_client(releases: list[Release]) -> dict[str, TorrentStatus] | 
     reporting, never an import."""
     settings = get_settings()
     hashes = [r.info_hash for r in releases if r.info_hash]
-    if not settings.downloads_enabled or not settings.download_url or not hashes:
+    if not settings.downloads_enabled or not hashes:
         return None
     try:
         with get_download_client() as client:

@@ -12,8 +12,9 @@ class Settings(BaseSettings):
     admin_password: str = ""
 
     # Torrent indexer (AudioBookBay) and the torrent client that downloads it.
-    # DOWNLOAD_CLIENT is optional: empty disables downloading entirely (the
-    # download UI is hidden; manual import and the rest keep working).
+    # Downloading is enabled only when both DOWNLOAD_CLIENT and DOWNLOAD_URL
+    # are set; leaving either empty disables it entirely (the download UI is
+    # hidden; manual import and the rest keep working).
     index_url: str = ""
     download_client: str = ""
     download_url: str = ""
@@ -48,7 +49,7 @@ class Settings(BaseSettings):
 
     @property
     def downloads_enabled(self) -> bool:
-        return bool(self.download_client)
+        return bool(self.download_client and self.download_url)
 
 
 @lru_cache

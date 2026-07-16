@@ -73,15 +73,15 @@ def get_download_client(timeout: float = 30.0) -> DownloadClient:
     from app.config import get_settings
 
     settings = get_settings()
-    if not settings.download_client:
-        raise DownloadClientError("downloads are disabled (DOWNLOAD_CLIENT is not set)")
+    if not settings.downloads_enabled:
+        raise DownloadClientError(
+            "downloads are disabled (DOWNLOAD_CLIENT and DOWNLOAD_URL must both be set)"
+        )
     if settings.download_client not in ("deluge", "qbittorrent"):
         raise DownloadClientError(
             f"unsupported DOWNLOAD_CLIENT: {settings.download_client!r}"
             " (only 'deluge' or 'qbittorrent')"
         )
-    if not settings.download_url:
-        raise DownloadClientError("DOWNLOAD_URL is not set")
     if settings.download_client == "qbittorrent":
         from app.clients.qbittorrent import QBittorrentClient
 

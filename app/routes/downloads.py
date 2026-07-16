@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-DISABLED_ERROR = "Downloading is not configured (DOWNLOAD_CLIENT is not set)."
+DISABLED_ERROR = "Downloading is not configured (DOWNLOAD_CLIENT and DOWNLOAD_URL must both be set)."
 
 
 def _get_book(db: Session, book_id: int) -> Book:

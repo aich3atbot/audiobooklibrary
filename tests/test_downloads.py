@@ -353,9 +353,11 @@ def test_replace_grab_immediately_removes_files(client, clean_db, imported_book)
     assert get_state(clean_db, replace_key(release)) is None
 
 
-@pytest.fixture
-def downloads_disabled(download_config, test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings, "download_client", "")
+# Downloading needs both DOWNLOAD_CLIENT and DOWNLOAD_URL; blanking either
+# disables it, so every disabled-mode test runs in both configurations.
+@pytest.fixture(params=["download_client", "download_url"])
+def downloads_disabled(request, download_config, test_settings, monkeypatch):
+    monkeypatch.setattr(test_settings, request.param, "")
 
 
 def test_no_download_button_when_downloads_disabled(client, book, downloads_disabled):
