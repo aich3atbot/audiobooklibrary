@@ -6,12 +6,13 @@
             <strong>Files — {{ book.title }}</strong>
         </header>
         {% if error %}<p class="error">{{ error }}</p>{% endif %}
-        {% if files %}
-        <p><small>{{ book.library_path }}</small></p>
+        {% for entry in editions %}
+        {% if editions | length > 1 or entry.edition.label %}<h5>{{ entry.edition.label or "Unlabelled edition" }}</h5>{% endif %}
+        <p><small>{{ entry.edition.library_path }}</small></p>
         <table>
             <thead><tr><th>File</th><th>Size</th><th>Bitrate</th></tr></thead>
             <tbody>
-                {% for f in files %}
+                {% for f in entry.files %}
                 <tr>
                     <td>{{ f.rel_path }}</td>
                     <td>{{ f.size | human_size }}</td>
@@ -20,12 +21,12 @@
                 {% endfor %}
             </tbody>
         </table>
-        {% if downloads_enabled() %}
+        {% endfor %}
+        {% if editions and downloads_enabled() %}
         <footer>
             <button class="secondary" hx-get="/books/{{ book.id }}/releases?replace=1"
                     hx-target="#modal" hx-swap="outerHTML">Search for a replacement download…</button>
         </footer>
-        {% endif %}
         {% endif %}
     </article>
 </dialog>

@@ -25,12 +25,13 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.clients.hardcover import HardcoverClient
 from app.config import get_settings
-from app.models import Book, DownloadState
+from app.models import Book, DownloadState, Edition
+from app.services.editions import get_or_create_edition
 from app.services.importer import (
     AUDIO_EXTS,
     ImportFailure,
     cleanup_empty_parents,
-    library_dir_for,
+    edition_dir_for,
     normalize,
 )
 from app.services.sync import _load_caches, delete_state, get_state, set_state, upsert_book_metadata
@@ -233,7 +234,7 @@ def find_local_matches(session: Session, query: str, limit: int = 5) -> list[Boo
         session.scalars(
             select(Book)
             .join(Book.author)
-            .where(Book.library_path.is_(None))
+            .where(~Book.editions.any(Edition.library_path.is_not(None)))
             .where(Book.title.ilike(like) | Author.name.ilike(like))
             .options(joinedload(Book.author), joinedload(Book.series))
             .order_by(Book.title)
@@ -260,9 +261,10 @@ def ensure_book(session: Session, client: HardcoverClient, hardcover_id: int) ->
 
 def import_entry(session: Session, book: Book, entry: ImportEntry) -> Path:
     """Move an entry into the library; raises ImportFailure on any problem."""
-    if book.library_path:
+    if any(e.library_path for e in book.editions):
         raise ImportFailure(f"{book.title} is already in the library")
-    dest = library_dir_for(book)
+    edition = get_or_create_edition(session, book)
+    dest = edition_dir_for(edition)
     if dest.exists() and any(dest.iterdir()):
         raise ImportFailure(f"destination already exists: {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -275,12 +277,12 @@ def import_entry(session: Session, book: Book, entry: ImportEntry) -> Path:
         shutil.move(str(entry.path), str(dest))
     cleanup_empty_parents(entry.path.parent, get_settings().imports_dir)
 
-    book.download_state = DownloadState.IMPORTED
-    book.library_path = str(dest)
+    edition.download_state = DownloadState.IMPORTED
+    edition.library_path = str(dest)
     session.commit()
     logger.info("Collection import: %s -> %s", entry.rel, dest)
 
     from app.services.importer import _scan_audio  # deferred: import cycle
 
-    _scan_audio(session, book)
+    _scan_audio(session, edition)
     return dest

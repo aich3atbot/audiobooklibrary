@@ -19,7 +19,7 @@
         {% if m.confidence == "high" %}<span class="badge badge-ok">match {{ (m.match.score * 100) | int }}%</span>
         {% elif m.confidence == "low" %}<span class="badge badge-pending">low match {{ (m.match.score * 100) | int }}%</span>
         {% elif m.confidence == "manual" %}<span class="badge">manual</span>{% endif %}
-        {% if m.book and m.book.library_path %}<span class="badge badge-dl-available" title="Already in the shared audiobook store">available</span>{% endif %}
+        {% if m.book and book_status(m.book) == "available" %}<span class="badge badge-dl-available" title="Already in the shared audiobook store">available</span>{% endif %}
         {% else %}
         <em>No match</em>
         {% endif %}
@@ -39,7 +39,7 @@
     <td>
         <button hx-post="/imports/import" hx-vals='{"mode": "one"}'
                 hx-include="closest tr" hx-target="#imports-table" hx-swap="outerHTML"
-                {% if not m.match or (m.book and m.book.library_path) %}disabled{% endif %}>
+                {% if not m.match or (m.book and book_status(m.book) == "available") %}disabled{% endif %}>
             Import
         </button>
     </td>

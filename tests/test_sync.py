@@ -11,7 +11,9 @@ from app.services.sync import parse_read_at, pick_series, sync_from_hardcover
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (UserBook, Release, Book, Author, Series, AppState):
+    from app.models import Edition
+
+    for model in (UserBook, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -202,18 +204,20 @@ def test_sync_does_not_touch_download_state(clean_db, user):
     with HardcoverClient("token") as client:
         sync_from_hardcover(clean_db, client, user)
 
-    from app.models import DownloadState
+    from app.models import DownloadState, Edition
 
     book = clean_db.query(Book).filter_by(hardcover_id=1000).one()
-    book.download_state = DownloadState.IMPORTED
-    book.library_path = "/audiobooks/x"
+    edition = Edition(
+        book=book, download_state=DownloadState.IMPORTED, library_path="/audiobooks/x"
+    )
+    clean_db.add(edition)
     clean_db.commit()
 
     with HardcoverClient("token") as client:
         sync_from_hardcover(clean_db, client, user)
     book = clean_db.query(Book).filter_by(hardcover_id=1000).one()
-    assert book.download_state == DownloadState.IMPORTED
-    assert book.library_path == "/audiobooks/x"
+    assert book.editions[0].download_state == DownloadState.IMPORTED
+    assert book.editions[0].library_path == "/audiobooks/x"
 
 
 @respx.mock

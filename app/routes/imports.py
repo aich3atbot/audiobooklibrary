@@ -238,7 +238,7 @@ async def run_import(
             try:
                 with HardcoverClient(user.hardcover_token) as client:
                     book = ensure_book(db, client, hardcover_id)
-                if book.library_path:
+                if any(e.library_path for e in book.editions):
                     raise ImportFailure(f"{book.title} is already available in the library")
                 import_entry(db, book, entry)
                 clear_cached_match(db, rel)

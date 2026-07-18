@@ -52,7 +52,7 @@ def test_play_creates_direct_session(client, token, library):
 
 def test_play_resumes_from_progress(client, token, library, user):
     db = library["db"]
-    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id,
+    db.add(MediaProgress(user_id=user.id, edition_id=library["mayor"].id,
                          current_time=42.0, duration=100.0))
     db.commit()
 
@@ -62,7 +62,7 @@ def test_play_resumes_from_progress(client, token, library, user):
 
 def test_play_restarts_finished_book(client, token, library, user):
     db = library["db"]
-    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id, current_time=100.0,
+    db.add(MediaProgress(user_id=user.id, edition_id=library["mayor"].id, current_time=100.0,
                          duration=100.0, is_finished=True))
     db.commit()
 
@@ -118,7 +118,7 @@ def test_session_sync_updates_progress(client, token, library):
     assert response.status_code == 200
 
     db.expire_all()
-    progress = db.query(MediaProgress).filter_by(book_id=library["mayor"].id).one()
+    progress = db.query(MediaProgress).filter_by(edition_id=library["mayor"].id).one()
     assert progress.current_time == 30.0
     assert progress.is_finished is False
 
@@ -131,17 +131,17 @@ def test_session_sync_finish_marks_hardcover_read(client, token, library, user):
         )
     )
     db = library["db"]
-    book = library["mayor"]
-    shelf = make_user_book(db, user, book,
+    edition = library["mayor"]
+    shelf = make_user_book(db, user, edition.book,
                            read_state=ReadState.READING, hardcover_user_book_id=42)
-    session_id = play(client, token, f"li_{book.id}").json()["id"]
+    session_id = play(client, token, f"li_{edition.id}").json()["id"]
 
     response = post(client, token, f"/api/session/{session_id}/sync",
                     json={"currentTime": 95.0, "timeListened": 15, "duration": 100.0})
     assert response.status_code == 200
 
     db.expire_all()
-    progress = db.query(MediaProgress).filter_by(book_id=book.id).one()
+    progress = db.query(MediaProgress).filter_by(edition_id=edition.id).one()
     assert progress.is_finished is True
     assert progress.finished_at is not None
     db.refresh(shelf)
@@ -160,7 +160,7 @@ def test_session_close_final_sync_and_cleanup(client, token, library):
     assert session_id not in open_sessions
 
     db.expire_all()
-    progress = db.query(MediaProgress).filter_by(book_id=library["mayor"].id).one()
+    progress = db.query(MediaProgress).filter_by(edition_id=library["mayor"].id).one()
     assert progress.current_time == 55.0
 
 
@@ -177,7 +177,7 @@ def test_local_session_sync(client, token, library):
     assert response.status_code == 200
 
     db.expire_all()
-    progress = db.query(MediaProgress).filter_by(book_id=library["hail"].id).one()
+    progress = db.query(MediaProgress).filter_by(edition_id=library["hail"].id).one()
     assert progress.current_time == 12.0
 
 
@@ -201,24 +201,24 @@ def test_patch_progress_finished_and_unfinished(client, token, library, tokenles
                             headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     db.expire_all()
-    progress = db.query(MediaProgress).filter_by(book_id=library["hail"].id).one()
+    progress = db.query(MediaProgress).filter_by(edition_id=library["hail"].id).one()
     assert progress.is_finished is True
     shelf = db.query(UserBook).filter_by(
-        user_id=tokenless_user.id, book_id=library["hail"].id).one()
+        user_id=tokenless_user.id, book_id=library["hail"].book.id).one()
     assert shelf.read_state == ReadState.READ
 
     response = client.patch(f"/api/me/progress/{item_id}", json={"isFinished": False},
                             headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     db.expire_all()
-    progress = db.query(MediaProgress).filter_by(book_id=library["hail"].id).one()
+    progress = db.query(MediaProgress).filter_by(edition_id=library["hail"].id).one()
     assert progress.is_finished is False
     assert progress.finished_at is None
 
 
 def test_get_progress(client, token, library, user):
     db = library["db"]
-    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id,
+    db.add(MediaProgress(user_id=user.id, edition_id=library["mayor"].id,
                          current_time=25.0, duration=100.0))
     db.commit()
 
@@ -241,7 +241,7 @@ def test_progress_isolated_between_users(client, token, library, user, db_sessio
 
     db = library["db"]
     item_id = f"li_{library['mayor'].id}"
-    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id,
+    db.add(MediaProgress(user_id=user.id, edition_id=library["mayor"].id,
                          current_time=42.0, duration=100.0))
     db.commit()
 

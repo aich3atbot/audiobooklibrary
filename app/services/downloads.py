@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 from app.clients.download_client import get_download_client
 from app.clients.indexer import IndexerRelease, get_indexer
 from app.config import get_settings
-from app.models import Book, DownloadState, Release, User
+from app.models import Book, DownloadState, Edition, Release, User
+from app.services.editions import get_or_create_edition
 
 logger = logging.getLogger(__name__)
 
@@ -54,15 +55,19 @@ def grab_release(
     indexer_name: str,
     title: str,
     size: int | None,
+    edition: Edition | None = None,
 ) -> Release:
-    """Resolve a release to a magnet and add it to the download client."""
+    """Resolve a release to a magnet and add it to the download client. The
+    download lands on `edition` (the book's unlabelled edition by default)."""
     with get_indexer() as indexer:
         grabbed = indexer.grab(guid)
     with get_download_client() as client:
         info_hash = client.add_magnet(grabbed.magnet_uri)
 
+    if edition is None:
+        edition = get_or_create_edition(session, book)
     release = Release(
-        book=book,
+        edition=edition,
         user=user,
         guid=guid,
         indexer=indexer_name,
@@ -76,7 +81,7 @@ def grab_release(
         grabbed_at=datetime.now(timezone.utc),
         status="grabbed",
     )
-    book.download_state = DownloadState.GRABBED
+    edition.download_state = DownloadState.GRABBED
     session.add(release)
     session.commit()
     logger.info("Grabbed release for %s: %s (%s)", book.title, release.title, release.info_hash)

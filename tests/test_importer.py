@@ -4,10 +4,19 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.models import AppState, Author, Book, DownloadState, Release, Series, UserBook
+from app.models import (
+    AppState,
+    Author,
+    Book,
+    DownloadState,
+    Edition,
+    Release,
+    Series,
+    UserBook,
+)
 from app.services.importer import (
+    edition_dir_for,
     import_release,
-    library_dir_for,
     matches,
     replace_key,
     sanitize,
@@ -18,7 +27,7 @@ from app.services.sync import get_state, set_state
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (UserBook, Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -47,7 +56,6 @@ def book(clean_db):
         author=author,
         series=series,
         series_index=1.0,
-        download_state=DownloadState.GRABBED,
     )
     clean_db.add(book)
     clean_db.commit()
@@ -55,9 +63,17 @@ def book(clean_db):
 
 
 @pytest.fixture
-def release(clean_db, book):
+def edition(clean_db, book):
+    edition = Edition(book=book, download_state=DownloadState.GRABBED)
+    clean_db.add(edition)
+    clean_db.commit()
+    return edition
+
+
+@pytest.fixture
+def release(clean_db, edition):
     release = Release(
-        book=book,
+        edition=edition,
         guid="http://abb.test/abss/mayor-of-noobtown/",
         indexer="AudioBookBay",
         title="The Mayor of Noobtown - Ryan Rimmel [M4B] [32 Kbps]",
@@ -102,18 +118,18 @@ def test_matches():
     assert not matches("abc", "abcdef")  # too short for containment
 
 
-def test_library_dir_for_with_series(book, clean_dirs):
-    path = library_dir_for(book)
+def test_edition_dir_for_with_series(edition, clean_dirs):
+    path = edition_dir_for(edition)
     assert path == clean_dirs.library_dir / "Ryan Rimmel" / "Noobtown" / "1 - The Mayor of Noobtown"
 
 
-def test_library_dir_for_without_series(book, clean_dirs):
-    book.series = None
-    book.series_index = None
-    assert library_dir_for(book) == clean_dirs.library_dir / "Ryan Rimmel" / "The Mayor of Noobtown"
+def test_edition_dir_for_without_series(edition, clean_dirs):
+    edition.book.series = None
+    edition.book.series_index = None
+    assert edition_dir_for(edition) == clean_dirs.library_dir / "Ryan Rimmel" / "The Mayor of Noobtown"
 
 
-def test_import_release_directory(clean_db, book, release, clean_dirs):
+def test_import_release_directory(clean_db, edition, release, clean_dirs):
     source = make_download(
         clean_dirs.download_dir,
         "The Mayor of Noobtown - Ryan Rimmel [M4B] [32 Kbps]",
@@ -126,14 +142,14 @@ def test_import_release_directory(clean_db, book, release, clean_dirs):
     assert sorted(p.name for p in dest.iterdir()) == [
         "Part 01.mp3", "Part 02.mp3", "cover.jpg", "notes.nfo",
     ]
-    assert book.download_state == DownloadState.IMPORTED
-    assert book.library_path == str(dest)
+    assert edition.download_state == DownloadState.IMPORTED
+    assert edition.library_path == str(dest)
     assert release.status == "imported"
     # copy mode leaves the download in place (seeding)
     assert source.exists()
 
 
-def test_import_release_single_file(clean_db, book, release, clean_dirs):
+def test_import_release_single_file(clean_db, edition, release, clean_dirs):
     source = clean_dirs.download_dir / "The Mayor of Noobtown.m4b"
     source.write_bytes(b"audio")
 
@@ -143,7 +159,7 @@ def test_import_release_single_file(clean_db, book, release, clean_dirs):
     assert (dest / "The Mayor of Noobtown.m4b").exists()
 
 
-def test_import_release_no_audio_fails(clean_db, book, release, clean_dirs):
+def test_import_release_no_audio_fails(clean_db, edition, release, clean_dirs):
     source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown",
                            files=("readme.txt", "cover.jpg"))
 
@@ -151,10 +167,10 @@ def test_import_release_no_audio_fails(clean_db, book, release, clean_dirs):
 
     assert release.status == "failed"
     assert "no audio files" in release.error
-    assert book.download_state == DownloadState.FAILED
+    assert edition.download_state == DownloadState.FAILED
 
 
-def test_import_release_existing_destination_fails(clean_db, book, release, clean_dirs):
+def test_import_release_existing_destination_fails(clean_db, edition, release, clean_dirs):
     dest = clean_dirs.library_dir / "Ryan Rimmel" / "Noobtown" / "1 - The Mayor of Noobtown"
     dest.mkdir(parents=True)
     (dest / "already.mp3").write_bytes(b"x")
@@ -164,33 +180,33 @@ def test_import_release_existing_destination_fails(clean_db, book, release, clea
     assert "destination already exists" in release.error
 
 
-def make_replaced_book(db, book, release, old_dir):
-    """An already-imported book whose release is marked as a replacement."""
+def make_replaced_edition(db, edition, release, old_dir):
+    """An already-imported edition whose release is marked as a replacement."""
     old_dir.mkdir(parents=True)
     (old_dir / "old.mp3").write_bytes(b"old")
-    book.download_state = DownloadState.IMPORTED
-    book.library_path = str(old_dir)
+    edition.download_state = DownloadState.IMPORTED
+    edition.library_path = str(old_dir)
     set_state(db, replace_key(release), "1")
     db.commit()
 
 
-def test_import_replace_clears_old_files_first(clean_db, book, release, clean_dirs):
+def test_import_replace_clears_old_files_first(clean_db, edition, release, clean_dirs):
     dest = clean_dirs.library_dir / "Ryan Rimmel" / "Noobtown" / "1 - The Mayor of Noobtown"
-    make_replaced_book(clean_db, book, release, dest)
+    make_replaced_edition(clean_db, edition, release, dest)
     source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown")
 
     assert import_release(clean_db, release, source) is True
 
     assert not (dest / "old.mp3").exists()
     assert (dest / "Book Part 01.mp3").exists()
-    assert book.download_state == DownloadState.IMPORTED
-    assert book.library_path == str(dest)
+    assert edition.download_state == DownloadState.IMPORTED
+    assert edition.library_path == str(dest)
     assert get_state(clean_db, replace_key(release)) is None
 
 
-def test_import_replace_removes_old_path_when_it_differs(clean_db, book, release, clean_dirs):
+def test_import_replace_removes_old_path_when_it_differs(clean_db, edition, release, clean_dirs):
     old = clean_dirs.library_dir / "Old Author" / "Old Title"
-    make_replaced_book(clean_db, book, release, old)
+    make_replaced_edition(clean_db, edition, release, old)
     source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown")
 
     assert import_release(clean_db, release, source) is True
@@ -198,12 +214,12 @@ def test_import_replace_removes_old_path_when_it_differs(clean_db, book, release
     assert not old.parent.exists()  # old dir gone, empty parents cleaned up
     dest = clean_dirs.library_dir / "Ryan Rimmel" / "Noobtown" / "1 - The Mayor of Noobtown"
     assert (dest / "Book Part 01.mp3").exists()
-    assert book.library_path == str(dest)
+    assert edition.library_path == str(dest)
 
 
-def test_import_replace_failure_keeps_old_files(clean_db, book, release, clean_dirs):
+def test_import_replace_failure_keeps_old_files(clean_db, edition, release, clean_dirs):
     dest = clean_dirs.library_dir / "Ryan Rimmel" / "Noobtown" / "1 - The Mayor of Noobtown"
-    make_replaced_book(clean_db, book, release, dest)
+    make_replaced_edition(clean_db, edition, release, dest)
     source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown",
                            files=("readme.txt",))
 
@@ -211,9 +227,9 @@ def test_import_replace_failure_keeps_old_files(clean_db, book, release, clean_d
 
     assert (dest / "old.mp3").exists()
     assert release.status == "failed"
-    # the old files survived, so the book is still genuinely available
-    assert book.download_state == DownloadState.IMPORTED
-    assert book.library_path == str(dest)
+    # the old files survived, so the edition is still genuinely available
+    assert edition.download_state == DownloadState.IMPORTED
+    assert edition.library_path == str(dest)
     assert get_state(clean_db, replace_key(release)) == "1"
 
 
@@ -245,7 +261,7 @@ def remove_immediately(test_settings, monkeypatch):
     return fake
 
 
-def test_import_removes_torrent_when_configured(clean_db, book, release, clean_dirs,
+def test_import_removes_torrent_when_configured(clean_db, edition, release, clean_dirs,
                                                 remove_immediately):
     release.info_hash = "a" * 40
     source = make_download(clean_dirs.download_dir, "The Mayor of Noobtown")
@@ -257,7 +273,7 @@ def test_import_removes_torrent_when_configured(clean_db, book, release, clean_d
     assert release.error is None
 
 
-def test_failed_removal_never_unimports(clean_db, book, release, clean_dirs,
+def test_failed_removal_never_unimports(clean_db, edition, release, clean_dirs,
                                          remove_immediately):
     remove_immediately.fail = True
     release.info_hash = "a" * 40
@@ -266,11 +282,11 @@ def test_failed_removal_never_unimports(clean_db, book, release, clean_dirs,
     assert import_release(clean_db, release, source) is True
 
     assert release.status == "imported"
-    assert book.download_state == DownloadState.IMPORTED
+    assert edition.download_state == DownloadState.IMPORTED
     assert "may still be seeding" in release.error
 
 
-def test_import_leaves_torrent_by_default(clean_db, book, release, clean_dirs, monkeypatch):
+def test_import_leaves_torrent_by_default(clean_db, edition, release, clean_dirs, monkeypatch):
     import app.services.downloads as downloads
 
     release.info_hash = "a" * 40
@@ -282,7 +298,7 @@ def test_import_leaves_torrent_by_default(clean_db, book, release, clean_dirs, m
     assert fake.removed == []
 
 
-def test_scan_imports_stable_download(clean_db, book, release, clean_dirs):
+def test_scan_imports_stable_download(clean_db, edition, release, clean_dirs):
     make_download(clean_dirs.download_dir,
                   "The Mayor of Noobtown - Ryan Rimmel [M4B] [32 Kbps]")
 
@@ -290,12 +306,12 @@ def test_scan_imports_stable_download(clean_db, book, release, clean_dirs):
 
     assert counts == {"matched": 1, "imported": 1, "failed": 0}
     clean_db.refresh(release)
-    clean_db.refresh(book)
+    clean_db.refresh(edition)
     assert release.status == "imported"
-    assert book.download_state == DownloadState.IMPORTED
+    assert edition.download_state == DownloadState.IMPORTED
 
 
-def test_scan_marks_fresh_download_as_downloading(clean_db, book, release, clean_dirs):
+def test_scan_marks_fresh_download_as_downloading(clean_db, edition, release, clean_dirs):
     make_download(clean_dirs.download_dir,
                   "The Mayor of Noobtown - Ryan Rimmel [M4B] [32 Kbps]", age_seconds=0)
 
@@ -304,11 +320,11 @@ def test_scan_marks_fresh_download_as_downloading(clean_db, book, release, clean
     assert counts == {"matched": 1, "imported": 0, "failed": 0}
     clean_db.refresh(release)
     assert release.status == "downloading"
-    clean_db.refresh(book)
-    assert book.download_state == DownloadState.DOWNLOADING
+    clean_db.refresh(edition)
+    assert edition.download_state == DownloadState.DOWNLOADING
 
 
-def test_scan_skips_incomplete_markers(clean_db, book, release, clean_dirs):
+def test_scan_skips_incomplete_markers(clean_db, edition, release, clean_dirs):
     make_download(clean_dirs.download_dir,
                   "The Mayor of Noobtown - Ryan Rimmel [M4B] [32 Kbps]",
                   files=("Part 01.mp3", "Part 02.mp3.part"))
@@ -320,7 +336,7 @@ def test_scan_skips_incomplete_markers(clean_db, book, release, clean_dirs):
     assert release.status == "downloading"
 
 
-def test_scan_no_match_leaves_release_alone(clean_db, book, release, clean_dirs):
+def test_scan_no_match_leaves_release_alone(clean_db, edition, release, clean_dirs):
     make_download(clean_dirs.download_dir, "Some Other Audiobook Entirely")
 
     counts = scan_downloads_once()
@@ -330,25 +346,25 @@ def test_scan_no_match_leaves_release_alone(clean_db, book, release, clean_dirs)
     assert release.status == "grabbed"
 
 
-def test_activity_page(client, clean_db, book, release):
+def test_activity_page(client, clean_db, edition, release):
     response = client.get("/activity")
     assert response.status_code == 200
     assert "The Mayor of Noobtown" in response.text
     assert "grabbed" in response.text
 
 
-def test_cancel_release(client, clean_db, book, release):
+def test_cancel_release(client, clean_db, edition, release):
     response = client.post(f"/releases/{release.id}/cancel", follow_redirects=False)
     assert response.status_code == 303
     clean_db.refresh(release)
-    clean_db.refresh(book)
+    clean_db.refresh(edition)
     assert release.status == "cancelled"
-    assert book.download_state == DownloadState.NONE
+    assert edition.download_state == DownloadState.NONE
 
 
-def test_cancel_replace_restores_available(client, clean_db, book, release):
-    book.download_state = DownloadState.GRABBED
-    book.library_path = "/audiobooks/kept"  # old files never removed (deferred)
+def test_cancel_replace_restores_available(client, clean_db, edition, release):
+    edition.download_state = DownloadState.GRABBED
+    edition.library_path = "/audiobooks/kept"  # old files never removed (deferred)
     set_state(clean_db, replace_key(release), "1")
     clean_db.commit()
 
@@ -357,14 +373,14 @@ def test_cancel_replace_restores_available(client, clean_db, book, release):
     assert response.status_code == 303
     clean_db.expire_all()
     assert release.status == "cancelled"
-    assert book.download_state == DownloadState.IMPORTED
+    assert edition.download_state == DownloadState.IMPORTED
     assert get_state(clean_db, replace_key(release)) is None
 
 
-def test_retry_failed_release(client, clean_db, book, release):
+def test_retry_failed_release(client, clean_db, edition, release):
     release.status = "failed"
     release.error = "boom"
-    book.download_state = DownloadState.FAILED
+    edition.download_state = DownloadState.FAILED
     clean_db.commit()
 
     response = client.post(f"/releases/{release.id}/retry", follow_redirects=False)
@@ -375,7 +391,7 @@ def test_retry_failed_release(client, clean_db, book, release):
     assert release.error is None
 
 
-def test_manual_import(client, clean_db, book, release, clean_dirs):
+def test_manual_import(client, clean_db, edition, release, clean_dirs):
     make_download(clean_dirs.download_dir, "Oddly Named Folder")
 
     response = client.post(
@@ -389,7 +405,7 @@ def test_manual_import(client, clean_db, book, release, clean_dirs):
     assert release.status == "imported"
 
 
-def test_manual_import_rejects_traversal(client, clean_db, book, release, clean_dirs):
+def test_manual_import_rejects_traversal(client, clean_db, edition, release, clean_dirs):
     response = client.post(
         f"/releases/{release.id}/manual-import",
         data={"folder": "../outside"},

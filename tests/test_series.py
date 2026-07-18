@@ -8,6 +8,7 @@ from app.models import (
     Author,
     Book,
     DownloadState,
+    Edition,
     ReadState,
     Release,
     Series,
@@ -21,7 +22,7 @@ ABB = "http://abb.test"
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (UserBook, Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -79,8 +80,9 @@ def test_fetch_series_dedupes_and_orders():
 def test_series_page_merges_local_state(client, clean_db, user):
     author = Author(hardcover_id=500, name="Test Author")
     shelved = Book(hardcover_id=1000, title="The Way of Kings", author=author)
-    available = Book(hardcover_id=2000, title="Words of Radiance", author=author,
-                     download_state=DownloadState.IMPORTED, library_path="/audiobooks/x")
+    available = Book(hardcover_id=2000, title="Words of Radiance", author=author)
+    available.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                      library_path="/audiobooks/x"))
     clean_db.add_all([shelved, available])
     clean_db.commit()
     make_user_book(clean_db, user, shelved, read_state=ReadState.READ)
@@ -132,8 +134,9 @@ def test_add_all_shelves_unshelved_books_only(client, clean_db, user):
     want-to-read; the user's existing shelf entry is untouched."""
     author = Author(hardcover_id=500, name="Test Author")
     shelved = Book(hardcover_id=1000, title="The Way of Kings", author=author)
-    available = Book(hardcover_id=2000, title="Words of Radiance", author=author,
-                     download_state=DownloadState.IMPORTED, library_path="/audiobooks/x")
+    available = Book(hardcover_id=2000, title="Words of Radiance", author=author)
+    available.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                      library_path="/audiobooks/x"))
     clean_db.add_all([shelved, available])
     clean_db.commit()
     make_user_book(clean_db, user, shelved, read_state=ReadState.READ)

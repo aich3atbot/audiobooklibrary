@@ -21,11 +21,12 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def item_id(book_id: int) -> str:
-    return f"li_{book_id}"
+def item_id(edition_id: int) -> str:
+    """A library item is one edition of a book."""
+    return f"li_{edition_id}"
 
 
-def book_id_from_item(item_id_str: str) -> int | None:
+def edition_id_from_item(item_id_str: str) -> int | None:
     if not item_id_str.startswith("li_"):
         return None
     try:

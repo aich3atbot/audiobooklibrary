@@ -1,6 +1,9 @@
 """Catalogue payload builders for the ABS API: library items, metadata,
 shelves, and media progress in the "old model" shapes clients consume.
-Shapes are pinned in docs/abs-api-contract.md."""
+Shapes are pinned in docs/abs-api-contract.md.
+
+A library item is one *edition* (a book can hold several recordings); item
+ids are li_<edition.id>. Book metadata is read through edition.book."""
 
 import json
 from datetime import datetime, timezone
@@ -12,7 +15,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.abs import payloads
 from app.config import get_settings
-from app.models import Book, Bookmark, MediaProgress, User
+from app.models import Book, Bookmark, Edition, MediaProgress, User
 
 COVER_NAMES = ("cover", "folder")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
@@ -24,16 +27,16 @@ def _ms(dt: datetime | None) -> int | None:
     return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
-def eligible_books(db: Session) -> list[Book]:
-    """Books the API exposes: imported into the library folder."""
+def eligible_editions(db: Session) -> list[Edition]:
+    """Editions the API exposes: imported into the library folder."""
     return (
         db.scalars(
-            select(Book)
-            .where(Book.library_path.is_not(None))
+            select(Edition)
+            .where(Edition.library_path.is_not(None))
             .options(
-                joinedload(Book.author),
-                joinedload(Book.series),
-                joinedload(Book.audio_files),
+                joinedload(Edition.book).joinedload(Book.author),
+                joinedload(Edition.book).joinedload(Book.series),
+                joinedload(Edition.audio_files),
             )
         )
         .unique()
@@ -41,14 +44,14 @@ def eligible_books(db: Session) -> list[Book]:
     )
 
 
-def get_book_by_item_id(db: Session, item_id: str) -> Book | None:
-    book_id = payloads.book_id_from_item(item_id)
-    if book_id is None:
+def get_edition_by_item_id(db: Session, item_id: str) -> Edition | None:
+    edition_id = payloads.edition_id_from_item(item_id)
+    if edition_id is None:
         return None
-    book = db.get(Book, book_id)
-    if book is None or not book.library_path:
+    edition = db.get(Edition, edition_id)
+    if edition is None or not edition.library_path:
         return None
-    return book
+    return edition
 
 
 def title_prefix_at_end(title: str) -> str:
@@ -77,10 +80,10 @@ def series_name(book: Book) -> str:
     return f"{book.series.name} #{seq}" if seq else book.series.name
 
 
-def find_cover_file(book: Book) -> Path | None:
-    if not book.library_path:
+def find_cover_file(edition: Edition) -> Path | None:
+    if not edition.library_path:
         return None
-    root = Path(book.library_path)
+    root = Path(edition.library_path)
     if not root.is_dir():
         return None
     images = [p for p in root.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS]
@@ -90,26 +93,26 @@ def find_cover_file(book: Book) -> Path | None:
     return images[0] if images else None
 
 
-def has_cover(book: Book) -> bool:
-    return bool(book.cover_url) or find_cover_file(book) is not None
+def has_cover(edition: Edition) -> bool:
+    return bool(edition.book.cover_url) or find_cover_file(edition) is not None
 
 
-def book_duration(book: Book) -> float:
-    return sum(f.duration or 0.0 for f in book.audio_files)
+def edition_duration(edition: Edition) -> float:
+    return sum(f.duration or 0.0 for f in edition.audio_files)
 
 
-def book_size(book: Book) -> int:
-    return sum(f.size for f in book.audio_files)
+def edition_size(edition: Edition) -> int:
+    return sum(f.size for f in edition.audio_files)
 
 
-def book_chapters(book: Book) -> list[dict[str, Any]]:
+def edition_chapters(edition: Edition) -> list[dict[str, Any]]:
     """Embedded chapters when a single file carries them, else one chapter
     per track (matches how ABS treats multi-file books without metadata)."""
-    if len(book.audio_files) == 1 and book.audio_files[0].chapters_json:
-        return json.loads(book.audio_files[0].chapters_json)
+    if len(edition.audio_files) == 1 and edition.audio_files[0].chapters_json:
+        return json.loads(edition.audio_files[0].chapters_json)
     chapters = []
     offset = 0.0
-    for i, file in enumerate(book.audio_files):
+    for i, file in enumerate(edition.audio_files):
         duration = file.duration or 0.0
         chapters.append(
             {
@@ -123,14 +126,15 @@ def book_chapters(book: Book) -> list[dict[str, Any]]:
     return chapters
 
 
-def metadata_minified(book: Book) -> dict[str, Any]:
+def metadata_minified(edition: Edition) -> dict[str, Any]:
+    book = edition.book
     return {
         "title": book.title,
         "titleIgnorePrefix": title_prefix_at_end(book.title),
         "subtitle": None,
         "authorName": book.author.name,
         "authorNameLF": name_last_first(book.author.name),
-        "narratorName": "",
+        "narratorName": edition.narrator or edition.label,
         "seriesName": series_name(book),
         "genres": [],
         "publishedYear": None,
@@ -145,10 +149,12 @@ def metadata_minified(book: Book) -> dict[str, Any]:
     }
 
 
-def metadata_expanded(book: Book) -> dict[str, Any]:
-    meta = metadata_minified(book)
+def metadata_expanded(edition: Edition) -> dict[str, Any]:
+    book = edition.book
+    meta = metadata_minified(edition)
     meta["authors"] = [{"id": f"aut_{book.author_id}", "name": book.author.name}]
-    meta["narrators"] = []
+    narrator = edition.narrator or edition.label
+    meta["narrators"] = [narrator] if narrator else []
     meta["series"] = (
         [{"id": f"ser_{book.series_id}", "name": book.series.name, "sequence": _sequence(book)}]
         if book.series
@@ -158,8 +164,8 @@ def metadata_expanded(book: Book) -> dict[str, Any]:
     return meta
 
 
-def audio_file_json(book: Book, file) -> dict[str, Any]:
-    root = Path(book.library_path)
+def audio_file_json(edition: Edition, file) -> dict[str, Any]:
+    root = Path(edition.library_path)
     path = root / file.rel_path
     return {
         "index": file.index,
@@ -174,8 +180,8 @@ def audio_file_json(book: Book, file) -> dict[str, Any]:
             "ctimeMs": file.mtime_ms,
             "birthtimeMs": file.mtime_ms,
         },
-        "addedAt": _ms(book.updated_at),
-        "updatedAt": _ms(book.updated_at),
+        "addedAt": _ms(edition.updated_at),
+        "updatedAt": _ms(edition.updated_at),
         "trackNumFromMeta": file.index,
         "discNumFromMeta": None,
         "trackNumFromFilename": None,
@@ -195,12 +201,12 @@ def audio_file_json(book: Book, file) -> dict[str, Any]:
     }
 
 
-def audio_tracks(book: Book) -> list[dict[str, Any]]:
+def audio_tracks(edition: Edition) -> list[dict[str, Any]]:
     tracks = []
     offset = 0.0
-    item = payloads.item_id(book.id)
-    for file in book.audio_files:
-        file_json = audio_file_json(book, file)
+    item = payloads.item_id(edition.id)
+    for file in edition.audio_files:
+        file_json = audio_file_json(edition, file)
         tracks.append(
             {
                 "index": file.index,
@@ -217,34 +223,35 @@ def audio_tracks(book: Book) -> list[dict[str, Any]]:
     return tracks
 
 
-def media_minified(book: Book) -> dict[str, Any]:
-    chapters = book_chapters(book)
+def media_minified(edition: Edition) -> dict[str, Any]:
+    chapters = edition_chapters(edition)
     return {
-        "id": f"bk_{book.id}",
-        "metadata": metadata_minified(book),
-        "coverPath": str(find_cover_file(book) or "") or ("internal" if book.cover_url else None),
+        "id": f"bk_{edition.id}",
+        "metadata": metadata_minified(edition),
+        "coverPath": str(find_cover_file(edition) or "")
+        or ("internal" if edition.book.cover_url else None),
         "tags": [],
-        "numTracks": len(book.audio_files),
-        "numAudioFiles": len(book.audio_files),
+        "numTracks": len(edition.audio_files),
+        "numAudioFiles": len(edition.audio_files),
         "numChapters": len(chapters),
-        "duration": book_duration(book),
-        "size": book_size(book),
+        "duration": edition_duration(edition),
+        "size": edition_size(edition),
         "ebookFormat": None,
     }
 
 
-def item_minified(book: Book) -> dict[str, Any]:
+def item_minified(edition: Edition) -> dict[str, Any]:
     settings = get_settings()
-    path = Path(book.library_path)
+    path = Path(edition.library_path)
     try:
         rel = str(path.relative_to(settings.library_dir))
     except ValueError:
         rel = path.name
-    added = _ms(book.created_at)
-    updated = _ms(book.updated_at)
+    added = _ms(edition.created_at)
+    updated = _ms(edition.updated_at)
     return {
-        "id": payloads.item_id(book.id),
-        "ino": str(book.id),
+        "id": payloads.item_id(edition.id),
+        "ino": str(edition.id),
         "oldLibraryItemId": None,
         "libraryId": payloads.LIBRARY_ID,
         "folderId": payloads.FOLDER_ID,
@@ -259,21 +266,21 @@ def item_minified(book: Book) -> dict[str, Any]:
         "isMissing": False,
         "isInvalid": False,
         "mediaType": "book",
-        "media": media_minified(book),
-        "numFiles": len(book.audio_files),
-        "size": book_size(book),
+        "media": media_minified(edition),
+        "numFiles": len(edition.audio_files),
+        "size": edition_size(edition),
     }
 
 
-def item_expanded(book: Book) -> dict[str, Any]:
-    item = item_minified(book)
+def item_expanded(edition: Edition) -> dict[str, Any]:
+    item = item_minified(edition)
     media = item["media"]
     media["libraryItemId"] = item["id"]
-    media["metadata"] = metadata_expanded(book)
-    media["audioFiles"] = [audio_file_json(book, f) for f in book.audio_files]
-    media["chapters"] = book_chapters(book)
+    media["metadata"] = metadata_expanded(edition)
+    media["audioFiles"] = [audio_file_json(edition, f) for f in edition.audio_files]
+    media["chapters"] = edition_chapters(edition)
     media["ebookFile"] = None
-    media["tracks"] = audio_tracks(book)
+    media["tracks"] = audio_tracks(edition)
     item["libraryFiles"] = []
     return item
 
@@ -318,15 +325,16 @@ def library_json() -> dict[str, Any]:
 
 
 def filterdata(db: Session) -> dict[str, Any]:
-    books = eligible_books(db)
-    authors = {b.author_id: b.author.name for b in books}
-    series = {b.series_id: b.series.name for b in books if b.series}
+    editions = eligible_editions(db)
+    authors = {e.book.author_id: e.book.author.name for e in editions}
+    series = {e.book.series_id: e.book.series.name for e in editions if e.book.series}
+    narrators = sorted({n for e in editions if (n := e.narrator or e.label)})
     return {
         "authors": [{"id": f"aut_{i}", "name": n} for i, n in sorted(authors.items())],
         "genres": [],
         "tags": [],
         "series": [{"id": f"ser_{i}", "name": n} for i, n in sorted(series.items())],
-        "narrators": [],
+        "narrators": narrators,
         "languages": [],
         "publishers": [],
         "publishedDecades": [],
@@ -334,19 +342,19 @@ def filterdata(db: Session) -> dict[str, Any]:
 
 
 SORT_KEYS = {
-    "media.metadata.title": lambda b: b.title.lower(),
-    "media.metadata.authorName": lambda b: b.author.name.lower(),
-    "media.metadata.authorNameLF": lambda b: name_last_first(b.author.name).lower(),
-    "addedAt": lambda b: b.created_at,
-    "updatedAt": lambda b: b.updated_at,
-    "size": book_size,
-    "media.duration": book_duration,
+    "media.metadata.title": lambda e: e.book.title.lower(),
+    "media.metadata.authorName": lambda e: e.book.author.name.lower(),
+    "media.metadata.authorNameLF": lambda e: name_last_first(e.book.author.name).lower(),
+    "addedAt": lambda e: e.created_at,
+    "updatedAt": lambda e: e.updated_at,
+    "size": edition_size,
+    "media.duration": edition_duration,
 }
 
 
-def sorted_books(books: list[Book], sort: str | None, desc: bool) -> list[Book]:
+def sorted_editions(editions: list[Edition], sort: str | None, desc: bool) -> list[Edition]:
     key = SORT_KEYS.get(sort or "media.metadata.title", SORT_KEYS["media.metadata.title"])
-    return sorted(books, key=key, reverse=desc)
+    return sorted(editions, key=key, reverse=desc)
 
 
 def progress_json(progress: MediaProgress, user: User) -> dict[str, Any]:
@@ -354,9 +362,9 @@ def progress_json(progress: MediaProgress, user: User) -> dict[str, Any]:
     return {
         "id": f"prog_{progress.id}",
         "userId": user.uuid,
-        "libraryItemId": payloads.item_id(progress.book_id),
+        "libraryItemId": payloads.item_id(progress.edition_id),
         "episodeId": None,
-        "mediaItemId": f"bk_{progress.book_id}",
+        "mediaItemId": f"bk_{progress.edition_id}",
         "mediaItemType": "book",
         "duration": duration,
         "progress": (progress.current_time / duration) if duration else 0.0,
@@ -371,18 +379,18 @@ def progress_json(progress: MediaProgress, user: User) -> dict[str, Any]:
     }
 
 
-def get_progress(db: Session, user: User, book_id: int) -> MediaProgress | None:
+def get_progress(db: Session, user: User, edition_id: int) -> MediaProgress | None:
     return db.scalar(
         select(MediaProgress).where(
-            MediaProgress.user_id == user.id, MediaProgress.book_id == book_id
+            MediaProgress.user_id == user.id, MediaProgress.edition_id == edition_id
         )
     )
 
 
 def progress_map(db: Session, user: User) -> dict[int, MediaProgress]:
-    """The user's progress rows keyed by book id."""
+    """The user's progress rows keyed by edition id."""
     rows = db.scalars(select(MediaProgress).where(MediaProgress.user_id == user.id))
-    return {row.book_id: row for row in rows}
+    return {row.edition_id: row for row in rows}
 
 
 def all_media_progress(db: Session, user: User) -> list[dict[str, Any]]:
@@ -392,7 +400,7 @@ def all_media_progress(db: Session, user: User) -> list[dict[str, Any]]:
 
 def bookmark_json(bookmark: Bookmark) -> dict[str, Any]:
     return {
-        "libraryItemId": payloads.item_id(bookmark.book_id),
+        "libraryItemId": payloads.item_id(bookmark.edition_id),
         "title": bookmark.title,
         "time": bookmark.time,
         "createdAt": _ms(bookmark.created_at),
@@ -423,33 +431,35 @@ def search_library(db: Session, query: str, limit: int) -> dict[str, Any]:
     """GET /api/libraries/:id/search response: books matching title/author/
     series, plus matched series (with their books) and authors."""
     q = query.strip().lower()
-    books = eligible_books(db)
+    editions = eligible_editions(db)
 
-    book_matches = [
-        b for b in books
-        if q in b.title.lower()
-        or q in b.author.name.lower()
-        or (b.series and q in b.series.name.lower())
+    edition_matches = [
+        e for e in editions
+        if q in e.book.title.lower()
+        or q in e.book.author.name.lower()
+        or (e.book.series and q in e.book.series.name.lower())
     ][:limit]
 
     series_matches: dict[int, dict[str, Any]] = {}
-    for book in books:
+    for edition in editions:
+        book = edition.book
         if book.series and q in book.series.name.lower():
             group = series_matches.setdefault(
                 book.series_id,
                 {"series": {"id": f"ser_{book.series_id}", "name": book.series.name},
                  "books": []},
             )
-            group["books"].append(item_minified(book))
+            group["books"].append(item_minified(edition))
 
     author_matches: dict[int, dict[str, Any]] = {}
-    for book in books:
+    for edition in editions:
+        book = edition.book
         if q in book.author.name.lower():
             entry = author_matches.setdefault(book.author_id, author_entry(book))
             entry["numBooks"] += 1
 
     return {
-        "book": [{"libraryItem": item_expanded(b)} for b in book_matches],
+        "book": [{"libraryItem": item_expanded(e)} for e in edition_matches],
         "narrators": [],
         "tags": [],
         "genres": [],
@@ -459,23 +469,23 @@ def search_library(db: Session, query: str, limit: int) -> dict[str, Any]:
 
 
 def personalized_shelves(db: Session, user: User, limit: int = 10) -> list[dict[str, Any]]:
-    books = eligible_books(db)
+    editions = eligible_editions(db)
     progress = progress_map(db, user)
 
-    def prog(b: Book) -> MediaProgress | None:
-        return progress.get(b.id)
+    def prog(e: Edition) -> MediaProgress | None:
+        return progress.get(e.id)
 
     in_progress = [
-        b for b in books
-        if prog(b) and not prog(b).is_finished and prog(b).current_time > 0
+        e for e in editions
+        if prog(e) and not prog(e).is_finished and prog(e).current_time > 0
     ]
-    in_progress.sort(key=lambda b: prog(b).updated_at, reverse=True)
+    in_progress.sort(key=lambda e: prog(e).updated_at, reverse=True)
 
-    recent = sorted(books, key=lambda b: b.created_at, reverse=True)
+    recent = sorted(editions, key=lambda e: e.created_at, reverse=True)
 
-    finished = [b for b in books if prog(b) and prog(b).is_finished]
+    finished = [e for e in editions if prog(e) and prog(e).is_finished]
     finished.sort(
-        key=lambda b: prog(b).finished_at or prog(b).updated_at, reverse=True
+        key=lambda e: prog(e).finished_at or prog(e).updated_at, reverse=True
     )
 
     shelves = []
@@ -486,7 +496,7 @@ def personalized_shelves(db: Session, user: User, limit: int = 10) -> list[dict[
                 "label": "Continue Listening",
                 "labelStringKey": "LabelContinueListening",
                 "type": "book",
-                "entities": [item_minified(b) for b in in_progress[:limit]],
+                "entities": [item_minified(e) for e in in_progress[:limit]],
                 "total": len(in_progress),
             }
         )
@@ -497,7 +507,7 @@ def personalized_shelves(db: Session, user: User, limit: int = 10) -> list[dict[
                 "label": "Recently Added",
                 "labelStringKey": "LabelRecentlyAdded",
                 "type": "book",
-                "entities": [item_minified(b) for b in recent[:limit]],
+                "entities": [item_minified(e) for e in recent[:limit]],
                 "total": len(recent),
             }
         )
@@ -508,7 +518,7 @@ def personalized_shelves(db: Session, user: User, limit: int = 10) -> list[dict[
                 "label": "Listen Again",
                 "labelStringKey": "LabelListenAgain",
                 "type": "book",
-                "entities": [item_minified(b) for b in finished[:limit]],
+                "entities": [item_minified(e) for e in finished[:limit]],
                 "total": len(finished),
             }
         )

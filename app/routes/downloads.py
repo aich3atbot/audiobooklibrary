@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_db
-from app.models import Book, User, display_status
+from app.models import Book, Edition, User, book_status
 from app.services.downloads import grab_release, search_releases
 from app.services.importer import AUDIO_EXTS, remove_library_files, replace_key
 from app.services.sync import get_user_book, set_state
@@ -31,13 +31,19 @@ def _get_book(db: Session, book_id: int) -> Book:
 
 def _grab_blocked(book: Book) -> str | None:
     """A book that is already downloading or available must not be grabbed
-    again — the store is shared across users."""
-    status = display_status(book.download_state)
+    again — the store is shared across users. (Adding a *new* edition goes
+    through the files dialog instead.)"""
+    status = book_status(book)
     if status == "downloading":
         return "This book is already downloading."
     if status == "available":
         return "This book is already available in the library."
     return None
+
+
+def _replace_target(book: Book) -> Edition | None:
+    """The edition whose files a replace-download swaps out."""
+    return next((e for e in book.editions if e.library_path), None)
 
 
 def _bitrate(path: Path) -> int | None:
@@ -53,25 +59,29 @@ def _bitrate(path: Path) -> int | None:
 
 @router.get("/books/{book_id}/files", response_class=HTMLResponse)
 def list_files(book_id: int, request: Request, db: Session = Depends(get_db)):
-    """Details of a downloaded book's files, with a replace-download entry."""
+    """Details of a downloaded book's files, per edition, with a
+    replace-download entry."""
     book = _get_book(db, book_id)
-    files = []
+    editions = []
     error = None
-    root = Path(book.library_path) if book.library_path else None
-    if display_status(book.download_state) != "available" or root is None or not root.is_dir():
+    for edition in book.editions:
+        root = Path(edition.library_path) if edition.library_path else None
+        if root is None or not root.is_dir():
+            continue
+        files = [
+            {
+                "rel_path": str(p.relative_to(root)),
+                "size": p.stat().st_size,
+                "bitrate": _bitrate(p),
+            }
+            for p in sorted(root.rglob("*"))
+            if p.is_file()
+        ]
+        editions.append({"edition": edition, "files": files})
+    if not editions:
         error = "This book has no downloaded files."
-    else:
-        for p in sorted(root.rglob("*")):
-            if p.is_file():
-                files.append(
-                    {
-                        "rel_path": str(p.relative_to(root)),
-                        "size": p.stat().st_size,
-                        "bitrate": _bitrate(p),
-                    }
-                )
     return templates.TemplateResponse(
-        request, "_files.html", {"book": book, "files": files, "error": error}
+        request, "_files.html", {"book": book, "editions": editions, "error": error}
     )
 
 
@@ -86,7 +96,7 @@ def list_releases(
             "_releases.html",
             {"book": book, "releases": [], "error": DISABLED_ERROR},
         )
-    replacing = replace and display_status(book.download_state) == "available"
+    replacing = replace and _replace_target(book) is not None
     blocked = None if replacing else _grab_blocked(book)
     if blocked:
         return templates.TemplateResponse(
@@ -122,12 +132,13 @@ def grab(
     book = _get_book(db, book_id)
     if not get_settings().downloads_enabled:
         raise HTTPException(status_code=409, detail=DISABLED_ERROR)
-    replacing = replace and display_status(book.download_state) == "available"
+    target = _replace_target(book) if replace else None
+    replacing = target is not None
     blocked = _grab_blocked(book)
     if blocked and not replacing:
         raise HTTPException(status_code=409, detail=blocked)
     try:
-        release = grab_release(db, user, book, guid, indexer, title, size)
+        release = grab_release(db, user, book, guid, indexer, title, size, edition=target)
     except Exception:
         logger.exception("Grab failed for %s", book.title)
         return templates.TemplateResponse(
@@ -138,7 +149,7 @@ def grab(
     if replacing:
         if remove == "immediately":
             try:
-                remove_library_files(book)
+                remove_library_files(target)
             except Exception:
                 # Fall back to removal at import time so the new download
                 # doesn't die on the dest-exists guard.

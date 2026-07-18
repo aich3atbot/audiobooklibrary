@@ -6,7 +6,7 @@ import pytest
 import respx
 
 from app.clients.hardcover import API_URL, HardcoverClient
-from app.models import AppState, Author, Book, ReadState, Release, Series, UserBook
+from app.models import AppState, Author, Book, Edition, ReadState, Release, Series, UserBook
 from app.services.sync import push_book, push_pending, sync_from_hardcover, update_read_state
 from tests.conftest import make_user_book
 from tests.test_sync import entry, me_response
@@ -14,7 +14,7 @@ from tests.test_sync import entry, me_response
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (UserBook, Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session

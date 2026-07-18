@@ -7,7 +7,16 @@ from datetime import datetime, timezone
 import pytest
 
 from app.clients.download_client import DownloadClientError, TorrentStatus
-from app.models import AppState, Author, Book, DownloadState, Release, Series, UserBook
+from app.models import (
+    AppState,
+    Author,
+    Book,
+    DownloadState,
+    Edition,
+    Release,
+    Series,
+    UserBook,
+)
 from app.services import downloads, importer
 from app.services.importer import scan_downloads_once
 
@@ -17,7 +26,7 @@ TORRENT_NAME = "The Mayor of Noobtown - Ryan Rimmel [M4B]"
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (UserBook, Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -46,7 +55,6 @@ def book(clean_db):
         hardcover_id=646489,
         title="The Mayor of Noobtown",
         author=author,
-        download_state=DownloadState.GRABBED,
     )
     clean_db.add(book)
     clean_db.commit()
@@ -54,9 +62,17 @@ def book(clean_db):
 
 
 @pytest.fixture
-def release(clean_db, book):
+def edition(clean_db, book):
+    edition = Edition(book=book, download_state=DownloadState.GRABBED)
+    clean_db.add(edition)
+    clean_db.commit()
+    return edition
+
+
+@pytest.fixture
+def release(clean_db, edition):
     release = Release(
-        book=book,
+        edition=edition,
         guid="http://abb.test/abss/mayor-of-noobtown/",
         indexer="AudioBookBay",
         title=TORRENT_NAME,
@@ -147,11 +163,11 @@ def test_in_progress_torrent_records_progress_and_does_not_import(
     counts = scan_downloads_once()
 
     clean_db.refresh(release)
-    clean_db.refresh(release.book)
+    clean_db.refresh(release.edition)
     assert counts == {"matched": 1, "imported": 0, "failed": 0}
     assert release.status == "downloading"
     assert release.progress == 42.5
-    assert release.book.download_state == DownloadState.DOWNLOADING
+    assert release.edition.download_state == DownloadState.DOWNLOADING
 
 
 def test_finished_torrent_imports_immediately(
@@ -168,13 +184,13 @@ def test_finished_torrent_imports_immediately(
     counts = scan_downloads_once()
 
     clean_db.refresh(release)
-    clean_db.refresh(release.book)
+    clean_db.refresh(release.edition)
     assert client.asked_for == [HASH]
     assert counts["imported"] == 1
     assert release.status == "imported"
     # the freshly-written download would have failed the quiet-period check —
     # the client's word overrides it
-    assert release.book.download_state == DownloadState.IMPORTED
+    assert release.edition.download_state == DownloadState.IMPORTED
     assert (clean_dirs.library_dir / "Ryan Rimmel" / "The Mayor of Noobtown").is_dir()
 
 
@@ -187,10 +203,10 @@ def test_finished_torrent_missing_from_download_dir_fails_with_a_mapping_hint(
     counts = scan_downloads_once()
 
     clean_db.refresh(release)
-    clean_db.refresh(release.book)
+    clean_db.refresh(release.edition)
     assert counts["failed"] == 1
     assert release.status == "failed"
-    assert release.book.download_state == DownloadState.FAILED
+    assert release.edition.download_state == DownloadState.FAILED
     assert "DOWNLOAD_DIR" in release.error
     assert TORRENT_NAME in release.error
 
@@ -209,7 +225,7 @@ def test_finished_torrent_renamed_by_the_client_is_still_found(
     counts = scan_downloads_once()
 
     clean_db.refresh(release)
-    clean_db.refresh(release.book)
+    clean_db.refresh(release.edition)
     assert counts["imported"] == 1
     assert release.status == "imported"
 
@@ -224,7 +240,7 @@ def test_unreachable_client_falls_back_to_the_directory_watcher(
     counts = scan_downloads_once()
 
     clean_db.refresh(release)
-    clean_db.refresh(release.book)
+    clean_db.refresh(release.edition)
     assert counts["imported"] == 1  # imported by name matching, not by hash
     assert release.status == "imported"
 
@@ -239,7 +255,7 @@ def test_torrent_the_client_does_not_know_falls_back_to_name_matching(
     counts = scan_downloads_once()
 
     clean_db.refresh(release)
-    clean_db.refresh(release.book)
+    clean_db.refresh(release.edition)
     assert counts["imported"] == 1
     assert release.status == "imported"
 
@@ -257,14 +273,14 @@ def test_release_without_an_info_hash_never_asks_the_client(
     counts = scan_downloads_once()
 
     clean_db.refresh(release)
-    clean_db.refresh(release.book)
+    clean_db.refresh(release.edition)
     assert client.asked_for is None  # no hashes to ask about
     assert counts["imported"] == 1
     assert release.status == "imported"
 
 
 def test_cancel_removes_the_torrent_and_its_data(
-    client, clean_db, deluge_configured, book, release, monkeypatch
+    client, clean_db, deluge_configured, edition, release, monkeypatch
 ):
     fake = use_client_for_cancel(monkeypatch, FakeClient())
 
@@ -273,14 +289,14 @@ def test_cancel_removes_the_torrent_and_its_data(
     assert response.status_code == 303
     assert fake.removed == [(HASH, True)]  # data deleted, seeding ended
     clean_db.refresh(release)
-    clean_db.refresh(book)
+    clean_db.refresh(edition)
     assert release.status == "cancelled"
     assert release.error is None
-    assert book.download_state == DownloadState.NONE
+    assert edition.download_state == DownloadState.NONE
 
 
 def test_cancel_still_cancels_when_the_client_cannot_be_reached(
-    client, clean_db, deluge_configured, book, release, monkeypatch
+    client, clean_db, deluge_configured, edition, release, monkeypatch
 ):
     use_client_for_cancel(monkeypatch, FakeClient(error=DownloadClientError("refused")))
 
@@ -288,10 +304,10 @@ def test_cancel_still_cancels_when_the_client_cannot_be_reached(
 
     assert response.status_code == 303
     clean_db.refresh(release)
-    clean_db.refresh(book)
+    clean_db.refresh(edition)
     # A download client we can't reach must not trap the release here...
     assert release.status == "cancelled"
-    assert book.download_state == DownloadState.NONE
+    assert edition.download_state == DownloadState.NONE
     # ...but we must not pretend the torrent is gone.
     assert "may still be downloading or seeding" in release.error
 

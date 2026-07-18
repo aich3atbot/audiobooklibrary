@@ -10,6 +10,7 @@ from app.models import (
     Author,
     Book,
     DownloadState,
+    Edition,
     ReadState,
     Release,
     Series,
@@ -23,7 +24,7 @@ DELUGE = "http://deluge.test:8112"
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (UserBook, Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -44,8 +45,9 @@ def library(clean_db, user):
     noobtown = Series(hardcover_id=10, name="Noobtown")
     kings = Book(hardcover_id=100, title="The Way of Kings", author=sanderson)
     mayor = Book(hardcover_id=101, title="The Mayor of Noobtown", author=rimmel,
-                 series=noobtown, series_index=1,
-                 download_state=DownloadState.IMPORTED)
+                 series=noobtown, series_index=1)
+    mayor.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                  library_path="/audiobooks/m"))
     village = Book(hardcover_id=102, title="Village of Noobtown", author=rimmel,
                    series=noobtown, series_index=2)
     clean_db.add_all([kings, mayor, village])
@@ -89,8 +91,9 @@ def test_library_only_shows_own_books(client, library, db_session, clean_db):
     """Books other users shelved (or ownerless available books) stay out of
     the library page."""
     ghost = Book(hardcover_id=999, title="Someone Else's Book",
-                 author=db_session.query(Author).first(),
-                 download_state=DownloadState.IMPORTED, library_path="/audiobooks/g")
+                 author=db_session.query(Author).first())
+    ghost.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                  library_path="/audiobooks/g"))
     db_session.add(ghost)
     db_session.commit()
 

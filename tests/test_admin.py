@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import select
 
-from app.models import DownloadState, User
+from app.models import Bookmark, DownloadState, Edition, User
 from tests.conftest import cheap_password_hash
 
 
@@ -166,7 +166,7 @@ def orphan_library(db_session, other_user, user, test_settings):
     from app.models import AudioFile, Author, Book, MediaProgress, Release, UserBook
     from tests.conftest import make_user_book
 
-    for model in (UserBook, AudioFile, MediaProgress, Release, Book, Author):
+    for model in (UserBook, AudioFile, MediaProgress, Bookmark, Release, Edition, Book, Author):
         db_session.query(model).delete()
     db_session.commit()
 
@@ -179,14 +179,16 @@ def orphan_library(db_session, other_user, user, test_settings):
     solo_dir = lib / "Ryan Rimmel" / "Solo Book"
     solo_dir.mkdir(parents=True)
     (solo_dir / "book.m4b").write_bytes(b"audio")
-    solo = Book(hardcover_id=1, title="Solo Book", author=author,
-                download_state=DownloadState.IMPORTED, library_path=str(solo_dir))
+    solo = Book(hardcover_id=1, title="Solo Book", author=author)
+    solo.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                 library_path=str(solo_dir)))
 
     shared_dir = lib / "Ryan Rimmel" / "Shared Book"
     shared_dir.mkdir(parents=True)
     (shared_dir / "book.m4b").write_bytes(b"audio")
-    shared = Book(hardcover_id=2, title="Shared Book", author=author,
-                  download_state=DownloadState.IMPORTED, library_path=str(shared_dir))
+    shared = Book(hardcover_id=2, title="Shared Book", author=author)
+    shared.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                   library_path=str(shared_dir)))
 
     meta_only = Book(hardcover_id=3, title="Metadata Only", author=author)
 
@@ -245,7 +247,7 @@ def test_delete_user_leaves_books_in_place_by_default(
     assert db_session.get(User, other_id) is None
     # the book survives as ownerless "available"
     solo = db_session.query(Book).filter_by(hardcover_id=1).one()
-    assert solo.library_path is not None
+    assert solo.editions[0].library_path is not None
     assert solo.user_books == []
 
 
@@ -254,7 +256,8 @@ def test_delete_review_warns_about_other_users_progress(
 ):
     from app.models import MediaProgress
 
-    db_session.add(MediaProgress(user_id=user.id, book_id=orphan_library["solo"].id,
+    db_session.add(MediaProgress(user_id=user.id,
+                                 edition_id=orphan_library["solo"].editions[0].id,
                                  current_time=10.0, duration=100.0))
     db_session.commit()
 

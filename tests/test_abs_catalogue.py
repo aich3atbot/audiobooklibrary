@@ -7,7 +7,9 @@ from app.models import (
     AudioFile,
     Author,
     Book,
+    Bookmark,
     DownloadState,
+    Edition,
     MediaProgress,
     Release,
     Series,
@@ -18,7 +20,7 @@ from tests.test_audio_meta import write_mp3
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (UserBook, AudioFile, MediaProgress, Release, Book, Author, Series, AppState):
+    for model in (UserBook, AudioFile, MediaProgress, Bookmark, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -52,19 +54,23 @@ def library(clean_db, test_settings):
     write_mp3(mayor_dir / "Part 1.mp3", frames=100)
     write_mp3(mayor_dir / "Part 2.mp3", frames=100)
     (mayor_dir / "cover.jpg").write_bytes(b"cover-bytes")
-    mayor = Book(
+    mayor_book = Book(
         hardcover_id=646489, title="The Mayor of Noobtown", author=rimmel,
         series=noobtown, series_index=1.0,
-        download_state=DownloadState.IMPORTED, library_path=str(mayor_dir),
         cover_url="https://assets.hardcover.app/mayor.jpg",
+    )
+    mayor = Edition(
+        book=mayor_book, download_state=DownloadState.IMPORTED, library_path=str(mayor_dir)
     )
 
     hail_dir = lib_root / "Andy Weir" / "Project Hail Mary"
     write_mp3(hail_dir / "Project Hail Mary.mp3", frames=200)
-    hail = Book(
+    hail_book = Book(
         hardcover_id=700, title="Project Hail Mary", author=weir,
-        download_state=DownloadState.IMPORTED,
-        library_path=str(hail_dir), cover_url="https://assets.hardcover.app/phm.jpg",
+        cover_url="https://assets.hardcover.app/phm.jpg",
+    )
+    hail = Edition(
+        book=hail_book, download_state=DownloadState.IMPORTED, library_path=str(hail_dir)
     )
 
     unimported = Book(
@@ -74,10 +80,11 @@ def library(clean_db, test_settings):
     clean_db.add_all([mayor, hail, unimported])
     clean_db.commit()
 
-    from app.services.audio_meta import scan_book_audio
+    from app.services.audio_meta import scan_edition_audio
 
-    scan_book_audio(clean_db, mayor)
-    scan_book_audio(clean_db, hail)
+    scan_edition_audio(clean_db, mayor)
+    scan_edition_audio(clean_db, hail)
+    # "mayor"/"hail" are the *editions* (the API's item unit); .book has metadata
     return {"mayor": mayor, "hail": hail, "unimported": unimported, "db": clean_db}
 
 
@@ -156,7 +163,7 @@ def test_cover_redirects_to_hardcover(client, token, library):
 
 def test_personalized_shelves(client, token, library, user):
     db = library["db"]
-    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id, current_time=30.0,
+    db.add(MediaProgress(user_id=user.id, edition_id=library["mayor"].id, current_time=30.0,
                          duration=100.0, is_finished=False))
     db.commit()
 
@@ -170,7 +177,7 @@ def test_personalized_shelves(client, token, library, user):
 
 def test_filterdata(client, token, library):
     body = get(client, token, "/api/libraries/lib_audiobooks/filterdata").json()
-    assert {"id": f"ser_{library['mayor'].series_id}", "name": "Noobtown"} in body["series"]
+    assert {"id": f"ser_{library['mayor'].book.series_id}", "name": "Noobtown"} in body["series"]
     assert len(body["authors"]) == 2
 
 
@@ -192,7 +199,7 @@ def test_authors_endpoint(client, token, library):
 
 def test_me_includes_progress(client, token, library, user):
     db = library["db"]
-    db.add(MediaProgress(user_id=user.id, book_id=library["hail"].id, current_time=10.0,
+    db.add(MediaProgress(user_id=user.id, edition_id=library["hail"].id, current_time=10.0,
                          duration=50.0, is_finished=False))
     db.commit()
 

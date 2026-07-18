@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Book, DownloadState, Release
+from app.models import Book, DownloadState, Edition, Release
 from app.services.downloads import drop_from_client
 from app.services.importer import ACTIVE_STATUSES, import_release, replace_key
 from app.services.sync import delete_state
@@ -34,7 +34,7 @@ def activity(request: Request, db: Session = Depends(get_db)):
                 select(Release)
                 .where(Release.status.in_(statuses))
                 .options(
-                    joinedload(Release.book).joinedload(Book.author),
+                    joinedload(Release.edition).joinedload(Edition.book).joinedload(Book.author),
                     joinedload(Release.user),
                 )
                 .order_by(Release.grabbed_at.desc())
@@ -45,10 +45,10 @@ def activity(request: Request, db: Session = Depends(get_db)):
 
     imported = (
         db.scalars(
-            select(Book)
-            .where(Book.download_state == DownloadState.IMPORTED)
-            .options(joinedload(Book.author))
-            .order_by(Book.updated_at.desc())
+            select(Edition)
+            .where(Edition.download_state == DownloadState.IMPORTED)
+            .options(joinedload(Edition.book).joinedload(Book.author))
+            .order_by(Edition.updated_at.desc())
             .limit(20)
         )
         .unique()
@@ -87,7 +87,7 @@ def cancel_release(release_id: int, db: Session = Depends(get_db)):
     release.status = "cancelled"
     other_active = db.scalar(
         select(Release.id).where(
-            Release.book_id == release.book_id,
+            Release.edition_id == release.edition_id,
             Release.id != release.id,
             Release.status.in_(ACTIVE_STATUSES),
         )
@@ -95,8 +95,8 @@ def cancel_release(release_id: int, db: Session = Depends(get_db)):
     delete_state(db, replace_key(release))
     if other_active is None:
         # A cancelled replace whose old files survived stays available.
-        release.book.download_state = (
-            DownloadState.IMPORTED if release.book.library_path else DownloadState.NONE
+        release.edition.download_state = (
+            DownloadState.IMPORTED if release.edition.library_path else DownloadState.NONE
         )
     db.commit()
     return RedirectResponse(url="/activity", status_code=303)
@@ -109,7 +109,7 @@ def retry_release(release_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="release is not failed")
     release.status = "grabbed"
     release.error = None
-    release.book.download_state = DownloadState.GRABBED
+    release.edition.download_state = DownloadState.GRABBED
     db.commit()
     return RedirectResponse(url="/activity", status_code=303)
 

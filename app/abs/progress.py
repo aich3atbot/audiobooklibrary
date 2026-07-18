@@ -1,5 +1,8 @@
 """Listening progress: upsert from ABS client syncs, with the finished rule
-(remaining time <= 10s, ABS default) and the Hardcover read-state hook."""
+(remaining time <= 10s, ABS default) and the Hardcover read-state hook.
+
+Progress is per edition; read state stays book-level, so finishing ANY
+edition marks the book read on the user's Hardcover."""
 
 import logging
 from datetime import datetime, timezone
@@ -8,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Book, MediaProgress, ReadState, User
+from app.models import Edition, MediaProgress, ReadState, User
 from app.services.sync import get_user_book, update_read_state
 
 logger = logging.getLogger(__name__)
@@ -23,24 +26,24 @@ def _utcnow() -> datetime:
 def apply_progress(
     db: Session,
     user: User,
-    book: Book,
+    edition: Edition,
     current_time: float | None = None,
     duration: float | None = None,
     is_finished: bool | None = None,
 ) -> MediaProgress:
-    """Upsert one user's progress for a book. is_finished=None means derive
+    """Upsert one user's progress for an edition. is_finished=None means derive
     it from the remaining time; an explicit value (PATCH /me/progress) wins."""
 
     def _get() -> MediaProgress | None:
         return db.scalar(
             select(MediaProgress).where(
-                MediaProgress.user_id == user.id, MediaProgress.book_id == book.id
+                MediaProgress.user_id == user.id, MediaProgress.edition_id == edition.id
             )
         )
 
     row = _get()
     if row is None:
-        row = MediaProgress(user_id=user.id, book=book)
+        row = MediaProgress(user_id=user.id, edition=edition)
         db.add(row)
         try:
             db.flush()
@@ -70,6 +73,7 @@ def apply_progress(
     row.is_finished = finished
     db.commit()
 
+    book = edition.book
     user_book = get_user_book(db, user, book)
     already_read = user_book is not None and user_book.read_state == ReadState.READ
     if newly_finished and not already_read:

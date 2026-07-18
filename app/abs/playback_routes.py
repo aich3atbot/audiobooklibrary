@@ -14,7 +14,7 @@ from app.abs import catalogue, payloads
 from app.abs.deps import require_abs_user
 from app.abs.progress import apply_progress
 from app.db import get_db
-from app.models import AudioFile, Book, Bookmark, MediaProgress, User
+from app.models import AudioFile, Bookmark, Edition, MediaProgress, User
 
 logger = logging.getLogger(__name__)
 
@@ -25,22 +25,22 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_abs_user)])
 open_sessions: dict[str, dict[str, Any]] = {}
 
 
-def _get_book(db: Session, item_id: str) -> Book:
-    book = catalogue.get_book_by_item_id(db, item_id)
-    if book is None:
+def _get_edition(db: Session, item_id: str) -> Edition:
+    edition = catalogue.get_edition_by_item_id(db, item_id)
+    if edition is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    return book
+    return edition
 
 
-def _get_audio_file(db: Session, book: Book, ino: str) -> tuple[AudioFile, Path]:
+def _get_audio_file(db: Session, edition: Edition, ino: str) -> tuple[AudioFile, Path]:
     try:
         file_id = int(ino)
     except ValueError:
         raise HTTPException(status_code=404, detail="File not found")
     file = db.get(AudioFile, file_id)
-    if file is None or file.book_id != book.id:
+    if file is None or file.edition_id != edition.id:
         raise HTTPException(status_code=404, detail="File not found")
-    path = Path(book.library_path) / file.rel_path
+    path = Path(edition.library_path) / file.rel_path
     if not path.is_file():
         raise HTTPException(status_code=404, detail="File missing on disk")
     return file, path
@@ -53,15 +53,15 @@ async def start_playback(
     db: Session = Depends(get_db),
     user: User = Depends(require_abs_user),
 ):
-    book = _get_book(db, item_id)
-    if not book.audio_files:
+    edition = _get_edition(db, item_id)
+    if not edition.audio_files:
         raise HTTPException(status_code=500, detail="Item has no audio files")
     try:
         body = await request.json()
     except Exception:
         body = {}
 
-    progress = catalogue.get_progress(db, user, book.id)
+    progress = catalogue.get_progress(db, user, edition.id)
     start_time = 0.0
     if progress and not progress.is_finished:
         start_time = progress.current_time
@@ -70,10 +70,10 @@ async def start_playback(
     device_info = body.get("deviceInfo") or {}
     device_info.setdefault("id", device_info.get("deviceId") or "unknown-device")
     session_id = f"play_{uuid.uuid4().hex}"
-    duration = catalogue.book_duration(book)
+    duration = catalogue.edition_duration(edition)
 
     open_sessions[session_id] = {
-        "book_id": book.id,
+        "edition_id": edition.id,
         "user_id": user.id,
         "started_at": payloads.now_ms(),
     }
@@ -83,13 +83,13 @@ async def start_playback(
         "userId": user.uuid,
         "libraryId": payloads.LIBRARY_ID,
         "libraryItemId": item_id,
-        "bookId": f"bk_{book.id}",
+        "bookId": f"bk_{edition.id}",
         "episodeId": None,
         "mediaType": "book",
-        "mediaMetadata": catalogue.metadata_expanded(book),
-        "chapters": catalogue.book_chapters(book),
-        "displayTitle": book.title,
-        "displayAuthor": book.author.name,
+        "mediaMetadata": catalogue.metadata_expanded(edition),
+        "chapters": catalogue.edition_chapters(edition),
+        "displayTitle": edition.book.title,
+        "displayAuthor": edition.book.author.name,
         "coverPath": f"/api/items/{item_id}/cover",
         "duration": duration,
         "playMethod": 0,  # direct play
@@ -103,34 +103,34 @@ async def start_playback(
         "currentTime": start_time,
         "startedAt": payloads.now_ms(),
         "updatedAt": payloads.now_ms(),
-        "audioTracks": catalogue.audio_tracks(book),
-        "libraryItem": catalogue.item_expanded(book),
+        "audioTracks": catalogue.audio_tracks(edition),
+        "libraryItem": catalogue.item_expanded(edition),
     }
 
 
 @router.get("/items/{item_id}/file/{ino}")
 def stream_file(item_id: str, ino: str, db: Session = Depends(get_db)):
-    book = _get_book(db, item_id)
-    file, path = _get_audio_file(db, book, ino)
+    edition = _get_edition(db, item_id)
+    file, path = _get_audio_file(db, edition, ino)
     # FileResponse handles HTTP Range (seek) automatically.
     return FileResponse(path, media_type=file.mime_type)
 
 
 @router.get("/items/{item_id}/file/{ino}/download")
 def download_file(item_id: str, ino: str, db: Session = Depends(get_db)):
-    book = _get_book(db, item_id)
-    file, path = _get_audio_file(db, book, ino)
+    edition = _get_edition(db, item_id)
+    file, path = _get_audio_file(db, edition, ino)
     return FileResponse(path, media_type=file.mime_type, filename=path.name)
 
 
-def _session_book(db: Session, user: User, session_id: str) -> Book:
+def _session_edition(db: Session, user: User, session_id: str) -> Edition:
     session = open_sessions.get(session_id)
     if session is None or session.get("user_id") != user.id:
         raise HTTPException(status_code=404, detail="Session not found")
-    book = db.get(Book, session["book_id"])
-    if book is None:
+    edition = db.get(Edition, session["edition_id"])
+    if edition is None:
         raise HTTPException(status_code=404, detail="Session book not found")
-    return book
+    return edition
 
 
 @router.post("/session/{session_id}/sync")
@@ -141,9 +141,9 @@ async def sync_session(
     user: User = Depends(require_abs_user),
 ):
     body = await request.json()
-    book = _session_book(db, user, session_id)
+    edition = _session_edition(db, user, session_id)
     apply_progress(
-        db, user, book, current_time=body.get("currentTime"), duration=body.get("duration")
+        db, user, edition, current_time=body.get("currentTime"), duration=body.get("duration")
     )
     return Response(status_code=200)
 
@@ -161,11 +161,11 @@ async def close_session(
         body = {}
     if session_id in open_sessions:
         if body.get("currentTime") is not None:
-            book = _session_book(db, user, session_id)
+            edition = _session_edition(db, user, session_id)
             apply_progress(
                 db,
                 user,
-                book,
+                edition,
                 current_time=body.get("currentTime"),
                 duration=body.get("duration"),
             )
@@ -175,14 +175,14 @@ async def close_session(
 
 def _apply_local_session(db: Session, user: User, session: dict[str, Any]) -> bool:
     item_id = session.get("libraryItemId") or ""
-    book = catalogue.get_book_by_item_id(db, item_id)
-    if book is None:
+    edition = catalogue.get_edition_by_item_id(db, item_id)
+    if edition is None:
         logger.warning("Local session sync for unknown item %s", item_id)
         return False
     apply_progress(
         db,
         user,
-        book,
+        edition,
         current_time=session.get("currentTime"),
         duration=session.get("duration"),
     )
@@ -222,23 +222,23 @@ async def update_progress(
     user: User = Depends(require_abs_user),
 ):
     body = await request.json()
-    book = _get_book(db, item_id)
+    edition = _get_edition(db, item_id)
     current_time = body.get("currentTime")
     duration = body.get("duration")
     if current_time is None and body.get("progress") is not None:
         # clients may send only a completion fraction
-        existing = catalogue.get_progress(db, user, book.id)
+        existing = catalogue.get_progress(db, user, edition.id)
         effective_duration = (
             duration
             or (existing.duration if existing else 0)
-            or catalogue.book_duration(book)
+            or catalogue.edition_duration(edition)
         )
         if effective_duration:
             current_time = float(body["progress"]) * effective_duration
     apply_progress(
         db,
         user,
-        book,
+        edition,
         current_time=current_time,
         duration=duration,
         is_finished=body.get("isFinished"),
@@ -250,19 +250,23 @@ async def update_progress(
 def get_progress(
     item_id: str, db: Session = Depends(get_db), user: User = Depends(require_abs_user)
 ):
-    book = _get_book(db, item_id)
-    progress = catalogue.get_progress(db, user, book.id)
+    edition = _get_edition(db, item_id)
+    progress = catalogue.get_progress(db, user, edition.id)
     if progress is None:
         raise HTTPException(status_code=404, detail="No progress")
     return catalogue.progress_json(progress, user)
 
 
-def _user_bookmark(db: Session, user: User, book: Book, time: float) -> Bookmark | None:
+def _user_bookmark(
+    db: Session, user: User, edition: Edition, time: float
+) -> Bookmark | None:
     from sqlalchemy import select
 
     return db.scalar(
         select(Bookmark).where(
-            Bookmark.user_id == user.id, Bookmark.book_id == book.id, Bookmark.time == time
+            Bookmark.user_id == user.id,
+            Bookmark.edition_id == edition.id,
+            Bookmark.time == time,
         )
     )
 
@@ -275,14 +279,14 @@ async def create_bookmark(
     user: User = Depends(require_abs_user),
 ):
     body = await request.json()
-    book = _get_book(db, item_id)
+    edition = _get_edition(db, item_id)
     time = body.get("time")
     title = body.get("title")
     if time is None or not isinstance(title, str) or not title:
         raise HTTPException(status_code=400, detail="Invalid time or title")
-    bookmark = _user_bookmark(db, user, book, float(time))
+    bookmark = _user_bookmark(db, user, edition, float(time))
     if bookmark is None:
-        bookmark = Bookmark(user_id=user.id, book=book, time=float(time), title=title)
+        bookmark = Bookmark(user_id=user.id, edition=edition, time=float(time), title=title)
         db.add(bookmark)
     else:
         bookmark.title = title
@@ -298,9 +302,9 @@ async def update_bookmark(
     user: User = Depends(require_abs_user),
 ):
     body = await request.json()
-    book = _get_book(db, item_id)
+    edition = _get_edition(db, item_id)
     time = body.get("time")
-    bookmark = _user_bookmark(db, user, book, float(time)) if time is not None else None
+    bookmark = _user_bookmark(db, user, edition, float(time)) if time is not None else None
     if bookmark is None:
         raise HTTPException(status_code=404, detail="Bookmark not found")
     if isinstance(body.get("title"), str) and body["title"]:
@@ -316,8 +320,8 @@ def delete_bookmark(
     db: Session = Depends(get_db),
     user: User = Depends(require_abs_user),
 ):
-    book = _get_book(db, item_id)
-    bookmark = _user_bookmark(db, user, book, time)
+    edition = _get_edition(db, item_id)
+    bookmark = _user_bookmark(db, user, edition, time)
     if bookmark is None:
         raise HTTPException(status_code=404, detail="Bookmark not found")
     db.delete(bookmark)

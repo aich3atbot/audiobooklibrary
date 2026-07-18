@@ -14,7 +14,7 @@ from sqlalchemy import exists, select, update
 from sqlalchemy.orm import Session, aliased, joinedload
 
 from app.config import get_settings
-from app.models import Book, MediaProgress, Release, User, UserBook
+from app.models import Book, Edition, MediaProgress, Release, User, UserBook
 from app.services.importer import ACTIVE_STATUSES, cleanup_empty_parents
 
 logger = logging.getLogger(__name__)
@@ -63,9 +63,9 @@ def orphan_books(session: Session, user: User) -> list[Book]:
 def _has_active_release(session: Session, book: Book) -> bool:
     return (
         session.scalar(
-            select(Release.id).where(
-                Release.book_id == book.id, Release.status.in_(ACTIVE_STATUSES)
-            )
+            select(Release.id)
+            .join(Edition, Release.edition_id == Edition.id)
+            .where(Edition.book_id == book.id, Release.status.in_(ACTIVE_STATUSES))
         )
         is not None
     )
@@ -74,7 +74,7 @@ def _has_active_release(session: Session, book: Book) -> bool:
 def review_orphans(session: Session, user: User) -> OrphanReview:
     review = OrphanReview()
     for book in orphan_books(session, user):
-        if book.library_path:
+        if any(e.library_path for e in book.editions):
             review.on_disk.append(book)
         elif _has_active_release(session, book):
             review.downloading.append(book)
@@ -84,22 +84,26 @@ def review_orphans(session: Session, user: User) -> OrphanReview:
         ids = [b.id for b in review.on_disk]
         review.others_progress = set(
             session.scalars(
-                select(MediaProgress.book_id).where(
-                    MediaProgress.book_id.in_(ids), MediaProgress.user_id != user.id
-                )
+                select(Edition.book_id)
+                .join(MediaProgress, MediaProgress.edition_id == Edition.id)
+                .where(Edition.book_id.in_(ids), MediaProgress.user_id != user.id)
             )
         )
     return review
 
 
 def _delete_book_files(book: Book) -> None:
+    """Delete every edition's folder; raises on the first failure."""
     library_root = get_settings().library_dir.resolve()
-    path = Path(book.library_path).resolve()
-    if not path.is_relative_to(library_root) or path == library_root:
-        raise ValueError(f"refusing to delete outside the library: {path}")
-    if path.is_dir():
-        shutil.rmtree(path)
-    cleanup_empty_parents(path.parent, library_root)
+    for edition in book.editions:
+        if not edition.library_path:
+            continue
+        path = Path(edition.library_path).resolve()
+        if not path.is_relative_to(library_root) or path == library_root:
+            raise ValueError(f"refusing to delete outside the library: {path}")
+        if path.is_dir():
+            shutil.rmtree(path)
+        cleanup_empty_parents(path.parent, library_root)
 
 
 def delete_user(session: Session, user: User, delete_disk_ids: set[int]) -> DeleteReport:
@@ -121,7 +125,7 @@ def delete_user(session: Session, user: User, delete_disk_ids: set[int]) -> Dele
             report.left_in_place += 1
             continue
         report.deleted_from_disk.append(book.title)
-        session.delete(book)  # cascades audio files, progress, bookmarks, releases
+        session.delete(book)  # cascades editions → audio files, progress, bookmarks, releases
 
     for book in review.metadata_only:
         session.delete(book)

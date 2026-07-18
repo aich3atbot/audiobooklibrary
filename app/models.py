@@ -31,10 +31,8 @@ class ReadState(str, enum.Enum):
 
 class DownloadState(str, enum.Enum):
     NONE = "none"
-    WANTED = "wanted"
     GRABBED = "grabbed"
     DOWNLOADING = "downloading"
-    DOWNLOADED = "downloaded"
     IMPORTED = "imported"
     FAILED = "failed"
 
@@ -43,19 +41,32 @@ class DownloadState(str, enum.Enum):
 # available. The richer pipeline states map onto them; FAILED shows as
 # not present plus a failure badge (details stay on the Activity page).
 DISPLAY_DOWNLOADING = {
-    DownloadState.WANTED,
     DownloadState.GRABBED,
     DownloadState.DOWNLOADING,
-    DownloadState.DOWNLOADED,
 }
 
 
 def display_status(state: DownloadState) -> str:
+    """Collapse one edition's pipeline state to the three UI statuses."""
     if state == DownloadState.IMPORTED:
         return "available"
     if state in DISPLAY_DOWNLOADING:
         return "downloading"
     return "not_present"
+
+
+def book_status(book: "Book") -> str:
+    """A book's aggregate status across its editions. Available wins (files
+    on disk keep serving even while another edition downloads)."""
+    if any(e.library_path for e in book.editions):
+        return "available"
+    if any(e.download_state in DISPLAY_DOWNLOADING for e in book.editions):
+        return "downloading"
+    return "not_present"
+
+
+def book_failed(book: "Book") -> bool:
+    return any(e.download_state == DownloadState.FAILED for e in book.editions)
 
 
 def _enum_column(enum_cls, default):
@@ -116,9 +127,10 @@ class Series(Base):
 
 
 class Book(Base):
-    """Shared book metadata and download state. Per-user shelf membership and
-    read state live on UserBook; a Book may belong to no user's library (it is
-    then just "available" in the shared store)."""
+    """Shared book metadata. Per-user shelf membership and read state live on
+    UserBook; downloaded files and pipeline state live on Edition (a book may
+    hold several audiobook editions). A Book may belong to no user's library
+    (it is then just "available" in the shared store)."""
 
     __tablename__ = "book"
 
@@ -129,8 +141,6 @@ class Book(Base):
     series_id: Mapped[int | None] = mapped_column(ForeignKey("series.id"))
     series_index: Mapped[float | None] = mapped_column(Float)
     cover_url: Mapped[str | None] = mapped_column(Text)
-    download_state: Mapped[DownloadState] = _enum_column(DownloadState, DownloadState.NONE)
-    library_path: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
@@ -138,20 +148,53 @@ class Book(Base):
 
     author: Mapped[Author] = relationship(back_populates="books")
     series: Mapped[Series | None] = relationship(back_populates="books")
-    releases: Mapped[list["Release"]] = relationship(
-        back_populates="book", cascade="all, delete-orphan"
+    editions: Mapped[list["Edition"]] = relationship(
+        back_populates="book", order_by="Edition.label", cascade="all, delete-orphan"
     )
     user_books: Mapped[list["UserBook"]] = relationship(
         back_populates="book", cascade="all, delete-orphan"
     )
+
+
+class Edition(Base):
+    """One audiobook recording of a Book (e.g. the Stephen Fry narration).
+    Owns the on-disk files and the download pipeline state. label is the
+    grouping name used in library folder names ("Stephen Fry", "Full Cast");
+    "" is the unlabelled edition, which lives at the plain unsuffixed path.
+    The unique constraint doubles as "at most one unlabelled edition"."""
+
+    __tablename__ = "edition"
+    __table_args__ = (UniqueConstraint("book_id", "label"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(
+        ForeignKey("book.id", ondelete="CASCADE"), index=True
+    )
+    # Hardcover's edition id when the user picked from the live editions list;
+    # null for free-form labels and pre-edition rows.
+    hardcover_edition_id: Mapped[int | None] = mapped_column(Integer)
+    label: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # Display narrators from the Hardcover edition ("Stephen Fry").
+    narrator: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    download_state: Mapped[DownloadState] = _enum_column(DownloadState, DownloadState.NONE)
+    library_path: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    book: Mapped[Book] = relationship(back_populates="editions")
+    releases: Mapped[list["Release"]] = relationship(
+        back_populates="edition", cascade="all, delete-orphan"
+    )
     audio_files: Mapped[list["AudioFile"]] = relationship(
-        back_populates="book", order_by="AudioFile.index", cascade="all, delete-orphan"
+        back_populates="edition", order_by="AudioFile.index", cascade="all, delete-orphan"
     )
     media_progress: Mapped[list["MediaProgress"]] = relationship(
-        back_populates="book", cascade="all, delete-orphan"
+        back_populates="edition", cascade="all, delete-orphan"
     )
     bookmarks: Mapped[list["Bookmark"]] = relationship(
-        back_populates="book", order_by="Bookmark.time", cascade="all, delete-orphan"
+        back_populates="edition", order_by="Bookmark.time", cascade="all, delete-orphan"
     )
 
 
@@ -190,7 +233,9 @@ class Release(Base):
     __tablename__ = "release"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), index=True)
+    # Nullable only as SQLite pragmatism; code always sets it (the migration
+    # backfills legacy rows).
+    edition_id: Mapped[int | None] = mapped_column(ForeignKey("edition.id"), index=True)
     # Who grabbed it (attribution on the shared Activity page); null once the
     # user is deleted, or on releases predating multi-user.
     user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"))
@@ -209,20 +254,24 @@ class Release(Base):
     status: Mapped[str] = mapped_column(String(50), default="grabbed")
     error: Mapped[str | None] = mapped_column(Text)
 
-    book: Mapped[Book] = relationship(back_populates="releases")
+    edition: Mapped[Edition] = relationship(back_populates="releases")
     user: Mapped[User | None] = relationship()
+
+    @property
+    def book(self) -> Book:
+        return self.edition.book
 
 
 class AudioFile(Base):
-    """An audio track of an imported book, for the ABS-compatible API.
+    """An audio track of an imported edition, for the ABS-compatible API.
     Populated by scanning library_path with mutagen."""
 
     __tablename__ = "audio_file"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), index=True)
+    edition_id: Mapped[int] = mapped_column(ForeignKey("edition.id"), index=True)
     index: Mapped[int] = mapped_column(Integer)  # 1-based track order
-    rel_path: Mapped[str] = mapped_column(Text)  # relative to book.library_path
+    rel_path: Mapped[str] = mapped_column(Text)  # relative to edition.library_path
     size: Mapped[int] = mapped_column(Integer)
     mtime_ms: Mapped[int] = mapped_column(Integer)
     duration: Mapped[float | None] = mapped_column(Float)  # seconds
@@ -230,20 +279,22 @@ class AudioFile(Base):
     # JSON [{id, start, end, title}] in seconds; usually only on m4b
     chapters_json: Mapped[str | None] = mapped_column(Text)
 
-    book: Mapped[Book] = relationship(back_populates="audio_files")
+    edition: Mapped[Edition] = relationship(back_populates="audio_files")
 
 
 class MediaProgress(Base):
-    """One user's listening progress for one book (ABS clients sync this)."""
+    """One user's listening progress for one edition (ABS clients sync this).
+    Read state stays book-level on UserBook; finishing any edition marks the
+    book read."""
 
     __tablename__ = "media_progress"
-    __table_args__ = (UniqueConstraint("user_id", "book_id"),)
+    __table_args__ = (UniqueConstraint("user_id", "edition_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(
         ForeignKey("user.id", ondelete="CASCADE"), index=True
     )
-    book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), index=True)
+    edition_id: Mapped[int] = mapped_column(ForeignKey("edition.id"), index=True)
     current_time: Mapped[float] = mapped_column(Float, default=0.0)
     duration: Mapped[float] = mapped_column(Float, default=0.0)
     is_finished: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
@@ -254,11 +305,11 @@ class MediaProgress(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="media_progress")
-    book: Mapped[Book] = relationship(back_populates="media_progress")
+    edition: Mapped[Edition] = relationship(back_populates="media_progress")
 
 
 class Bookmark(Base):
-    """ABS player bookmarks: a user's labelled time position in a book."""
+    """ABS player bookmarks: a user's labelled time position in an edition."""
 
     __tablename__ = "bookmark"
 
@@ -266,13 +317,13 @@ class Bookmark(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("user.id", ondelete="CASCADE"), index=True
     )
-    book_id: Mapped[int] = mapped_column(ForeignKey("book.id"), index=True)
+    edition_id: Mapped[int] = mapped_column(ForeignKey("edition.id"), index=True)
     time: Mapped[float] = mapped_column(Float)  # seconds
     title: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="bookmarks")
-    book: Mapped[Book] = relationship(back_populates="bookmarks")
+    edition: Mapped[Edition] = relationship(back_populates="bookmarks")
 
 
 class AppState(Base):

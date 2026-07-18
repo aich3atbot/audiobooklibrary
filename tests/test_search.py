@@ -8,6 +8,7 @@ from app.models import (
     Author,
     Book,
     DownloadState,
+    Edition,
     ReadState,
     Release,
     Series,
@@ -20,7 +21,7 @@ from tests.test_sync import entry, me_response
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (UserBook, Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -150,8 +151,9 @@ def test_add_available_book_shelves_it_for_the_user(clean_db, user):
     """A book another user made available: adding it creates the user's own
     Hardcover shelf entry, and download state is untouched."""
     author = Author(hardcover_id=500, name="A")
-    existing = Book(hardcover_id=1000, title="Existing", author=author,
-                    download_state=DownloadState.IMPORTED, library_path="/audiobooks/x")
+    existing = Book(hardcover_id=1000, title="Existing", author=author)
+    existing.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                     library_path="/audiobooks/x"))
     clean_db.add(existing)
     clean_db.commit()
 
@@ -164,8 +166,8 @@ def test_add_available_book_shelves_it_for_the_user(clean_db, user):
     book = add_book(clean_db, user, 1000, ReadState.WANT_TO_READ)
 
     assert book.id == existing.id
-    assert book.download_state == DownloadState.IMPORTED
-    assert book.library_path == "/audiobooks/x"
+    assert book.editions[0].download_state == DownloadState.IMPORTED
+    assert book.editions[0].library_path == "/audiobooks/x"
     ub = user_book_for(clean_db, user, book)
     assert ub.hardcover_user_book_id == 91
     assert b"insert_user_book" in route.calls[0].request.content
@@ -196,8 +198,9 @@ def test_search_page_marks_available_books(client, clean_db, user):
     """A book in the shared store but not the user's library shows as
     available with an add-to-my-library action, never a download button."""
     author = Author(hardcover_id=500, name="Brandon Sanderson")
-    theirs = Book(hardcover_id=1000, title="The Way of Kings", author=author,
-                  download_state=DownloadState.IMPORTED, library_path="/audiobooks/x")
+    theirs = Book(hardcover_id=1000, title="The Way of Kings", author=author)
+    theirs.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                   library_path="/audiobooks/x"))
     clean_db.add(theirs)
     clean_db.commit()
     respx.post(API_URL).mock(return_value=search_response([search_doc()]))

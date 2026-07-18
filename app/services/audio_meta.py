@@ -1,4 +1,4 @@
-"""Scan imported books' audio files with mutagen for the ABS API:
+"""Scan imported editions' audio files with mutagen for the ABS API:
 track order, durations, mime types, and (m4b/mp3) chapters."""
 
 import asyncio
@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_sessionmaker
-from app.models import AudioFile, Book
+from app.models import AudioFile, Edition
 from app.services.importer import AUDIO_EXTS
 
 logger = logging.getLogger(__name__)
@@ -73,21 +73,23 @@ def _read_chapters(parsed) -> list[dict] | None:
     return None
 
 
-def scan_book_audio(session: Session, book: Book) -> int:
-    """(Re)build audio_file rows for a book from its library folder.
+def scan_edition_audio(session: Session, edition: Edition) -> int:
+    """(Re)build audio_file rows for an edition from its library folder.
     Returns the number of tracks found."""
-    if not book.library_path:
+    if not edition.library_path:
         return 0
-    root = Path(book.library_path)
+    root = Path(edition.library_path)
     if not root.is_dir():
-        logger.warning("Audio scan: library path missing for %s: %s", book.title, root)
+        logger.warning(
+            "Audio scan: library path missing for %s: %s", edition.book.title, root
+        )
         return 0
 
     paths = sorted(
         (p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in AUDIO_EXTS),
         key=_natural_key,
     )
-    book.audio_files.clear()
+    edition.audio_files.clear()
     total_end = 0.0
     for i, path in enumerate(paths, start=1):
         duration = None
@@ -105,7 +107,7 @@ def scan_book_audio(session: Session, book: Book) -> int:
                 if ch["end"] is None:
                     ch["end"] = duration or ch["start"]
         stat = path.stat()
-        book.audio_files.append(
+        edition.audio_files.append(
             AudioFile(
                 index=i,
                 rel_path=str(path.relative_to(root)),
@@ -118,31 +120,35 @@ def scan_book_audio(session: Session, book: Book) -> int:
         )
         total_end += duration or 0.0
     session.commit()
-    logger.info("Audio scan: %s -> %d tracks, %.0fs", book.title, len(paths), total_end)
+    logger.info(
+        "Audio scan: %s -> %d tracks, %.0fs", edition.book.title, len(paths), total_end
+    )
     return len(paths)
 
 
 def scan_missing() -> int:
-    """Backfill: scan imported books that have no audio_file rows yet."""
+    """Backfill: scan imported editions that have no audio_file rows yet."""
     scanned = 0
     with get_sessionmaker()() as session:
-        books = session.scalars(
-            select(Book).where(Book.library_path.is_not(None)).where(~Book.audio_files.any())
+        editions = session.scalars(
+            select(Edition)
+            .where(Edition.library_path.is_not(None))
+            .where(~Edition.audio_files.any())
         ).all()
-        for book in books:
+        for edition in editions:
             try:
-                if scan_book_audio(session, book):
+                if scan_edition_audio(session, edition):
                     scanned += 1
             except Exception:
-                logger.exception("Audio backfill failed for %s", book.title)
+                logger.exception("Audio backfill failed for %s", edition.book.title)
     return scanned
 
 
 async def audio_backfill_task() -> None:
-    """One-shot startup task: scan any imported books missing audio metadata."""
+    """One-shot startup task: scan any imported editions missing audio metadata."""
     try:
         scanned = await asyncio.to_thread(scan_missing)
         if scanned:
-            logger.info("Audio backfill: scanned %d books", scanned)
+            logger.info("Audio backfill: scanned %d editions", scanned)
     except Exception:
         logger.exception("Audio backfill task failed")

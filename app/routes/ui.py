@@ -9,7 +9,7 @@ from app.models import (
     DISPLAY_DOWNLOADING,
     Author,
     Book,
-    DownloadState,
+    Edition,
     ReadState,
     Series,
     User,
@@ -27,11 +27,14 @@ SORTS = {
     "recent": (Book.updated_at.desc(),),
 }
 
-# The three UI download statuses, mapped to the pipeline states they cover.
+# The three UI download statuses as SQL predicates over a book's editions,
+# mirroring models.book_status (available wins over downloading).
+_AVAILABLE = Book.editions.any(Edition.library_path.is_not(None))
+_DOWNLOADING = Book.editions.any(Edition.download_state.in_(DISPLAY_DOWNLOADING))
 DL_FILTERS = {
-    "not_present": (DownloadState.NONE, DownloadState.FAILED),
-    "downloading": tuple(DISPLAY_DOWNLOADING),
-    "available": (DownloadState.IMPORTED,),
+    "not_present": ~_AVAILABLE & ~_DOWNLOADING,
+    "downloading": _DOWNLOADING & ~_AVAILABLE,
+    "available": _AVAILABLE,
 }
 
 
@@ -70,7 +73,7 @@ def library(
         stmt = stmt.where(UserBook.read_state == read_state)
     dl = dl if dl in DL_FILTERS else ""
     if dl:
-        stmt = stmt.where(Book.download_state.in_(DL_FILTERS[dl]))
+        stmt = stmt.where(DL_FILTERS[dl])
     sort = sort if sort in SORTS else "title"
     stmt = stmt.order_by(*SORTS[sort])
 

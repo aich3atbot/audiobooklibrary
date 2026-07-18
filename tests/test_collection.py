@@ -6,7 +6,7 @@ import pytest
 import respx
 
 from app.clients.hardcover import API_URL, HardcoverClient
-from app.models import AppState, Author, Book, DownloadState, Release, Series, UserBook
+from app.models import AppState, Author, Book, DownloadState, Edition, Release, Series, UserBook
 from app.services.collection import (
     entry_for,
     hardcover_query,
@@ -20,7 +20,7 @@ from app.services.importer import ImportFailure
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (UserBook, Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -267,8 +267,10 @@ def test_import_entry_moves_folder_and_cleans_up(clean_db, dirs, book):
     # source folder and now-empty parents are gone; imports root remains
     assert not (dirs.imports_dir / "Ryan Rimmel").exists()
     assert dirs.imports_dir.exists()
-    assert book.download_state == DownloadState.IMPORTED
-    assert book.library_path == str(dest)
+    edition = book.editions[0]
+    assert edition.label == ""
+    assert edition.download_state == DownloadState.IMPORTED
+    assert edition.library_path == str(dest)
 
 
 def test_import_entry_single_file(clean_db, dirs, book):
@@ -293,7 +295,8 @@ def test_import_entry_destination_conflict(clean_db, dirs, book):
 
 
 def test_import_entry_rejects_already_imported_book(clean_db, dirs, book):
-    book.library_path = "/audiobooks/somewhere"
+    book.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                 library_path="/audiobooks/somewhere"))
     clean_db.commit()
     put(dirs, "The Mayor of Noobtown")
     entry = scan_imports()[0]
@@ -357,8 +360,8 @@ def test_import_via_route_creates_ownerless_book(client, clean_db, dirs):
 
     assert response.status_code == 200
     created = clean_db.query(Book).filter_by(hardcover_id=646489).one()
-    assert created.download_state == DownloadState.IMPORTED
-    assert created.library_path is not None
+    assert created.editions[0].download_state == DownloadState.IMPORTED
+    assert created.editions[0].library_path is not None
     assert created.series.name == "Noobtown"
     # ownerless: no shelf memberships, and no shelving mutation was sent
     assert clean_db.query(UserBook).count() == 0
@@ -380,7 +383,7 @@ def test_import_one_via_route_existing_book(client, clean_db, dirs, book):
 
     assert response.status_code == 200
     clean_db.refresh(book)
-    assert book.download_state == DownloadState.IMPORTED
+    assert book.editions[0].download_state == DownloadState.IMPORTED
     assert "nothing to review" in response.text
 
 
@@ -410,7 +413,8 @@ def test_import_all_via_route(client, clean_db, dirs, book, no_background_sync):
 
 
 def test_import_error_reported_in_row(client, clean_db, dirs, book):
-    book.library_path = "/audiobooks/somewhere"
+    book.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                 library_path="/audiobooks/somewhere"))
     clean_db.commit()
     put(dirs, "The Mayor of Noobtown")
 

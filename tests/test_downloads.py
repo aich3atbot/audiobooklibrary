@@ -12,6 +12,7 @@ from app.models import (
     Author,
     Book,
     DownloadState,
+    Edition,
     Release,
     Series,
     UserBook,
@@ -43,7 +44,7 @@ def download_config(test_settings, monkeypatch):
 
 @pytest.fixture
 def clean_db(db_session):
-    for model in (UserBook, Release, Book, Author, Series, AppState):
+    for model in (UserBook, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -56,12 +57,18 @@ def book(clean_db, user):
         hardcover_id=646489,
         title="The Mayor of Noobtown",
         author=author,
-        download_state=DownloadState.NONE,
     )
     clean_db.add(book)
     clean_db.commit()
     make_user_book(clean_db, user, book)
     return book
+
+
+def make_edition(db, book, **kwargs):
+    edition = Edition(book=book, **kwargs)
+    db.add(edition)
+    db.commit()
+    return edition
 
 
 def mock_deluge(add_result=HASH, add_error=None):
@@ -137,7 +144,9 @@ def test_grab_release_adds_magnet_and_records_hash(clean_db, user, book):
     assert release.status == "grabbed"
     assert release.progress == 0.0
     assert release.user_id == user.id
-    assert book.download_state == DownloadState.GRABBED
+    assert release.edition.book is book
+    assert release.edition.label == ""
+    assert release.edition.download_state == DownloadState.GRABBED
 
     add = json.loads(deluge.calls[-1].request.content)
     assert add["method"] == "core.add_torrent_magnet"
@@ -152,7 +161,7 @@ def test_grab_release_survives_a_torrent_deluge_already_has(clean_db, book):
     release = grab_release(clean_db, None, book, GUID, "AudioBookBay", "Noobtown", None)
 
     assert release.info_hash == HASH  # recovered from the magnet
-    assert book.download_state == DownloadState.GRABBED
+    assert release.edition.download_state == DownloadState.GRABBED
 
 
 @respx.mock
@@ -165,7 +174,7 @@ def test_grab_failure_leaves_state_untouched(clean_db, book):
 
     clean_db.rollback()
     assert clean_db.query(Release).count() == 0
-    assert book.download_state == DownloadState.NONE
+    assert all(e.download_state == DownloadState.NONE for e in book.editions)
 
 
 @respx.mock
@@ -230,9 +239,8 @@ def test_grab_route_failure_shows_error(client, clean_db, book):
 
 @respx.mock
 def test_grab_blocked_when_book_available(client, clean_db, book):
-    book.download_state = DownloadState.IMPORTED
-    book.library_path = "/audiobooks/x"
-    clean_db.commit()
+    make_edition(clean_db, book, download_state=DownloadState.IMPORTED,
+                 library_path="/audiobooks/x")
 
     response = client.post(
         f"/books/{book.id}/grab",
@@ -245,8 +253,7 @@ def test_grab_blocked_when_book_available(client, clean_db, book):
 
 @respx.mock
 def test_grab_blocked_when_book_downloading(client, clean_db, book):
-    book.download_state = DownloadState.DOWNLOADING
-    clean_db.commit()
+    make_edition(clean_db, book, download_state=DownloadState.DOWNLOADING)
 
     response = client.post(
         f"/books/{book.id}/grab",
@@ -257,8 +264,8 @@ def test_grab_blocked_when_book_downloading(client, clean_db, book):
 
 
 def test_release_picker_refuses_available_book(client, clean_db, book):
-    book.download_state = DownloadState.IMPORTED
-    clean_db.commit()
+    make_edition(clean_db, book, download_state=DownloadState.IMPORTED,
+                 library_path="/audiobooks/x")
 
     response = client.get(f"/books/{book.id}/releases")
 
@@ -275,9 +282,9 @@ def imported_book(clean_db, book, test_settings):
     lib.mkdir(parents=True)
     write_mp3(lib / "Part 01.mp3", frames=100)
     (lib / "cover.jpg").write_bytes(b"img")
-    book.download_state = DownloadState.IMPORTED
-    book.library_path = str(lib)
-    book.audio_files.append(
+    edition = make_edition(clean_db, book, download_state=DownloadState.IMPORTED,
+                           library_path=str(lib))
+    edition.audio_files.append(
         AudioFile(index=1, rel_path="Part 01.mp3", size=100, mtime_ms=0, mime_type="audio/mpeg")
     )
     clean_db.commit()
@@ -318,8 +325,7 @@ def test_replace_picker_bypasses_available_block(client, imported_book):
 
 @respx.mock
 def test_replace_picker_still_blocks_downloading_book(client, clean_db, book):
-    book.download_state = DownloadState.DOWNLOADING
-    clean_db.commit()
+    make_edition(clean_db, book, download_state=DownloadState.DOWNLOADING)
 
     response = client.get(f"/books/{book.id}/releases?replace=1")
 
@@ -335,7 +341,8 @@ def grab_data(**extra):
 def test_replace_grab_immediately_removes_files(client, clean_db, imported_book):
     mock_details()
     mock_deluge()
-    lib = Path(imported_book.library_path)
+    edition = imported_book.editions[0]
+    lib = Path(edition.library_path)
 
     response = client.post(
         f"/books/{imported_book.id}/grab", data=grab_data(replace="1", remove="immediately")
@@ -346,10 +353,11 @@ def test_replace_grab_immediately_removes_files(client, clean_db, imported_book)
     assert "downloading" in response.text
     assert not lib.exists()
     clean_db.expire_all()
-    assert imported_book.library_path is None
-    assert imported_book.audio_files == []
-    assert imported_book.download_state == DownloadState.GRABBED
+    assert edition.library_path is None
+    assert edition.audio_files == []
+    assert edition.download_state == DownloadState.GRABBED
     release = clean_db.query(Release).one()
+    assert release.edition_id == edition.id
     assert get_state(clean_db, replace_key(release)) is None
 
 
@@ -397,14 +405,16 @@ def test_files_dialog_hides_replace_when_downloads_disabled(
 def test_replace_grab_deferred_keeps_files(client, clean_db, imported_book):
     mock_details()
     mock_deluge()
-    lib = Path(imported_book.library_path)
+    edition = imported_book.editions[0]
+    lib = Path(edition.library_path)
 
     response = client.post(f"/books/{imported_book.id}/grab", data=grab_data(replace="1"))
 
     assert response.status_code == 200
     assert (lib / "Part 01.mp3").exists()
     clean_db.expire_all()
-    assert imported_book.library_path == str(lib)
-    assert imported_book.download_state == DownloadState.GRABBED
+    assert edition.library_path == str(lib)
+    assert edition.download_state == DownloadState.GRABBED
     release = clean_db.query(Release).one()
+    assert release.edition_id == edition.id
     assert get_state(clean_db, replace_key(release)) == "1"

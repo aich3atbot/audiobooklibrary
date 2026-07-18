@@ -3,6 +3,10 @@ Audiobookshelf-style library layout:
 
     Author/Series/{index} - Title/   (or Author/Title/ without a series)
 
+A labelled edition (a book with several recordings) carries its label as a
+suffix on the series folder — Author/Series {Label}/{index} - Title/ — or on
+the book folder for standalone books: Author/Title {Label}/.
+
 We ask the download client (by info hash) how each torrent is doing; it is
 authoritative about completion, and its progress is what the Activity page
 shows. When it can't answer — a release grabbed before hashes were recorded, a
@@ -29,7 +33,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.clients.download_client import TorrentStatus, get_download_client
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.models import Book, DownloadState, Release
+from app.models import Book, DownloadState, Edition, Release
 from app.services.downloads import drop_from_client
 from app.services.sync import delete_state, get_state
 
@@ -67,11 +71,17 @@ def cleanup_empty_parents(path: Path, root: Path) -> None:
         current = current.parent
 
 
-def library_dir_for(book: Book) -> Path:
+def edition_dir_for(edition: Edition) -> Path:
+    """Library folder for one edition. The label suffixes the series folder
+    (grouping a whole series' recordings) or, without a series, the book
+    folder; the unlabelled edition (label "") gets the plain path. Suffix
+    before sanitizing so the length cap covers the whole component."""
     settings = get_settings()
+    book = edition.book
+    suffix = f" {{{edition.label}}}" if edition.label else ""
     parts = [sanitize(book.author.name)]
     if book.series is not None:
-        parts.append(sanitize(book.series.name))
+        parts.append(sanitize(f"{book.series.name}{suffix}"))
         index = book.series_index
         if index is not None:
             index_str = str(int(index)) if index == int(index) else str(index)
@@ -79,7 +89,7 @@ def library_dir_for(book: Book) -> Path:
         else:
             parts.append(sanitize(book.title))
     else:
-        parts.append(sanitize(book.title))
+        parts.append(sanitize(f"{book.title}{suffix}"))
     return settings.library_dir.joinpath(*parts)
 
 
@@ -132,16 +142,17 @@ def _place(src: Path, dest: Path, mode: str) -> None:
         shutil.copy2(src, dest)
 
 
-def remove_library_files(book: Book) -> None:
-    """Delete a book's imported files and forget them (replace flow). Clearing
-    library_path also drops the book from the ABS API. Caller commits."""
+def remove_library_files(edition: Edition) -> None:
+    """Delete an edition's imported files and forget them (replace flow).
+    Clearing library_path also drops the edition from the ABS API. Caller
+    commits."""
     library_dir = get_settings().library_dir
-    root = Path(book.library_path) if book.library_path else None
+    root = Path(edition.library_path) if edition.library_path else None
     if root and root.is_dir() and root.resolve().is_relative_to(library_dir.resolve()):
         shutil.rmtree(root)
         cleanup_empty_parents(root.parent, library_dir)
-    book.library_path = None
-    book.audio_files.clear()
+    edition.library_path = None
+    edition.audio_files.clear()
 
 
 def replace_key(release: Release) -> str:
@@ -151,18 +162,18 @@ def replace_key(release: Release) -> str:
 
 def import_release(session: Session, release: Release, source: Path) -> bool:
     """Import a finished download; returns True on success. On failure the
-    release is marked failed with the reason and the book flagged."""
-    book = release.book
+    release is marked failed with the reason and the edition flagged."""
+    edition = release.edition
     try:
         files = collect_files(source)
         if not any(src.suffix.lower() in AUDIO_EXTS for src, _ in files):
             raise ImportFailure(f"no audio files found in {source.name}")
         if get_state(session, replace_key(release)) is not None:
-            # This release replaces the book's files: clear the OLD path (it
+            # This release replaces the edition's files: clear the OLD path (it
             # may differ from the computed dest if metadata changed since).
-            remove_library_files(book)
+            remove_library_files(edition)
             delete_state(session, replace_key(release))
-        dest = library_dir_for(book)
+        dest = edition_dir_for(edition)
         if dest.exists() and any(dest.iterdir()):
             raise ImportFailure(f"destination already exists: {dest}")
         dest.mkdir(parents=True, exist_ok=True)
@@ -175,22 +186,22 @@ def import_release(session: Session, release: Release, source: Path) -> bool:
         logger.exception("Import failed for release %s", release.title)
         release.status = "failed"
         release.error = str(exc)
-        # A failed replace whose old files survived leaves the book available.
-        book.download_state = (
-            DownloadState.IMPORTED if book.library_path else DownloadState.FAILED
+        # A failed replace whose old files survived leaves the edition available.
+        edition.download_state = (
+            DownloadState.IMPORTED if edition.library_path else DownloadState.FAILED
         )
         session.commit()
         return False
 
     release.status = "imported"
     release.error = None
-    book.download_state = DownloadState.IMPORTED
-    book.library_path = str(dest)
+    edition.download_state = DownloadState.IMPORTED
+    edition.library_path = str(dest)
     session.commit()
     logger.info("Imported %s -> %s", release.title, dest)
     if get_settings().download_remove_immediately:
         _drop_after_import(session, release)
-    _scan_audio(session, book)
+    _scan_audio(session, edition)
     return True
 
 
@@ -209,14 +220,14 @@ def _drop_after_import(session: Session, release: Release) -> None:
         logger.warning("Could not remove imported torrent %s: %s", release.info_hash, exc)
 
 
-def _scan_audio(session: Session, book) -> None:
+def _scan_audio(session: Session, edition: Edition) -> None:
     """Audio metadata scan (for the ABS API); never fails the import."""
-    from app.services.audio_meta import scan_book_audio  # deferred: import cycle
+    from app.services.audio_meta import scan_edition_audio  # deferred: import cycle
 
     try:
-        scan_book_audio(session, book)
+        scan_edition_audio(session, edition)
     except Exception:
-        logger.exception("Audio metadata scan failed for %s", book.title)
+        logger.exception("Audio metadata scan failed for %s", edition.book.title)
 
 
 def poll_download_client(releases: list[Release]) -> dict[str, TorrentStatus] | None:
@@ -255,8 +266,8 @@ def scan_downloads_once() -> dict[str, int]:
                 select(Release)
                 .where(Release.status.in_(ACTIVE_STATUSES))
                 .options(
-                    joinedload(Release.book).joinedload(Book.author),
-                    joinedload(Release.book).joinedload(Book.series),
+                    joinedload(Release.edition).joinedload(Edition.book).joinedload(Book.author),
+                    joinedload(Release.edition).joinedload(Edition.book).joinedload(Book.series),
                 )
             )
             .unique()
@@ -286,7 +297,7 @@ def scan_downloads_once() -> dict[str, int]:
             if still_busy:
                 if release.status != "downloading":
                     release.status = "downloading"
-                    release.book.download_state = DownloadState.DOWNLOADING
+                    release.edition.download_state = DownloadState.DOWNLOADING
                     session.commit()
                 continue
             if import_release(session, release, entry):
@@ -309,7 +320,7 @@ def _apply_torrent_status(
     if not status.is_finished:
         if release.status != "downloading":
             release.status = "downloading"
-            release.book.download_state = DownloadState.DOWNLOADING
+            release.edition.download_state = DownloadState.DOWNLOADING
         session.commit()
         return
 
@@ -329,7 +340,7 @@ def _apply_torrent_status(
             f"{get_settings().download_dir} — check that DOWNLOAD_DIR is the directory it "
             "writes completed downloads to, then retry or import manually."
         )
-        release.book.download_state = DownloadState.FAILED
+        release.edition.download_state = DownloadState.FAILED
         session.commit()
         counts["failed"] += 1
         logger.warning("Finished torrent %s not found in download dir", status.name)

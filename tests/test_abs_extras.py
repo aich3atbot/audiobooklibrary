@@ -94,7 +94,7 @@ def test_year_stats_counts_finished(client, token, library, user):
     from datetime import datetime
 
     db = library["db"]
-    db.add(MediaProgress(user_id=user.id, book_id=library["mayor"].id,
+    db.add(MediaProgress(user_id=user.id, edition_id=library["mayor"].id,
                          current_time=100.0, duration=100.0,
                          is_finished=True, finished_at=datetime(2026, 3, 1)))
     db.commit()
@@ -115,6 +115,6 @@ def test_patch_progress_fraction_maps_to_current_time(client, token, library,
     assert response.status_code == 200
 
     db.expire_all()
-    progress = db.query(MediaProgress).filter_by(book_id=library["hail"].id).one()
+    progress = db.query(MediaProgress).filter_by(edition_id=library["hail"].id).one()
     assert progress.current_time == pytest.approx(100.0)
     assert progress.is_finished is False

@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi.templating import Jinja2Templates
 
 from app.config import get_settings
-from app.models import display_status
+from app.models import book_failed, book_status, display_status
 
 
 def human_size(n: int | float | None) -> str:
@@ -20,5 +20,7 @@ def human_size(n: int | float | None) -> str:
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters["human_size"] = human_size
 templates.env.globals["display_status"] = display_status
+templates.env.globals["book_status"] = book_status
+templates.env.globals["book_failed"] = book_failed
 # Callable, not a value: settings are cached and tests monkeypatch them.
 templates.env.globals["downloads_enabled"] = lambda: get_settings().downloads_enabled

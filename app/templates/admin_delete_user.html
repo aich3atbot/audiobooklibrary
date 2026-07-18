@@ -23,7 +23,7 @@
                         others have progress</span>
                     {% endif %}
                 </td>
-                <td><small>{{ book.library_path }}</small></td>
+                <td><small>{% for e in book.editions %}{% if e.library_path %}{{ e.library_path }}{% if not loop.last %}<br>{% endif %}{% endif %}{% endfor %}</small></td>
                 <td><input type="radio" name="disk_{{ book.id }}" value="keep" checked
                            aria-label="Leave {{ book.title }} in place"></td>
                 <td><input type="radio" name="disk_{{ book.id }}" value="delete"

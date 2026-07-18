@@ -7,7 +7,9 @@ from app.models import (
     AudioFile,
     Author,
     Book,
+    Bookmark,
     DownloadState,
+    Edition,
     MediaProgress,
     ReadState,
     Release,
@@ -19,7 +21,7 @@ from tests.conftest import make_user_book
 
 @pytest.fixture(autouse=True)
 def clean_db(db_session):
-    for model in (UserBook, AudioFile, MediaProgress, Release, Book, Author, Series, AppState):
+    for model in (UserBook, AudioFile, MediaProgress, Bookmark, Release, Edition, Book, Author, Series, AppState):
         db_session.query(model).delete()
     db_session.commit()
     return db_session
@@ -46,7 +48,6 @@ def test_library_page_lists_books(client, user, db_session):
         author=author,
         series=series,
         series_index=1,
-        download_state=DownloadState.NONE,
     )
     db_session.add(book)
     db_session.commit()

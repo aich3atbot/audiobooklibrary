@@ -77,10 +77,10 @@
 <table>
     <thead><tr><th>Book</th><th>Library path</th></tr></thead>
     <tbody>
-        {% for b in imported %}
+        {% for e in imported %}
         <tr>
-            <td>{{ b.title }}<br><small>{{ b.author.name }}</small></td>
-            <td><small>{{ b.library_path }}</small></td>
+            <td>{{ e.book.title }}{% if e.label %} <span class="badge">{{ e.label }}</span>{% endif %}<br><small>{{ e.book.author.name }}</small></td>
+            <td><small>{{ e.library_path }}</small></td>
         </tr>
         {% endfor %}
     </tbody>

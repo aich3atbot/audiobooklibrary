@@ -21,11 +21,11 @@ def _check_library(library_id: str) -> None:
         raise HTTPException(status_code=404, detail="Library not found")
 
 
-def _get_book(db: Session, item_id: str):
-    book = catalogue.get_book_by_item_id(db, item_id)
-    if book is None:
+def _get_edition(db: Session, item_id: str):
+    edition = catalogue.get_edition_by_item_id(db, item_id)
+    if edition is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    return book
+    return edition
 
 
 @router.get("/libraries")
@@ -58,13 +58,13 @@ def library_items(
     db: Session = Depends(get_db),
 ):
     _check_library(library_id)
-    books = catalogue.sorted_books(catalogue.eligible_books(db), sort, desc == "1")
-    total = len(books)
+    editions = catalogue.sorted_editions(catalogue.eligible_editions(db), sort, desc == "1")
+    total = len(editions)
     offset = page * limit if limit else 0
     if limit:
-        books = books[offset : offset + limit]
+        editions = editions[offset : offset + limit]
     return {
-        "results": [catalogue.item_minified(b) for b in books],
+        "results": [catalogue.item_minified(e) for e in editions],
         "total": total,
         "limit": limit,
         "page": page,
@@ -100,9 +100,10 @@ def library_filterdata(library_id: str, db: Session = Depends(get_db)):
 def library_series(library_id: str, limit: int = 0, page: int = 0,
                    db: Session = Depends(get_db)):
     _check_library(library_id)
-    books = catalogue.eligible_books(db)
+    editions = catalogue.eligible_editions(db)
     by_series: dict[int, dict] = {}
-    for book in books:
+    for edition in editions:
+        book = edition.book
         if book.series is None:
             continue
         group = by_series.setdefault(
@@ -112,8 +113,8 @@ def library_series(library_id: str, limit: int = 0, page: int = 0,
              "type": "series", "books": [], "addedAt": payloads.now_ms(),
              "totalDuration": 0.0},
         )
-        group["books"].append(catalogue.item_minified(book))
-        group["totalDuration"] += catalogue.book_duration(book)
+        group["books"].append(catalogue.item_minified(edition))
+        group["totalDuration"] += catalogue.edition_duration(edition)
     results = sorted(by_series.values(), key=lambda s: s["name"].lower())
     total = len(results)
     if limit:
@@ -127,7 +128,8 @@ def library_series(library_id: str, limit: int = 0, page: int = 0,
 def library_authors(library_id: str, db: Session = Depends(get_db)):
     _check_library(library_id)
     counts: dict[int, dict] = {}
-    for book in catalogue.eligible_books(db):
+    for edition in catalogue.eligible_editions(db):
+        book = edition.book
         entry = counts.setdefault(book.author_id, catalogue.author_entry(book))
         entry["numBooks"] += 1
     return {"authors": sorted(counts.values(), key=lambda a: a["name"].lower())}
@@ -161,10 +163,10 @@ def library_collections(library_id: str, limit: int = 0, page: int = 0):
 @router.get("/items/{item_id}")
 def get_item(item_id: str, expanded: int = 0, include: str = "",
              db: Session = Depends(get_db), user: User = Depends(require_abs_user)):
-    book = _get_book(db, item_id)
-    item = catalogue.item_expanded(book) if expanded else catalogue.item_minified(book)
+    edition = _get_edition(db, item_id)
+    item = catalogue.item_expanded(edition) if expanded else catalogue.item_minified(edition)
     if "progress" in include:
-        progress = catalogue.get_progress(db, user, book.id)
+        progress = catalogue.get_progress(db, user, edition.id)
         item["userMediaProgress"] = (
             catalogue.progress_json(progress, user) if progress else None
         )
@@ -173,10 +175,10 @@ def get_item(item_id: str, expanded: int = 0, include: str = "",
 
 @router.get("/items/{item_id}/cover")
 def item_cover(item_id: str, db: Session = Depends(get_db)):
-    book = _get_book(db, item_id)
-    cover = catalogue.find_cover_file(book)
+    edition = _get_edition(db, item_id)
+    cover = catalogue.find_cover_file(edition)
     if cover is not None:
         return FileResponse(cover)
-    if book.cover_url:
-        return RedirectResponse(url=book.cover_url, status_code=302)
+    if edition.book.cover_url:
+        return RedirectResponse(url=edition.book.cover_url, status_code=302)
     raise HTTPException(status_code=404, detail="No cover")
