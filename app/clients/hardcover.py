@@ -95,6 +95,35 @@ query SeriesBooks($sid: Int!) {
 }
 """
 
+# A book's audiobook editions, verified live 2026-07-18 (see plan.md):
+# reading_format_id 2 ("Listened") is the audiobook format. Ordering by
+# users_count matters — books can carry dozens of junk/foreign editions.
+AUDIOBOOK_FORMAT_ID = 2
+
+EDITIONS_QUERY = """
+query AudioEditions($bookId: Int!) {
+  editions(where: {book_id: {_eq: $bookId}, reading_format_id: {_eq: 2}},
+           order_by: {users_count: desc}) {
+    id
+    title
+    subtitle
+    edition_format
+    asin
+    isbn_13
+    audio_seconds
+    release_date
+    users_count
+    publisher { name }
+    contributions { contribution author { id name } }
+  }
+}
+"""
+
+# The contribution role string is inconsistent in the wild: usually
+# "Narrator", but also "narrator", "Reader", "Sprecher"; null for the author.
+NARRATOR_ROLES = {"narrator", "reader", "sprecher"}
+
+
 # search results is raw Typesense JSON (jsonb), not typed GraphQL fields
 SEARCH_QUERY = """
 query Search($query: String!, $perPage: Int!, $page: Int!) {
@@ -223,6 +252,13 @@ class HardcoverClient:
         books = data.get("books") or []
         return books[0] if books else None
 
+    def fetch_editions(self, book_id: int) -> list[dict[str, Any]]:
+        """A book's audiobook editions, most-shelved first. Each entry carries
+        the narrators and a default grouping label ("Stephen Fry"; "Full
+        Cast" when a big ensemble is credited)."""
+        data = self.execute(EDITIONS_QUERY, {"bookId": book_id})
+        return [_parse_edition(row) for row in data.get("editions") or []]
+
     def search_books(
         self, query: str, per_page: int = 25, page: int = 1
     ) -> list[dict[str, Any]]:
@@ -293,4 +329,33 @@ def _parse_search_document(doc: dict[str, Any]) -> dict[str, Any]:
         "release_year": doc.get("release_year"),
         "has_audiobook": bool(doc.get("has_audiobook")),
         "users_count": doc.get("users_count") or 0,
+    }
+
+
+def _parse_edition(row: dict[str, Any]) -> dict[str, Any]:
+    narrators = [
+        c["author"]["name"]
+        for c in row.get("contributions") or []
+        if c.get("author") and (c.get("contribution") or "").strip().lower() in NARRATOR_ROLES
+    ]
+    if not narrators:
+        default_label = ""
+    elif len(narrators) > 3:
+        default_label = "Full Cast"
+    else:
+        default_label = " & ".join(narrators)
+    return {
+        "id": row["id"],
+        "title": row.get("title") or "",
+        "subtitle": row.get("subtitle") or "",
+        "format": row.get("edition_format") or "",
+        "asin": row.get("asin"),
+        "isbn_13": row.get("isbn_13"),
+        "audio_seconds": row.get("audio_seconds"),
+        "release_date": row.get("release_date"),
+        "users_count": row.get("users_count") or 0,
+        "publisher": (row.get("publisher") or {}).get("name") or "",
+        "narrators": narrators,
+        "narrator": ", ".join(narrators),
+        "default_label": default_label,
     }

@@ -15,6 +15,11 @@
                        placeholder="Edition label (e.g. Stephen Fry)" aria-label="Edition label">
                 <button type="submit" class="secondary"
                         title="Rename this edition's label; its library folder moves to match">Rename</button>
+                {% if downloads_enabled() and editions | length > 1 %}
+                <button type="button" class="secondary"
+                        hx-get="/books/{{ book.id }}/releases?replace=1&edition_id={{ entry.edition.id }}"
+                        hx-target="#modal" hx-swap="outerHTML">Replace…</button>
+                {% endif %}
             </fieldset>
         </form>
         <table>
@@ -32,8 +37,12 @@
         {% endfor %}
         {% if editions and downloads_enabled() %}
         <footer>
+            {% if editions | length == 1 %}
             <button class="secondary" hx-get="/books/{{ book.id }}/releases?replace=1"
                     hx-target="#modal" hx-swap="outerHTML">Search for a replacement download…</button>
+            {% endif %}
+            <button class="secondary" hx-get="/books/{{ book.id }}/editions/new"
+                    hx-target="#modal" hx-swap="outerHTML">Download another edition…</button>
         </footer>
         {% endif %}
     </article>

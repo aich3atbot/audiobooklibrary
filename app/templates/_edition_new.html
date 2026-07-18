@@ -1,0 +1,27 @@
+<div id="modal">
+<dialog open>
+    <article class="release-dialog">
+        <header>
+            <button aria-label="Close" rel="prev" onclick="this.closest('dialog').remove()"></button>
+            <strong>Another edition — {{ book.title }}</strong>
+        </header>
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+        <form hx-post="/books/{{ book.id }}/editions/new" hx-target="#modal" hx-swap="outerHTML">
+            {% if unlabelled %}
+            <label>
+                Label for the existing files
+                <input type="text" name="existing_label" required
+                       placeholder="e.g. Jim Dale"
+                       aria-label="Label for the existing files">
+                <small>Once a book has two editions every folder carries its label,
+                       so the current files move to a labelled folder too.</small>
+            </label>
+            {% endif %}
+            {% include "_edition_options.html" %}
+            <footer>
+                <button type="submit">Search for downloads…</button>
+            </footer>
+        </form>
+    </article>
+</dialog>
+</div>

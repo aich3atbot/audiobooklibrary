@@ -3,15 +3,31 @@
     <article class="release-dialog">
         <header>
             <button aria-label="Close" rel="prev" onclick="this.closest('dialog').remove()"></button>
-            <strong>{{ "Replace" if replace else "Releases" }} — {{ book.title }}</strong>
+            <strong>{{ "Replace" if replace else "Releases" }} — {{ book.title }}{% if add_edition %} — {{ edition_label }}{% endif %}</strong>
         </header>
         {% if error %}<p class="error">{{ error }}</p>{% endif %}
         {% if replace and releases %}
         <fieldset id="replace-options">
             <input type="hidden" name="replace" value="1">
+            <input type="hidden" name="edition_id" value="{{ replace_edition_id or '' }}">
             <label><input type="radio" name="remove" value="after_import" checked> Remove current files after the new download imports</label>
             <label><input type="radio" name="remove" value="immediately"> Remove current files immediately</label>
         </fieldset>
+        {% endif %}
+        {% if add_edition and releases %}
+        <fieldset id="add-edition-options">
+            <input type="hidden" name="add_edition" value="1">
+            <input type="hidden" name="edition_label" value="{{ edition_label }}">
+            <input type="hidden" name="hc_edition" value="{{ hardcover_edition_id or '' }}">
+            {% if hardcover_edition_id %}<input type="hidden" name="hcnarr_{{ hardcover_edition_id }}" value="{{ narrator }}">{% endif %}
+        </fieldset>
+        {% endif %}
+        {% if releases and not replace and not add_edition %}
+        <details>
+            <summary>Edition (optional)</summary>
+            <div hx-get="/books/{{ book.id }}/editions/options" hx-trigger="toggle once from:closest details"
+                 hx-swap="innerHTML"><p aria-busy="true">Loading editions…</p></div>
+        </details>
         {% endif %}
         {% if releases %}
         <table>
@@ -24,7 +40,8 @@
                     <td>{{ r.format or "?" }}</td>
                     <td>{{ r.published.strftime("%d %b %Y") if r.published else "?" }}</td>
                     <td>
-                        <form hx-post="/books/{{ book.id }}/grab" hx-target="#modal" hx-swap="outerHTML"{% if replace %} hx-include="#replace-options"{% endif %}>
+                        <form hx-post="/books/{{ book.id }}/grab" hx-target="#modal" hx-swap="outerHTML"
+                              hx-include="#replace-options, #add-edition-options, #edition-options">
                             <input type="hidden" name="guid" value="{{ r.guid }}">
                             <input type="hidden" name="indexer" value="{{ r.indexer }}">
                             <input type="hidden" name="title" value="{{ r.title }}">

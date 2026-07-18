@@ -320,7 +320,7 @@ def test_replace_picker_bypasses_available_block(client, imported_book):
     assert "already available" not in response.text
     assert 'value="after_import"' in response.text
     assert 'value="immediately"' in response.text
-    assert 'hx-include="#replace-options"' in response.text
+    assert '#replace-options' in response.text
 
 
 @respx.mock

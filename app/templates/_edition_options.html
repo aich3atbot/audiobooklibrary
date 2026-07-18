@@ -1,0 +1,25 @@
+{# Edition picker fields: Hardcover audiobook editions as radios plus a
+   free-form label that overrides the selection. Included by the
+   add-edition dialog and loaded into the plain release picker. #}
+<fieldset id="edition-options">
+    {% if warning %}<p><small>{{ warning }}</small></p>{% endif %}
+    {% for e in hc_editions %}
+    <label>
+        <input type="radio" name="hc_edition" value="{{ e.id }}">
+        {{ e.narrator or e.title }}
+        {%- if e.format %} — {{ e.format }}{% endif %}
+        {%- if e.audio_seconds %} — {{ (e.audio_seconds // 3600) }}h {{ ((e.audio_seconds % 3600) // 60) }}m{% endif %}
+        {%- if e.publisher %} <small>({{ e.publisher }})</small>{% endif %}
+        <input type="hidden" name="hclabel_{{ e.id }}" value="{{ e.default_label }}">
+        <input type="hidden" name="hcnarr_{{ e.id }}" value="{{ e.narrator }}">
+    </label>
+    {% endfor %}
+    <input type="text" name="edition_label" list="label-suggestions"
+           placeholder="Label (e.g. Stephen Fry){% if hc_editions %} — overrides the selection above{% endif %}"
+           aria-label="Edition label">
+    {% if suggestions %}
+    <datalist id="label-suggestions">
+        {% for s in suggestions %}<option value="{{ s }}">{% endfor %}
+    </datalist>
+    {% endif %}
+</fieldset>
