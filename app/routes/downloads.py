@@ -11,7 +11,13 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import Book, Edition, User, book_status
 from app.services.downloads import grab_release, search_releases
-from app.services.importer import AUDIO_EXTS, remove_library_files, replace_key
+from app.services.editions import relabel_edition
+from app.services.importer import (
+    AUDIO_EXTS,
+    ImportFailure,
+    remove_library_files,
+    replace_key,
+)
 from app.services.sync import get_user_book, set_state
 from app.templating import templates
 
@@ -57,13 +63,8 @@ def _bitrate(path: Path) -> int | None:
         return None
 
 
-@router.get("/books/{book_id}/files", response_class=HTMLResponse)
-def list_files(book_id: int, request: Request, db: Session = Depends(get_db)):
-    """Details of a downloaded book's files, per edition, with a
-    replace-download entry."""
-    book = _get_book(db, book_id)
+def _files_dialog(request: Request, book: Book, error: str | None = None):
     editions = []
-    error = None
     for edition in book.editions:
         root = Path(edition.library_path) if edition.library_path else None
         if root is None or not root.is_dir():
@@ -78,11 +79,41 @@ def list_files(book_id: int, request: Request, db: Session = Depends(get_db)):
             if p.is_file()
         ]
         editions.append({"edition": edition, "files": files})
-    if not editions:
+    if not editions and not error:
         error = "This book has no downloaded files."
     return templates.TemplateResponse(
         request, "_files.html", {"book": book, "editions": editions, "error": error}
     )
+
+
+@router.get("/books/{book_id}/files", response_class=HTMLResponse)
+def list_files(book_id: int, request: Request, db: Session = Depends(get_db)):
+    """Details of a downloaded book's files, per edition, with rename and
+    replace-download entries."""
+    return _files_dialog(request, _get_book(db, book_id))
+
+
+@router.post("/editions/{edition_id}/label", response_class=HTMLResponse)
+def relabel(
+    edition_id: int,
+    request: Request,
+    label: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Rename an edition's label; its library folder moves to the labelled
+    location immediately. Re-renders the files dialog."""
+    edition = db.get(Edition, edition_id)
+    if edition is None:
+        raise HTTPException(status_code=404, detail="edition not found")
+    book = edition.book
+    try:
+        relabel_edition(db, edition, label)
+    except ImportFailure as exc:
+        return _files_dialog(request, book, error=str(exc))
+    except Exception:
+        logger.exception("Relabel failed for %s", book.title)
+        return _files_dialog(request, book, error="Rename failed — see the app log.")
+    return _files_dialog(request, book)
 
 
 @router.get("/books/{book_id}/releases", response_class=HTMLResponse)

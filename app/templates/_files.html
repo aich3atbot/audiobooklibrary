@@ -7,8 +7,16 @@
         </header>
         {% if error %}<p class="error">{{ error }}</p>{% endif %}
         {% for entry in editions %}
-        {% if editions | length > 1 or entry.edition.label %}<h5>{{ entry.edition.label or "Unlabelled edition" }}</h5>{% endif %}
+        {% if editions | length > 1 or entry.edition.label %}<h5>{{ entry.edition.label or "Unlabelled edition" }}{% if entry.edition.narrator %} <small>({{ entry.edition.narrator }})</small>{% endif %}</h5>{% endif %}
         <p><small>{{ entry.edition.library_path }}</small></p>
+        <form hx-post="/editions/{{ entry.edition.id }}/label" hx-target="#modal" hx-swap="outerHTML">
+            <fieldset role="group">
+                <input type="text" name="label" value="{{ entry.edition.label }}"
+                       placeholder="Edition label (e.g. Stephen Fry)" aria-label="Edition label">
+                <button type="submit" class="secondary"
+                        title="Rename this edition's label; its library folder moves to match">Rename</button>
+            </fieldset>
+        </form>
         <table>
             <thead><tr><th>File</th><th>Size</th><th>Bitrate</th></tr></thead>
             <tbody>
