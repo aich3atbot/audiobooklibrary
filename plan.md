@@ -93,6 +93,18 @@ are collapsed to the canonical book).
 - **Series**: `book_series` filtered by `series_id` with `book: {canonical_id: {_is_null: true}}`
   (a series row exists per edition/boxset — HP has 112 rows for 7 books); order by position
   then `users_count desc` and keep the first book per position. Verified live 2026-07.
+- **Editions** (verified live 2026-07-18 against Chamber of Secrets, book_id 429306):
+  `editions(where: {book_id: {_eq: $id}, reading_format_id: {_eq: 2}}, order_by:
+  {users_count: desc})` — **`reading_format_id` 2 ("Listened") is the audiobook format**
+  (1 Read, 3 Both, 4 Ebook). Fields confirmed: `id title subtitle edition_format
+  edition_information asin isbn_13 audio_seconds release_date users_count
+  publisher { name } contributions { contribution author { id name } }`.
+  **Narrator extraction must be tolerant**: the `contribution` role string is usually
+  `"Narrator"` but appears as `"narrator"`, `"Reader"`, `"Sprecher"`, and is `null` for
+  the author — match case-insensitively on narrator/reader. Books can carry dozens of
+  audio editions (CoS has 38, mostly foreign/junk) so the picker relies on the
+  `users_count desc` ordering; full-cast recordings list 10+ narrators, so the default
+  label falls back to "Full Cast" when more than 3 narrators are credited.
 - Rate limiting: modest request rate, cache search results briefly; sync is incremental where
   possible (updated-since cursor), full refresh as fallback.
 - *First implementation task: verify current schema/field names against the live API with the
