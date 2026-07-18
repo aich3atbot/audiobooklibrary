@@ -88,7 +88,7 @@ async def start_playback(
         "mediaType": "book",
         "mediaMetadata": catalogue.metadata_expanded(edition),
         "chapters": catalogue.edition_chapters(edition),
-        "displayTitle": edition.book.title,
+        "displayTitle": catalogue.display_title(edition),
         "displayAuthor": edition.book.author.name,
         "coverPath": f"/api/items/{item_id}/cover",
         "duration": duration,

@@ -8,8 +8,17 @@ memory; check here, and when in doubt re-check the source.
 Conventions used below: each of our user accounts maps to an ABS `root`-permission user
 (a deliberate simplification — apps only gate features on it); the token `userId` is the
 account's stable uuid, and mediaProgress/bookmarks/sessions are scoped to that user. The
-single shared library is `lib_audiobooks` (its catalogue is the same for every user);
-library item ids are `li_<book.id>`; audio file "ino" is our audio_file row id as a string.
+single shared library is `lib_audiobooks` (its catalogue is the same for every user).
+
+**A library item is one *edition* of a book** (a book can hold several recordings):
+item ids are `li_<edition.id>`, `media.id` is `bk_<edition.id>`, the item "ino" is the
+edition id, and the audio file "ino" is our audio_file row id as a string. Progress and
+bookmarks are per edition; finishing any edition marks the *book* read on Hardcover.
+When a book has 2+ editions in the library, the payload `title` (and `displayTitle` in
+play sessions) carries the edition's label — `"Chamber of Secrets (Stephen Fry)"` — so
+list views can tell the items apart (display-only; the stored title is unchanged), and
+`narrators`/`narratorName`/filterdata narrators come from the edition's Hardcover
+narrator credits or its label.
 
 ## Auth
 

@@ -213,3 +213,34 @@ def test_me_includes_progress(client, token, library, user):
 
 def test_unknown_library_404(client, token):
     assert get(client, token, "/api/libraries/lib_other/items").status_code == 404
+
+
+def test_multi_edition_items_carry_their_label(client, token, library, test_settings):
+    """Two editions of one book are two items; titles disambiguate them."""
+    db = library["db"]
+    mayor = library["mayor"]
+    mayor.label = "Jim Dale"
+    fry_dir = (test_settings.library_dir / "Ryan Rimmel" / "Noobtown {Stephen Fry}"
+               / "1 - The Mayor of Noobtown")
+    write_mp3(fry_dir / "fry.mp3", frames=50)
+    fry = Edition(book=mayor.book, label="Stephen Fry",
+                  download_state=DownloadState.IMPORTED, library_path=str(fry_dir))
+    db.add(fry)
+    db.commit()
+    from app.services.audio_meta import scan_edition_audio
+
+    scan_edition_audio(db, fry)
+
+    body = get(client, token, "/api/libraries/lib_audiobooks/items").json()
+    titles = sorted(r["media"]["metadata"]["title"] for r in body["results"])
+    assert "The Mayor of Noobtown (Jim Dale)" in titles
+    assert "The Mayor of Noobtown (Stephen Fry)" in titles
+    # the single-edition book keeps its plain title
+    assert "Project Hail Mary" in titles
+
+    item = get(client, token, f"/api/items/li_{fry.id}", expanded=1).json()
+    assert item["media"]["metadata"]["narrators"] == ["Stephen Fry"]
+
+    filters = get(client, token, "/api/libraries/lib_audiobooks/filterdata").json()
+    assert "Stephen Fry" in filters["narrators"]
+    assert "Jim Dale" in filters["narrators"]

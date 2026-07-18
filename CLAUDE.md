@@ -11,14 +11,17 @@ architecture, data model, workflows, and milestones. Keep it updated as decision
 
 All seven plan.md milestones plus collection import (/imports), an
 Audiobookshelf-compatible API, the direct torrent pipeline (AudioBookBay + Deluge, which
-replaced Prowlarr), and the **multi-user conversion** (mandatory accounts, virtual admin,
+replaced Prowlarr), the **multi-user conversion** (mandatory accounts, virtual admin,
 per-user Hardcover sync and ABS progress over a shared /audiobooks store — see plan.md
-"Multi-user conversion") are built, tested, and committed. The Alembic history was
-squashed to a single initial revision; there is no migration from the old single-user
-schema (fresh database assumed — set ADMIN_PASSWORD and recreate). Run `uv run pytest`
-(all external APIs are mocked with respx). Awaiting real-world verification: the ABS API
-with the official app (per user account), one real UI grab → download → import through
-the user's own Deluge, and the new admin/imports flows in the browser.
+"Multi-user conversion"), and **multi-edition support** (a book can hold several
+recordings as `edition` rows — see plan.md "Multi-edition support") are built, tested,
+and committed. The Alembic history is the squashed initial revision plus the editions
+migration `7e21c3a90d44` (backfills one unlabelled edition per book; DB-only, no files
+move; existing installs migrate in place). Run `uv run pytest` (all external APIs are
+mocked with respx). Awaiting real-world verification: the ABS API with the official app
+(per user account; note item ids changed to `li_<edition.id>`), one real UI grab →
+download → import through the user's own Deluge, the admin/imports flows, and the new
+add-another-edition flow in the browser.
 
 ## ABS-compatible API
 
@@ -26,10 +29,12 @@ Lives in `app/abs/`. **docs/abs-api-contract.md pins the exact protocol shapes, 
 from the ABS server/app source — do not code ABS endpoints from memory; check the doc,
 and re-verify against source when extending.** JWTs share the UI session secret; /login
 dispatches JSON (ABS) vs form (UI) by content type. The served entrypoint is
-`app.main:asgi` (FastAPI wrapped in a socket.io shim), not `app.main:app`. Only books
-with `library_path` set are exposed. ABS logins are user accounts (the virtual admin is
-rejected); token `userId` is the account's stable uuid. Finishing a book in an app marks
-it read on Hardcover via `update_read_state`.
+`app.main:asgi` (FastAPI wrapped in a socket.io shim), not `app.main:app`. A library
+item is one *edition* (`li_<edition.id>`); only editions with `library_path` set are
+exposed, progress/bookmarks are per edition, and multi-edition books carry their label
+in the item title. ABS logins are user accounts (the virtual admin is rejected); token
+`userId` is the account's stable uuid. Finishing any edition in an app marks the book
+read on Hardcover via `update_read_state`.
 
 ## Key decisions (do not silently revisit)
 
@@ -51,7 +56,12 @@ it read on Hardcover via `update_read_state`.
   client can't be reached, cancel still succeeds locally (a dead client must not trap the
   release) but records on `release.error` that the torrent may still be running.
 - **Library layout**: `Author/Series/{SeriesIndex} - Title/`, or `Author/Title/` when there is
-  no series. Sanitize filesystem-unsafe characters.
+  no series. Sanitize filesystem-unsafe characters. A labelled edition suffixes the
+  *series* folder (`Author/Series {Label}/{idx} - Title/`) or, standalone, the book
+  folder; only the unlabelled edition uses the plain path, and once a book has two
+  editions all of them are labelled. Relabelling moves the folder immediately
+  (`relabel_edition` — filesystem first, DB second). See plan.md "Multi-edition
+  support"; do not revisit the layout silently.
 - **Import mode**: default is hardlink-or-copy (seeding torrents keep their files);
   `IMPORT_MODE=move` opts into relocating. Do not change the default back to move.
   Seeding also survives import by default: `DOWNLOAD_REMOVE_IMMEDIATELY=true` opts into
@@ -62,13 +72,19 @@ it read on Hardcover via `update_read_state`.
   Hardcover** (folder-name heuristics; cached in app_state per entry), never by shelving —
   imported books are **ownerless** until each user's own sync attaches their shelf entry.
   Always MOVES files (draining /imports is the point) regardless of IMPORT_MODE, which
-  applies to the download pipeline only. A successful batch kicks a background all-user sync.
+  applies to the download pipeline only. A successful batch kicks a background all-user
+  sync. An entry matched to an already-available book imports as an additional edition
+  (label input in the row); unlabelled imports into available books refuse with guidance.
 - **Read state**: per user (`user_book` rows over shared `book` metadata), two-way sync with
   each user's own Hardcover token, but **Hardcover is the source of truth** — push local
   changes first, then pull; Hardcover wins conflicts. Book identity is anchored on the
-  Hardcover *book* id (editions collapsed). Download state stays shared on `book`
-  (displayed as not present / downloading / available; a book one user made available
-  cannot be grabbed again — search offers "add to my library" instead).
+  Hardcover *book* id (sync collapses editions to the canonical book); downloaded
+  recordings are per-book `edition` rows (unique book+label, optional Hardcover edition
+  id). Download state is shared and per edition; a book displays the aggregate (not
+  present / downloading / available — `book_status`). A book one user made available
+  cannot be grabbed again — search offers "add to my library", and the files dialog
+  offers "Download another edition" (per-edition guard). Read state stays book-level:
+  finishing any edition marks the book read.
 - **Multi-user, mandatory auth**: there is no open mode. Users are DB rows (scrypt
   password hashes via `app/passwords.py`, per-user Hardcover tokens); the virtual `admin`
   account (password from `ADMIN_PASSWORD`, required at startup, reserved username) sees

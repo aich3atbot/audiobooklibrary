@@ -126,11 +126,25 @@ def edition_chapters(edition: Edition) -> list[dict[str, Any]]:
     return chapters
 
 
+def display_title(edition: Edition) -> str:
+    """The item title clients show. When a book has several editions in the
+    library, each item carries its label so list views can tell them apart:
+    "Chamber of Secrets (Stephen Fry)". Display-only — book.title is
+    untouched."""
+    book = edition.book
+    siblings = [e for e in book.editions if e.library_path]
+    tag = edition.label or edition.narrator
+    if len(siblings) > 1 and tag:
+        return f"{book.title} ({tag})"
+    return book.title
+
+
 def metadata_minified(edition: Edition) -> dict[str, Any]:
     book = edition.book
+    title = display_title(edition)
     return {
-        "title": book.title,
-        "titleIgnorePrefix": title_prefix_at_end(book.title),
+        "title": title,
+        "titleIgnorePrefix": title_prefix_at_end(title),
         "subtitle": None,
         "authorName": book.author.name,
         "authorNameLF": name_last_first(book.author.name),

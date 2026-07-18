@@ -23,7 +23,7 @@ finished audiobooks into a clean library folder. Single container, Python, SQLit
 | Download flow | App searches a **torrent indexer directly** (AudioBookBay), resolves the chosen release to a **magnet**, and adds it to a **torrent client** (Deluge) itself. It then polls the client **by info hash** for progress/completion, and imports from the download directory. Directory name-matching remains the fallback when the client can't answer. |
 | Indexer / client | Both behind small protocols (`Indexer`, `DownloadClient`) so more can be added. Today: AudioBookBay + Deluge or qBittorrent. |
 | Cancelling | Cancel **removes the torrent and deletes its data** in the client, ending any seeding of it, and stops tracking the release here. Chosen deliberately over preserving seeds. The UI asks for confirmation; if the client is unreachable the release is still cancelled locally, with the failure recorded so the user knows the torrent may still be running. |
-| Library layout | **Audiobookshelf-style**: `Author/Series/{SeriesIndex} - Title/` (no series: `Author/Title/`). |
+| Library layout | **Audiobookshelf-style**: `Author/Series/{SeriesIndex} - Title/` (no series: `Author/Title/`). A labelled edition suffixes the **series** folder (`Author/Series {Label}/{idx} - Title/`) or, standalone, the book folder (`Author/Title {Label}/`) — see "Multi-edition support". |
 | Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
 | Read-state sync | **Two-way**: UI changes push to Hardcover immediately; a periodic sync pulls Hardcover changes down. Hardcover is the source of truth for read state. |
 | Web stack | **FastAPI + Jinja2 + HTMX** (server-rendered, HTMX for in-page updates). |
@@ -62,23 +62,31 @@ One FastAPI process running:
   enabled, created_at, last_sync_at, last_sync_result. The `admin` account is virtual — never a row.
 - **author** — id, hardcover_id, name
 - **series** — id, hardcover_id, name
-- **book** — shared metadata + download state: id, hardcover_id, title, author_id,
-  series_id (nullable), series_index (nullable), cover_url,
-  download_state (`none` | `wanted` | `grabbed` | `downloading` | `downloaded` | `imported` | `failed`;
-  displayed as the three statuses *not present / downloading / available*),
-  library_path (nullable), created_at, updated_at. A book may belong to no user's library.
+- **book** — shared metadata only: id, hardcover_id, title, author_id,
+  series_id (nullable), series_index (nullable), cover_url, created_at, updated_at.
+  A book may belong to no user's library. Its UI download status is the aggregate over
+  its editions (`book_status`: available if any edition has files, else downloading if
+  any edition is in the pipeline, else not present).
+- **edition** — one audiobook recording of a book (unique book_id+label): book_id,
+  hardcover_edition_id (nullable — set when picked from Hardcover's editions),
+  label (the grouping name used in folder names, e.g. "Stephen Fry"; `""` is the
+  unlabelled edition), narrator (display string), download_state
+  (`none` | `grabbed` | `downloading` | `imported` | `failed`; displayed as
+  *not present / downloading / available*), library_path (nullable), timestamps.
+  Owns the on-disk files and the download pipeline state — see "Multi-edition support".
 - **user_book** — one user's shelf membership for a book (unique user_id+book_id):
   hardcover_user_book_id, pending_push, read_state (`want_to_read` | `reading` | `read` | `none`),
-  read_at (date, nullable), timestamps
-- **release** — id, book_id, user_id (who grabbed it, nullable), guid (the release's
+  read_at (date, nullable), timestamps. Read state stays book-level.
+- **release** — id, edition_id, user_id (who grabbed it, nullable), guid (the release's
   details-page URL), indexer, title, size, info_hash, magnet_uri, progress, grabbed_at, status
   (tracks what we handed the torrent client; `info_hash` is how we ask about it later.
   Rows grabbed before the direct-torrent rewrite have a null `info_hash` and fall back to
   name matching.)
 - **settings/state** — key-value table for app state (sync cursors live on `user` now)
 
-A book's identity is anchored on `hardcover_id` (specifically the Hardcover *book* id; editions
-are collapsed to the canonical book).
+A book's identity is anchored on `hardcover_id` (specifically the Hardcover *book* id;
+sync and shelving collapse editions to the canonical book). Downloaded recordings are
+tracked as `edition` rows, optionally tied to a Hardcover *edition* id.
 
 ## External integrations
 
@@ -176,9 +184,10 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
 2. **Want → download**
    User marks a book *wanted* (or downloads directly from search results) → app searches the
    indexer using `"{author} {title}"` (fallback: title only) → user picks a release (size /
-   format / posted date; the indexer's own ordering) → app reads the release's details page
-   for the info hash, builds a magnet, and adds it to the torrent client →
-   `download_state = grabbed`, `info_hash` recorded.
+   format / posted date; the indexer's own ordering), optionally choosing which edition it
+   is (Hardcover editions picker / free label; default: the unlabelled edition) → app reads
+   the release's details page for the info hash, builds a magnet, and adds it to the
+   torrent client → the edition's `download_state = grabbed`, `info_hash` recorded.
 
 3. **Download watch → import**
    Watcher asks the torrent client about each active release's `info_hash`: it records
@@ -192,25 +201,28 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
    behavior — match `/downloads` entries by release name and wait for the download to be
    complete/stable (nothing changed for `DOWNLOAD_QUIET_SECONDS`, no `.part`/incomplete
    markers). A download client that is down costs progress reporting, never an import.
-   Importer then places audio files (m4b/m4a/mp3/flac/ogg + cover/nfo) into
-   `/audiobooks/Author/Series/{index} - Title/`, sanitizing filesystem-unsafe characters →
-   `download_state = imported`, `library_path` set. With `DOWNLOAD_REMOVE_IMMEDIATELY=true`
+   Importer then places audio files (m4b/m4a/mp3/flac/ogg + cover/nfo) into the
+   release's edition folder — `/audiobooks/Author/Series/{index} - Title/`, with the
+   edition label suffixed per "Multi-edition support" — sanitizing filesystem-unsafe
+   characters → the edition's `download_state = imported`, `library_path` set. With `DOWNLOAD_REMOVE_IMMEDIATELY=true`
    the torrent (and its data) is then removed from the client — otherwise it keeps seeding
    per the client's settings; a failed removal never un-imports, it is noted on the
    release's Activity row. Failures flag the book for manual
    review in the UI rather than guessing.
 
-4. **Replace an available book's files**
-   Clicking the *available* badge on a library card opens a files dialog (every file under
-   `library_path` with size and mutagen bitrate) with a "Search for a replacement download"
-   action. The replace picker is the normal release picker plus a radio choice: remove the
+4. **Replace an available edition's files**
+   Clicking the *available* badge on a library card opens a files dialog (per edition:
+   label, every file with size and mutagen bitrate, a rename control) with per-edition
+   "Replace…" actions (plus "Download another edition…" — see "Multi-edition support").
+   The replace picker is the normal release picker plus a radio choice: remove the
    current files **after the new download imports** (default — the deferred intent is an
    `app_state` key `replace:{release_id}`, consumed by the importer, which clears the old
    `library_path` dir before placing the new files) or **immediately** (files deleted at
-   grab time; the book drops out of the ABS API until the new import lands). Replacing
-   touches library files only — the old torrent is never removed from the client. A failed
-   replacement import whose old files survived leaves the book available; cancelling the
-   replacing release restores *available* when `library_path` is intact.
+   grab time; the edition drops out of the ABS API until the new import lands). The
+   replacement lands on the same edition row; siblings are untouched. Replacing touches
+   library files only — the old torrent is never removed from the client. A failed
+   replacement import whose old files survived leaves the edition available; cancelling
+   the replacing release restores *available* when `library_path` is intact.
 
 5. **Read-state update**
    UI toggle → optimistic local update → push mutation to Hardcover → on failure, mark
@@ -360,14 +372,20 @@ library. Complements (does not change) the automatic /downloads pipeline.
 - **Import**: per-row button, bulk-select, or import-all-matched. Import always **moves**
   (regardless of IMPORT_MODE, which remains download-pipeline-only): the Book row is
   created from Hardcover metadata if nobody tracks it yet (**ownerless** — no user_book),
-  files go to the standard `Author/Series/{index} - Title/` path, the source folder is
-  removed from /imports, and now-empty parent folders are cleaned up. Book becomes
-  `download_state=imported` with `library_path` set. Users who have the book in their
-  Hardcover library pick it up automatically — a successful batch kicks a background
-  all-user sync; everyone else sees it as *available* in search. Destination-exists and
-  other failures are reported per row; nothing is guessed.
-- **Safety**: import paths are validated to stay inside IMPORTS_DIR; a book that is
-  already available (`library_path` set) can't be the target of an import.
+  files go to the standard edition path (`Author/Series/{index} - Title/`, label-suffixed
+  for labelled editions), the source folder is removed from /imports, and now-empty
+  parent folders are cleaned up. The target edition becomes `download_state=imported`
+  with `library_path` set. Users who have the book in their Hardcover library pick it up
+  automatically — a successful batch kicks a background all-user sync; everyone else sees
+  it as *available* in search. Destination-exists and other failures are reported per
+  row; nothing is guessed.
+- **Additional editions**: an entry matched to an already-available book imports as
+  another edition — the row shows an edition-label input. Guardrails mirror the download
+  flow: an unlabelled import into an available book refuses ("give these files an
+  edition label"), as does a labelled import while the existing files are unlabelled
+  (rename them in the files dialog first).
+- **Safety**: import paths are validated to stay inside IMPORTS_DIR; an edition whose
+  label already has files can't be the target of an import.
 
 ## Audiobookshelf-compatible API
 
@@ -385,17 +403,20 @@ Decisions:
   `/status`, `/ping` stay public (server discovery).
 - **Streaming**: direct play only — original m4b/mp3 files served with HTTP Range support.
   No ffmpeg/HLS. (ABS apps direct-play these formats natively.)
-- **Progress**: stored locally per book (cross-device resume). When a client reports a book
-  finished, mark it read on Hardcover with today's date (same code path as the UI toggle).
-- **Catalogue**: tracked books only (`library_path` set); one fixed library
-  ("Audiobooks"). Covers served from a cover image in the book folder when present, else
-  proxied from the Hardcover CDN URL.
+- **Progress**: stored locally per user per *edition* (cross-device resume). When a
+  client reports any edition finished, mark the book read on Hardcover with today's date
+  (same code path as the UI toggle).
+- **Catalogue**: one library item per imported *edition* (`li_<edition.id>`,
+  `library_path` set); one fixed library ("Audiobooks"). A book with 2+ editions shows
+  each item with its label in the title ("… (Stephen Fry)") and the edition's narrators
+  in metadata/filterdata. Covers served from a cover image in the edition folder when
+  present, else proxied from the Hardcover CDN URL.
 
 New persistence:
-- `audio_file` — per-book audio tracks: index, relative path, size, mime, duration
+- `audio_file` — per-edition audio tracks: index, relative path, size, mime, duration
   (+ chapters for m4b), read with **mutagen** at import time, with a startup backfill scan
-  for already-imported books.
-- `media_progress` — single-user progress per book: current_time, duration, is_finished,
+  for already-imported editions.
+- `media_progress` — per-user progress per edition: current_time, duration, is_finished,
   updated_at. Playback sessions are in-memory; each `/api/session/:id/sync` updates the
   progress row.
 
@@ -450,11 +471,13 @@ migration from the single-user schema exists):
   Hardcover sync runs with their own token and maintains their own `user_book` rows over
   shared `book` metadata rows. `media_progress` and `bookmark` gain `user_id` (ABS progress
   is per user); `release` records which user grabbed it (Activity stays global).
-- **Shared store**: `/audiobooks`, `download_state`, and `library_path` stay on `book` —
-  download status is three-valued for display (not present / downloading / available; a
-  failed download shows as not present plus a failure badge and the Activity entry). A book
-  another user made available cannot be grabbed again; search offers "add to my library"
-  instead (which shelves it on the searcher's Hardcover). Book rows may belong to no user
+- **Shared store**: `/audiobooks` and the pipeline state are shared — `download_state`
+  and `library_path` live on `edition` rows under `book` (see "Multi-edition support");
+  a book's display status aggregates its editions (not present / downloading /
+  available; a failed download shows as not present plus a failure badge and the
+  Activity entry). A book another user made available cannot be grabbed again — search
+  offers "add to my library" instead (which shelves it on the searcher's Hardcover) and
+  the files dialog offers "Download another edition". Book rows may belong to no user
   ("available" only).
 - **Imports**: staged folders are identified by searching Hardcover (author/series/title
   heuristics from folder names), moved to the canonical path, and imported as ownerless
@@ -475,6 +498,52 @@ Milestones (commit each; the app stays runnable throughout):
 4. ✅ **ABS per-user** — progress/bookmarks/sessions filtered by the authenticated user.
 5. ✅ **Imports rework + delete-user orphan review.**
 6. ✅ **Squash migrations + final docs pass.**
+
+## Multi-edition support (complete)
+
+A book can hold several audiobook recordings — e.g. Chamber of Secrets in the Stephen
+Fry, Jim Dale, and Full-Cast recordings — downloaded, stored, and served side by side.
+Built as an experiment (the user may not keep it), but first-class.
+
+- **Edition identity**: an `edition` row per recording (unique `book_id`+`label`),
+  optionally tied to a Hardcover *edition* id when picked from the live editions list
+  (query pinned under "Hardcover" above). The **label** is the grouping name used in
+  folder names ("Stephen Fry", "Full Cast"); it defaults from the Hardcover edition's
+  narrators (ensembles of 4+ default to "Full Cast") and is user-editable. Labels
+  already used across the book's series are suggested so groups line up. `""` is the
+  unlabelled edition — at most one per book.
+- **Folder layout — no unsuffixed edition once labelled**: a labelled edition of a
+  series book suffixes the **series** folder, grouping the whole series' recordings:
+  `J.K. Rowling/Harry Potter {Stephen Fry}/2 - Harry Potter and the Chamber of Secrets/`.
+  Standalone books suffix the book folder: `Andy Weir/Project Hail Mary {Ray Porter}/`.
+  Only the unlabelled edition uses the plain unsuffixed path. A single-edition book
+  whose label is known lives at its labelled path too ("by its own edition label").
+- **Renames happen at label-assignment time** (`relabel_edition`): the folder moves to
+  the label's location immediately — filesystem first, DB committed only after the move;
+  occupied destinations are refused; emptied parents cleaned up. AudioFile rel_paths are
+  relative to the edition folder, and ABS file inos are the audio_file row ids, so both
+  survive renames. Relabelling moves only that book's folder — series siblings move when
+  their own editions are labelled (no bulk moves; a "relabel all series siblings" helper
+  is possible future work). The rename control lives in the book's files dialog.
+- **Adding an edition**: the files dialog's "Download another edition…" opens a picker of
+  the book's Hardcover audiobook editions (`reading_format_id = 2`, `users_count desc` —
+  books can carry dozens of junk/foreign editions) plus a free-label input. If the
+  existing edition is unlabelled it must be labelled in the same dialog (its folder moves
+  right then) — enforcing "all editions carry a suffix once there are two". The release
+  picker then carries the edition choice into the grab; the per-edition guard replaces
+  the book-level available/downloading block for additional editions. A *first* grab may
+  optionally pick an edition too (defaults to the unlabelled edition). Editions rows are
+  created at grab/import time, never by the dialog alone.
+- **Replace is per edition** (`?replace=1&edition_id=N`): the new download lands on the
+  same edition row; siblings are never touched.
+- **ABS**: one library item per imported edition (`li_<edition.id>`); per-edition
+  progress and bookmarks; multi-edition items carry their label in the display title;
+  narrators surface in metadata and filterdata. **Read state stays book-level**:
+  finishing any edition marks the book read on the user's Hardcover.
+- **Migration** (`7e21c3a90d44`): every book with pipeline state got one unlabelled
+  edition whose path is byte-identical to the old book path — DB-only, no files moved.
+  ABS item ids changed (`li_<book.id>` → `li_<edition.id>`); server-side progress
+  migrated, apps re-fetch and may 404 one stale sync.
 
 ## Future work (out of scope for this build)
 
