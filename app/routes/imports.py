@@ -238,9 +238,8 @@ async def run_import(
             try:
                 with HardcoverClient(user.hardcover_token) as client:
                     book = ensure_book(db, client, hardcover_id)
-                if any(e.library_path for e in book.editions):
-                    raise ImportFailure(f"{book.title} is already available in the library")
-                import_entry(db, book, entry)
+                label = str(form.get(f"edlabel__{rel}") or "")
+                import_entry(db, book, entry, label=label)
                 clear_cached_match(db, rel)
                 imported += 1
             except ImportFailure as exc:

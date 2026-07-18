@@ -412,7 +412,7 @@ def test_import_all_via_route(client, clean_db, dirs, book, no_background_sync):
     assert no_background_sync
 
 
-def test_import_error_reported_in_row(client, clean_db, dirs, book):
+def test_import_without_label_into_available_book_errors(client, clean_db, dirs, book):
     book.editions.append(Edition(download_state=DownloadState.IMPORTED,
                                  library_path="/audiobooks/somewhere"))
     clean_db.commit()
@@ -427,7 +427,7 @@ def test_import_error_reported_in_row(client, clean_db, dirs, book):
         },
     )
 
-    assert "already available" in response.text
+    assert "give these files an edition label" in response.text
     assert (dirs.imports_dir / "The Mayor of Noobtown").exists()
 
 
@@ -488,3 +488,92 @@ def test_match_search_returns_local_options(client, clean_db, dirs, book):
     assert "set-match" in response.text
     assert "The Mayor of Noobtown" in response.text
     assert "Search Hardcover" in response.text
+
+
+# --- imports as an additional edition ---------------------------------------
+
+
+def test_import_entry_as_second_edition(clean_db, dirs, book):
+    old_dir = dirs.library_dir / "Ryan Rimmel" / "Noobtown {Jim Dale}" / "1 - The Mayor of Noobtown"
+    old_dir.mkdir(parents=True)
+    (old_dir / "dale.mp3").write_bytes(b"audio")
+    book.editions.append(Edition(label="Jim Dale", download_state=DownloadState.IMPORTED,
+                                 library_path=str(old_dir)))
+    clean_db.commit()
+    put(dirs, "The Mayor of Noobtown")
+    entry = scan_imports()[0]
+
+    dest = import_entry(clean_db, book, entry, label="Stephen Fry")
+
+    assert dest == (dirs.library_dir / "Ryan Rimmel" / "Noobtown {Stephen Fry}"
+                    / "1 - The Mayor of Noobtown")
+    assert (dest / "part1.mp3").exists()
+    # the Jim Dale edition is untouched
+    assert (old_dir / "dale.mp3").exists()
+    editions = {e.label: e for e in book.editions}
+    assert editions["Stephen Fry"].library_path == str(dest)
+    assert editions["Stephen Fry"].download_state == DownloadState.IMPORTED
+    assert editions["Jim Dale"].library_path == str(old_dir)
+
+
+def test_import_entry_duplicate_label_rejected(clean_db, dirs, book):
+    book.editions.append(Edition(label="Stephen Fry", download_state=DownloadState.IMPORTED,
+                                 library_path="/audiobooks/somewhere"))
+    clean_db.commit()
+    put(dirs, "The Mayor of Noobtown")
+    entry = scan_imports()[0]
+
+    with pytest.raises(ImportFailure, match='already has its "Stephen Fry" edition'):
+        import_entry(clean_db, book, entry, label="Stephen Fry")
+
+
+def test_import_entry_labelled_requires_labelled_existing(clean_db, dirs, book):
+    book.editions.append(Edition(label="", download_state=DownloadState.IMPORTED,
+                                 library_path="/audiobooks/somewhere"))
+    clean_db.commit()
+    put(dirs, "The Mayor of Noobtown")
+    entry = scan_imports()[0]
+
+    with pytest.raises(ImportFailure, match="need a label first"):
+        import_entry(clean_db, book, entry, label="Stephen Fry")
+    assert (dirs.imports_dir / "The Mayor of Noobtown").exists()
+
+
+def test_import_route_as_second_edition(client, clean_db, dirs, book, no_background_sync):
+    old_dir = dirs.library_dir / "Ryan Rimmel" / "Noobtown {Jim Dale}" / "1 - The Mayor of Noobtown"
+    old_dir.mkdir(parents=True)
+    (old_dir / "dale.mp3").write_bytes(b"audio")
+    book.editions.append(Edition(label="Jim Dale", download_state=DownloadState.IMPORTED,
+                                 library_path=str(old_dir)))
+    clean_db.commit()
+    put(dirs, "The Mayor of Noobtown")
+
+    response = client.post(
+        "/imports/import",
+        data={
+            "mode": "one",
+            "rel": "The Mayor of Noobtown",
+            "hc__The Mayor of Noobtown": str(book.hardcover_id),
+            "edlabel__The Mayor of Noobtown": "Stephen Fry",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "nothing to review" in response.text
+    clean_db.expire_all()
+    editions = {e.label: e for e in book.editions}
+    assert editions["Stephen Fry"].library_path is not None
+    assert "Noobtown {Stephen Fry}" in editions["Stephen Fry"].library_path
+    # a successful import still kicks the background all-user sync
+    assert no_background_sync
+
+
+def test_available_books_are_matchable(client, clean_db, dirs, book):
+    book.editions.append(Edition(download_state=DownloadState.IMPORTED,
+                                 library_path="/audiobooks/somewhere"))
+    clean_db.commit()
+    put(dirs, "Something")
+
+    response = client.get("/imports/search", params={"rel": "Something", "q": "mayor"})
+
+    assert "The Mayor of Noobtown" in response.text

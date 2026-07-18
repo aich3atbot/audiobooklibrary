@@ -225,8 +225,9 @@ def clear_cached_match(session: Session, rel: str) -> None:
 
 
 def find_local_matches(session: Session, query: str, limit: int = 5) -> list[Book]:
-    """Local, not-yet-imported books matching a search — lets the user match
-    an entry to a book someone already tracks."""
+    """Local books matching a search — lets the user match an entry to a book
+    someone already tracks. Available books are legitimate targets too: the
+    entry then imports as an additional edition."""
     like = f"%{query.strip()}%"
     from app.models import Author  # local import to avoid cycles at module load
 
@@ -234,7 +235,6 @@ def find_local_matches(session: Session, query: str, limit: int = 5) -> list[Boo
         session.scalars(
             select(Book)
             .join(Book.author)
-            .where(~Book.editions.any(Edition.library_path.is_not(None)))
             .where(Book.title.ilike(like) | Author.name.ilike(like))
             .options(joinedload(Book.author), joinedload(Book.series))
             .order_by(Book.title)
@@ -259,13 +259,37 @@ def ensure_book(session: Session, client: HardcoverClient, hardcover_id: int) ->
     return book
 
 
-def import_entry(session: Session, book: Book, entry: ImportEntry) -> Path:
-    """Move an entry into the library; raises ImportFailure on any problem."""
-    if any(e.library_path for e in book.editions):
-        raise ImportFailure(f"{book.title} is already in the library")
-    edition = get_or_create_edition(session, book)
+def import_entry(
+    session: Session,
+    book: Book,
+    entry: ImportEntry,
+    label: str = "",
+    hardcover_edition_id: int | None = None,
+    narrator: str = "",
+) -> Path:
+    """Move an entry into the library, as the book's `label` edition (the
+    unlabelled edition by default); raises ImportFailure on any problem."""
+    label = label.strip()
+    by_label = {e.label: e for e in book.editions}
+    if not label and any(e.library_path for e in book.editions):
+        raise ImportFailure(
+            f"{book.title} is already in the library — give these files an "
+            "edition label to import them as another edition"
+        )
+    target = by_label.get(label)
+    if target is not None and target.library_path:
+        raise ImportFailure(f'{book.title} already has its "{label}" edition in the library')
+    if label:
+        unlabelled = by_label.get("")
+        if unlabelled is not None and unlabelled.library_path:
+            raise ImportFailure(
+                f"{book.title}'s existing files need a label first (Rename them "
+                "in the book's files dialog) so both editions get named folders"
+            )
+    edition = get_or_create_edition(session, book, label, hardcover_edition_id, narrator)
     dest = edition_dir_for(edition)
     if dest.exists() and any(dest.iterdir()):
+        session.rollback()  # discard a just-created edition row
         raise ImportFailure(f"destination already exists: {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     if entry.path.is_file():
