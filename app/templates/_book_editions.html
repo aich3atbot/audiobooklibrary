@@ -44,10 +44,10 @@
     {% endif %}
     {% if downloads_enabled() %}
         {% if imported %}
-        <button class="secondary" hx-get="/books/{{ book.id }}/editions/new?detail=1"
+        <button class="btn-download" hx-get="/books/{{ book.id }}/editions/new?detail=1"
                 hx-target="#modal" hx-swap="outerHTML">Download another edition…</button>
         {% elif not in_flight %}
-        <button class="secondary" hx-get="/books/{{ book.id }}/releases?detail=1"
+        <button class="btn-download" hx-get="/books/{{ book.id }}/releases?detail=1"
                 hx-target="#modal" hx-swap="outerHTML">Download…</button>
         {% endif %}
     {% endif %}

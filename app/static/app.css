@@ -56,6 +56,12 @@
     width: 100%;
 }
 
+.btn-download {
+    background: #1565c0;
+    border-color: #1565c0;
+    color: white;
+}
+
 .release-dialog {
     max-width: 90vw;
     width: 60rem;
@@ -146,19 +152,6 @@
     height: auto;
 }
 
-.badge-ok { background: #2e7d32; color: white; }
-.badge-err { background: #b71c1c; color: white; }
-
-.badge-dl-available { background: #2e7d32; color: white; }
-a.badge { color: white; text-decoration: none; }
-.badge-dl-downloading { background: #1565c0; color: white; }
-.badge-dl-failed { background: #b71c1c; color: white; }
-
-.badge-pending {
-    background: var(--pico-mark-background-color, #ffdd57);
-    color: #333;
-}
-
 .badge {
     display: inline-block;
     padding: 0.1rem 0.5rem;
@@ -166,6 +159,26 @@ a.badge { color: white; text-decoration: none; }
     font-size: 0.75rem;
     background: var(--pico-secondary-background);
     color: var(--pico-secondary-inverse);
+}
+
+a.badge { color: white; text-decoration: none; }
+
+.badge-ok { background: #2e7d32; color: white; }
+.badge-err { background: #b71c1c; color: white; }
+
+.badge-dl-available { background: #2e7d32; color: white; }
+.badge-dl-downloading { background: #ef6c00; color: white; }
+.badge-dl-failed { background: #b71c1c; color: white; }
+
+.badge-icon {
+    width: 1.15em;
+    height: 1.15em;
+    vertical-align: -0.2em;
+}
+
+.badge-pending {
+    background: var(--pico-mark-background-color, #ffdd57);
+    color: #333;
 }
 
 .cover-link { display: block; }

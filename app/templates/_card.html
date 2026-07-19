@@ -13,11 +13,14 @@
     {% set dl = book_status(book) %}
     <p>
         {% if ub.read_at %}<span class="badge">read {{ ub.read_at }}</span>{% endif %}
-        {% if dl == 'available' %}<a class="badge badge-dl-available" href="/books/{{ book.id }}" title="Downloaded files">available</a>{% elif dl != 'not_present' %}<span class="badge badge-dl-{{ dl }}">{{ dl.replace('_', ' ') }}</span>{% endif %}
+        {% for e in book.editions %}
+        {% if e.library_path %}<span class="badge badge-dl-available" title="Downloaded files"><svg class="badge-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.5l4 4 7-9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{ e.label or 'available' }}</span>
+        {% elif display_status(e.download_state) == 'downloading' %}<a class="badge badge-dl-downloading" href="/activity" title="Downloading — see Activity"><svg class="badge-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v8M4.5 6L8 9.5 11.5 6M2.5 13.5h11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{ e.label or 'downloading' }}</a>{% endif %}
+        {% endfor %}
         {% if book_failed(book) %}<span class="badge badge-dl-failed" title="Last download failed — see Activity">failed</span>{% endif %}
         {% if ub.pending_push %}<span class="badge badge-pending" title="Change not yet confirmed by Hardcover">sync pending</span>{% endif %}
     </p>
     {% if dl == 'not_present' and downloads_enabled() %}
-    <button class="secondary download-btn" hx-get="/books/{{ book.id }}/releases" hx-target="#modal" hx-swap="outerHTML">Download…</button>
+    <button class="download-btn btn-download" hx-get="/books/{{ book.id }}/releases" hx-target="#modal" hx-swap="outerHTML">Download…</button>
     {% endif %}
 </article>
