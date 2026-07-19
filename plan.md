@@ -272,6 +272,8 @@ SYNC_INTERVAL_MINUTES   # default 30
 WATCH_INTERVAL_SECONDS  # default 30 (download dir poll)
 DOWNLOAD_QUIET_SECONDS  # default 120 (download "finished" quiet period)
 IMPORT_MODE             # copy (default, hardlink-or-copy) | move
+PUID / PGID             # compose-only, optional (default 1000:1000): the uid:gid the
+                        # container runs as (docker-compose `user:`), owning written files
 ```
 
 ## Container
@@ -279,6 +281,11 @@ IMPORT_MODE             # copy (default, hardlink-or-copy) | move
 - Single `Dockerfile` (python:3.12-slim, uv or pip install, uvicorn entrypoint).
 - `docker-compose.yml` example wiring volumes and env vars (the torrent client is external,
   run by the user).
+- **Non-root**: compose sets `user: "${PUID:-1000}:${PGID:-1000}"`, covering the whole
+  CMD (alembic + uvicorn), so written files are owned by that user. No `USER` in the
+  image and no entrypoint/gosu privilege handling — the uid is operator-configurable
+  without a rebuild, and mount ownership is the operator's responsibility (a one-time
+  `chown` when upgrading from the root-running versions; see README).
 - Healthcheck endpoint (`/healthz`).
 
 ## Project layout

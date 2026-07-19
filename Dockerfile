@@ -18,7 +18,7 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH="/opt/venv/bin:$PATH"
 
-VOLUME ["/config", "/downloads", "/audiobooks"]
+VOLUME ["/config", "/downloads", "/audiobooks", "/imports"]
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s \

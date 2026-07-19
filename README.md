@@ -57,6 +57,16 @@ By default imports **hardlink or copy** files so seeding torrents are left intac
 `IMPORT_MODE=move` to relocate them instead. All settings are environment variables — see
 `.env.example` for the full list.
 
+The container runs as a non-root user — `PUID`/`PGID` from `.env`, default `1000:1000` —
+so the config database and imported audiobooks are owned by that user on the host. The
+mounted directories must be writable by it, and the completed downloads readable by it
+(for hardlinks, ideally the torrent client runs as the same user). **Upgrading from a
+version that ran as root:** fix ownership once before starting —
+
+```bash
+sudo chown -R 1000:1000 ./data/config ./data/audiobooks   # your CONFIG_DIR / LIBRARY_DIR
+```
+
 ## Development
 
 ```bash

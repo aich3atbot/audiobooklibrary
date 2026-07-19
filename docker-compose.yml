@@ -2,6 +2,10 @@ services:
   audiobooklibrary:
     build: .
     container_name: audiobooklibrary
+    # Run as this uid:gid so files the app writes (config DB, imported
+    # audiobooks) are owned by it on the host. The mounted dirs must be
+    # writable by this user.
+    user: "${PUID:-1000}:${PGID:-1000}"
     ports:
       - "8000:8000"
     environment:
