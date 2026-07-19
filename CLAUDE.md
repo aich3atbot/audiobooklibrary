@@ -82,7 +82,8 @@ read on Hardcover via `update_read_state`.
   recordings are per-book `edition` rows (unique book+label, optional Hardcover edition
   id). Download state is shared and per edition; a book displays the aggregate (not
   present / downloading / available — `book_status`). A book one user made available
-  cannot be grabbed again — search offers "add to my library", and the files dialog
+  cannot be grabbed again — search offers "add to my library", and the book detail page
+  (`/books/{id}`, reached from a card's cover/title/available badge and from Activity)
   offers "Download another edition" (per-edition guard). Read state stays book-level:
   finishing any edition marks the book read.
 - **Multi-user, mandatory auth**: there is no open mode. Users are DB rows (scrypt

@@ -281,6 +281,7 @@ def test_relabel_route_moves_folder_and_rerenders(client, clean_db, clean_dirs, 
     response = client.post(f"/editions/{edition.id}/label", data={"label": "Stephen Fry"})
 
     assert response.status_code == 200
+    assert 'id="editions"' in response.text  # the detail page's editions fragment
     assert "Standalone {Stephen Fry}" in response.text
     assert (clean_dirs.library_dir / "J.K. Rowling" / "Standalone {Stephen Fry}"
             / "Part 1.mp3").exists()

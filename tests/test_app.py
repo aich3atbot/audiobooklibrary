@@ -59,3 +59,5 @@ def test_library_page_lists_books(client, user, db_session):
     assert "The Way of Kings" in response.text
     assert "Brandon Sanderson" in response.text
     assert "The Stormlight Archive" in response.text
+    # the card links to the book detail page
+    assert f'href="/books/{book.id}"' in response.text

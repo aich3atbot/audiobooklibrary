@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 import mutagen
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
@@ -39,7 +39,7 @@ def _get_book(db: Session, book_id: int) -> Book:
 def _grab_blocked(book: Book) -> str | None:
     """A book that is already downloading or available must not be grabbed
     again — the store is shared across users. (Adding a *new* edition goes
-    through the files dialog instead.)"""
+    through the book detail page instead.)"""
     status = book_status(book)
     if status == "downloading":
         return "This book is already downloading."
@@ -84,6 +84,19 @@ def _fetch_hc_editions(user: User, book: Book) -> tuple[list[dict], str | None]:
         return [], "Could not fetch Hardcover's editions — enter a label instead."
     if not editions:
         return [], "Hardcover lists no audiobook editions — enter a label instead."
+    # Hide editions the book already has (matched by Hardcover id or label) —
+    # they'd only offer a duplicate download. An empty default_label never
+    # matches, or every no-narrator option would vanish behind the unlabelled
+    # edition.
+    have_ids = {e.hardcover_edition_id for e in book.editions if e.hardcover_edition_id}
+    have_labels = {e.label for e in book.editions if e.label}
+    editions = [
+        e
+        for e in editions
+        if e["id"] not in have_ids and (e["default_label"] or None) not in have_labels
+    ]
+    if not editions:
+        return [], "All of Hardcover's audiobook editions are already downloaded — enter a label instead."
     return editions[:HC_EDITIONS_SHOWN], None
 
 
@@ -111,34 +124,52 @@ def _bitrate(path: Path) -> int | None:
         return None
 
 
-def _files_dialog(request: Request, book: Book, error: str | None = None):
-    editions = []
-    for edition in book.editions:
-        root = Path(edition.library_path) if edition.library_path else None
-        if root is None or not root.is_dir():
-            continue
-        files = [
-            {
-                "rel_path": str(p.relative_to(root)),
-                "size": p.stat().st_size,
-                "bitrate": _bitrate(p),
-            }
-            for p in sorted(root.rglob("*"))
-            if p.is_file()
-        ]
-        editions.append({"edition": edition, "files": files})
-    if not editions and not error:
-        error = "This book has no downloaded files."
+def _editions_context(book: Book, error: str | None = None) -> dict:
+    """Context for the book detail page's editions section. Imported editions
+    are listed even when their folder has gone missing, so rename/replace stay
+    reachable; the lazily loaded files fragment reports the missing dir."""
+    imported = [e for e in book.editions if e.library_path]
+    in_flight = [
+        e
+        for e in book.editions
+        if not e.library_path and display_status(e.download_state) != "not_present"
+    ]
+    return {"book": book, "imported": imported, "in_flight": in_flight, "error": error}
+
+
+def _edition_files(edition: Edition) -> list[dict]:
+    root = Path(edition.library_path)
+    return [
+        {
+            "rel_path": str(p.relative_to(root)),
+            "size": p.stat().st_size,
+            "bitrate": _bitrate(p),
+        }
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    ]
+
+
+@router.get("/books/{book_id}", response_class=HTMLResponse)
+def book_detail(book_id: int, request: Request, db: Session = Depends(get_db)):
+    """The book detail page: metadata plus every edition with rename, replace
+    and download-another-edition entries."""
+    book = _get_book(db, book_id)
+    return templates.TemplateResponse(request, "book.html", _editions_context(book))
+
+
+@router.get("/editions/{edition_id}/files", response_class=HTMLResponse)
+def edition_files(edition_id: int, request: Request, db: Session = Depends(get_db)):
+    """An edition's file table, loaded lazily when its path is expanded —
+    bitrate probing reads every audio file, too slow for page load."""
+    edition = db.get(Edition, edition_id)
+    if edition is None:
+        raise HTTPException(status_code=404, detail="edition not found")
+    missing = not (edition.library_path and Path(edition.library_path).is_dir())
+    files = [] if missing else _edition_files(edition)
     return templates.TemplateResponse(
-        request, "_files.html", {"book": book, "editions": editions, "error": error}
+        request, "_edition_files.html", {"files": files, "missing": missing}
     )
-
-
-@router.get("/books/{book_id}/files", response_class=HTMLResponse)
-def list_files(book_id: int, request: Request, db: Session = Depends(get_db)):
-    """Details of a downloaded book's files, per edition, with rename and
-    replace-download entries."""
-    return _files_dialog(request, _get_book(db, book_id))
 
 
 @router.post("/editions/{edition_id}/label", response_class=HTMLResponse)
@@ -149,19 +180,25 @@ def relabel(
     db: Session = Depends(get_db),
 ):
     """Rename an edition's label; its library folder moves to the labelled
-    location immediately. Re-renders the files dialog."""
+    location immediately. Re-renders the detail page's editions section."""
     edition = db.get(Edition, edition_id)
     if edition is None:
         raise HTTPException(status_code=404, detail="edition not found")
     book = edition.book
+
+    def section(error: str | None = None):
+        return templates.TemplateResponse(
+            request, "_book_editions.html", _editions_context(book, error=error)
+        )
+
     try:
         relabel_edition(db, edition, label)
     except ImportFailure as exc:
-        return _files_dialog(request, book, error=str(exc))
+        return section(error=str(exc))
     except Exception:
         logger.exception("Relabel failed for %s", book.title)
-        return _files_dialog(request, book, error="Rename failed — see the app log.")
-    return _files_dialog(request, book)
+        return section(error="Rename failed — see the app log.")
+    return section()
 
 
 @router.get("/books/{book_id}/editions/options", response_class=HTMLResponse)
@@ -191,6 +228,7 @@ def edition_options(
 def new_edition_dialog(
     book_id: int,
     request: Request,
+    detail: bool = False,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -207,6 +245,8 @@ def new_edition_dialog(
             "warning": warning,
             "suggestions": suggest_labels(db, book),
             "unlabelled": unlabelled,
+            "replaceable": [e for e in book.editions if e.library_path],
+            "detail": detail,
             "error": None,
         },
     )
@@ -226,6 +266,7 @@ async def new_edition_submit(
     form = await request.form()
     label, hc_id, narrator = await _edition_choice(request)
     existing_label = str(form.get("existing_label") or "").strip()
+    from_detail = bool(form.get("detail"))
     unlabelled = next((e for e in book.editions if e.label == ""), None)
 
     def dialog_error(message: str):
@@ -239,6 +280,8 @@ async def new_edition_submit(
                 "warning": warning,
                 "suggestions": suggest_labels(db, book),
                 "unlabelled": unlabelled,
+                "replaceable": [e for e in book.editions if e.library_path],
+                "detail": from_detail,
                 "error": message,
             },
         )
@@ -282,6 +325,7 @@ async def new_edition_submit(
             "edition_label": label,
             "hardcover_edition_id": hc_id,
             "narrator": narrator,
+            "from_detail": from_detail,
         },
     )
 
@@ -292,6 +336,7 @@ def list_releases(
     request: Request,
     replace: bool = False,
     edition_id: int | None = None,
+    detail: bool = False,
     db: Session = Depends(get_db),
 ):
     book = _get_book(db, book_id)
@@ -299,14 +344,16 @@ def list_releases(
         return templates.TemplateResponse(
             request,
             "_releases.html",
-            {"book": book, "releases": [], "error": DISABLED_ERROR},
+            {"book": book, "releases": [], "error": DISABLED_ERROR, "from_detail": detail},
         )
     target = _replace_target(book, edition_id) if replace else None
     replacing = target is not None
     blocked = None if replacing else _grab_blocked(book)
     if blocked:
         return templates.TemplateResponse(
-            request, "_releases.html", {"book": book, "releases": [], "error": blocked}
+            request,
+            "_releases.html",
+            {"book": book, "releases": [], "error": blocked, "from_detail": detail},
         )
     releases = []
     error = None
@@ -324,6 +371,7 @@ def list_releases(
             "error": error,
             "replace": replacing,
             "replace_edition_id": target.id if target else None,
+            "from_detail": detail,
         },
     )
 
@@ -340,6 +388,7 @@ async def grab(
     add_edition: bool = Form(False),
     edition_id: int | None = Form(None),
     remove: str = Form("after_import"),
+    from_detail: bool = Form(False),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -388,6 +437,10 @@ async def grab(
         else:
             set_state(db, replace_key(release), "1")
         db.commit()
+    if from_detail:
+        # Grabbed from the book detail page — there is no card to swap, so
+        # reload the page for fresh edition state.
+        return Response(status_code=200, headers={"HX-Redirect": f"/books/{book.id}"})
     # Close the modal and swap the book card out-of-band so its badge updates.
     return templates.TemplateResponse(
         request,

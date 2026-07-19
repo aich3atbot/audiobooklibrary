@@ -1,0 +1,54 @@
+{# The detail page's editions section; re-rendered by the rename route, so it
+   must stay a self-contained #editions fragment. #}
+<section id="editions">
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    {% for e in imported %}
+    <article class="edition">
+        <header>
+            <strong>{{ e.label or "Unlabelled edition" }}</strong>
+            {% if e.narrator %} <small>({{ e.narrator }})</small>{% endif %}
+        </header>
+        <form hx-post="/editions/{{ e.id }}/label" hx-target="#editions" hx-swap="outerHTML">
+            <fieldset role="group">
+                <input type="text" name="label" value="{{ e.label }}"
+                       placeholder="Edition label (e.g. Stephen Fry)" aria-label="Edition label">
+                <button type="submit" class="secondary"
+                        title="Rename this edition's label; its library folder moves to match">Rename</button>
+                {% if downloads_enabled() %}
+                <button type="button" class="secondary"
+                        hx-get="/books/{{ book.id }}/releases?replace=1&edition_id={{ e.id }}&detail=1"
+                        hx-target="#modal" hx-swap="outerHTML">Replace…</button>
+                {% endif %}
+            </fieldset>
+        </form>
+        <details class="edition-files">
+            <summary><small>{{ e.library_path }}</small></summary>
+            <div hx-get="/editions/{{ e.id }}/files"
+                 hx-trigger="toggle once from:closest details"
+                 hx-swap="innerHTML"><p aria-busy="true">Loading files…</p></div>
+        </details>
+    </article>
+    {% endfor %}
+    {% for e in in_flight %}
+    <article class="edition">
+        <header>
+            <strong>{{ e.label or "Unlabelled edition" }}</strong>
+            {% if e.narrator %} <small>({{ e.narrator }})</small>{% endif %}
+            <span class="badge badge-dl-downloading">{{ display_status(e.download_state).replace('_', ' ') }}</span>
+        </header>
+        <p><small>Files will appear here once the download imports.</small></p>
+    </article>
+    {% endfor %}
+    {% if not imported and not in_flight %}
+    <p>This book has no downloaded files.</p>
+    {% endif %}
+    {% if downloads_enabled() %}
+        {% if imported %}
+        <button class="secondary" hx-get="/books/{{ book.id }}/editions/new?detail=1"
+                hx-target="#modal" hx-swap="outerHTML">Download another edition…</button>
+        {% elif not in_flight %}
+        <button class="secondary" hx-get="/books/{{ book.id }}/releases?detail=1"
+                hx-target="#modal" hx-swap="outerHTML">Download…</button>
+        {% endif %}
+    {% endif %}
+</section>

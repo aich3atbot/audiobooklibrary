@@ -150,7 +150,7 @@
 .badge-err { background: #b71c1c; color: white; }
 
 .badge-dl-available { background: #2e7d32; color: white; }
-.badge-dl-available[hx-get] { cursor: pointer; }
+a.badge { color: white; text-decoration: none; }
 .badge-dl-downloading { background: #1565c0; color: white; }
 .badge-dl-failed { background: #b71c1c; color: white; }
 
@@ -166,6 +166,66 @@
     font-size: 0.75rem;
     background: var(--pico-secondary-background);
     color: var(--pico-secondary-inverse);
+}
+
+.cover-link { display: block; }
+
+.title-link {
+    color: inherit;
+    text-decoration: none;
+}
+
+.title-link:hover { text-decoration: underline; }
+
+.book-detail {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-start;
+    margin-bottom: 1.5rem;
+}
+
+.book-detail img {
+    width: 200px;
+    border-radius: 4px;
+}
+
+.edition {
+    padding: 1rem;
+}
+
+.edition form {
+    margin: 0;
+}
+
+.edition-files {
+    margin: 0.5rem 0 0;
+}
+
+.edition-files table {
+    font-size: 0.85rem;
+}
+
+.edition-option {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 0.75rem;
+    align-items: baseline;
+    margin: 0.5rem 0;
+}
+
+.edition-option strong,
+.edition-option small {
+    display: block;
+}
+
+.edition-option small {
+    color: var(--pico-muted-color);
+}
+
+button.edition-option {
+    text-align: left;
+    width: 100%;
+    grid-template-columns: 1fr;
 }
 
 .user-actions { white-space: nowrap; }

@@ -1,6 +1,6 @@
 <article id="book-{{ book.id }}"{% if oob is defined and oob %} hx-swap-oob="outerHTML"{% endif %}>
-    {% if book.cover_url %}<img src="{{ book.cover_url }}" alt="Cover of {{ book.title }}" loading="lazy">{% endif %}
-    <h4>{{ book.title }}</h4>
+    {% if book.cover_url %}<a class="cover-link" href="/books/{{ book.id }}"><img src="{{ book.cover_url }}" alt="Cover of {{ book.title }}" loading="lazy"></a>{% endif %}
+    <h4><a class="title-link" href="/books/{{ book.id }}">{{ book.title }}</a></h4>
     <p>{{ book.author.name }}</p>
     {% if book.series %}<p><small>{% if book.series.hardcover_id %}<a href="/series/{{ book.series.hardcover_id }}">{{ book.series.name }}</a>{% else %}{{ book.series.name }}{% endif %}{% if book.series_index is not none %} #{{ book.series_index | int if book.series_index == book.series_index | int else book.series_index }}{% endif %}</small></p>{% endif %}
     <select name="state" aria-label="Read state"
@@ -13,7 +13,7 @@
     {% set dl = book_status(book) %}
     <p>
         {% if ub.read_at %}<span class="badge">read {{ ub.read_at }}</span>{% endif %}
-        {% if dl != 'not_present' %}<span class="badge badge-dl-{{ dl }}"{% if dl == 'available' %} role="button" tabindex="0" title="Downloaded files" hx-get="/books/{{ book.id }}/files" hx-target="#modal" hx-swap="outerHTML"{% endif %}>{{ dl.replace('_', ' ') }}</span>{% endif %}
+        {% if dl == 'available' %}<a class="badge badge-dl-available" href="/books/{{ book.id }}" title="Downloaded files">available</a>{% elif dl != 'not_present' %}<span class="badge badge-dl-{{ dl }}">{{ dl.replace('_', ' ') }}</span>{% endif %}
         {% if book_failed(book) %}<span class="badge badge-dl-failed" title="Last download failed — see Activity">failed</span>{% endif %}
         {% if ub.pending_push %}<span class="badge badge-pending" title="Change not yet confirmed by Hardcover">sync pending</span>{% endif %}
     </p>

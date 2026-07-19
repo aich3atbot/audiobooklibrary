@@ -1,0 +1,16 @@
+{% if missing %}
+<p class="error">Folder not found — the files may have been moved or deleted.</p>
+{% else %}
+<table>
+    <thead><tr><th>File</th><th>Size</th><th>Bitrate</th></tr></thead>
+    <tbody>
+        {% for f in files %}
+        <tr>
+            <td>{{ f.rel_path }}</td>
+            <td>{{ f.size | human_size }}</td>
+            <td>{{ ((f.bitrate / 1000) | round | int ~ " kb/s") if f.bitrate else "?" }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}

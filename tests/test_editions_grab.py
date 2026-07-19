@@ -100,6 +100,90 @@ def test_new_edition_dialog_requires_label_for_existing_files(client, imported_b
 
 
 @respx.mock
+def test_new_edition_dialog_lists_replace_entries_first(client, clean_db, imported_book):
+    mock_editions([edition_row(30920116)])
+    existing = imported_book.editions[0]
+    existing.label = "Jim Dale"
+    clean_db.commit()
+
+    response = client.get(f"/books/{imported_book.id}/editions/new")
+
+    assert response.status_code == 200
+    assert "Replace an existing edition" in response.text
+    assert "Jim Dale" in response.text
+    assert f"replace=1&edition_id={existing.id}" in response.text
+    assert "Or download a new edition" in response.text
+
+
+@respx.mock
+def test_new_edition_dialog_hides_already_downloaded_editions(client, clean_db, imported_book):
+    mock_editions([
+        edition_row(1, narrators=("Stephen Fry",)),
+        edition_row(2, narrators=("Jim Dale",)),
+        edition_row(3, narrators=()),
+    ])
+    existing = imported_book.editions[0]
+    existing.label = "Stephen Fry"
+    make_edition(clean_db, imported_book, label="Other", hardcover_edition_id=2)
+    clean_db.commit()
+
+    response = client.get(f"/books/{imported_book.id}/editions/new")
+
+    assert response.status_code == 200
+    # id 1 matches an existing label, id 2 an existing hardcover edition id
+    assert 'value="1"' not in response.text
+    assert 'value="2"' not in response.text
+    # the label-less edition survives — "" must never match anything
+    assert 'value="3"' in response.text
+
+
+@respx.mock
+def test_edition_options_show_label_first(client, clean_db, book):
+    mock_editions([
+        edition_row(1, narrators=("Stephen Fry",)),
+        edition_row(2, narrators=()),
+    ])
+
+    response = client.get(f"/books/{book.id}/editions/options")
+
+    assert response.status_code == 200
+    assert "<strong>Stephen Fry</strong>" in response.text
+    assert "<strong>Unnamed edition</strong>" in response.text
+
+
+@respx.mock
+def test_new_edition_dialog_carries_detail_flag(client, imported_book):
+    mock_editions([edition_row(30920116)])
+
+    response = client.get(f"/books/{imported_book.id}/editions/new?detail=1")
+
+    assert response.status_code == 200
+    assert 'name="detail" value="1"' in response.text
+
+
+@respx.mock
+def test_new_edition_submit_threads_detail_flag_to_grab_forms(
+    client, clean_db, imported_book
+):
+    mock_editions([edition_row(30920116)])
+    mock_search()
+
+    response = client.post(
+        f"/books/{imported_book.id}/editions/new",
+        data={
+            "detail": "1",
+            "existing_label": "Someone Else",
+            "hc_edition": "30920116",
+            "hclabel_30920116": "Stephen Fry",
+            "hcnarr_30920116": "Stephen Fry",
+        },
+    )
+
+    assert response.status_code == 200
+    assert 'name="from_detail" value="1"' in response.text
+
+
+@respx.mock
 def test_new_edition_dialog_degrades_without_hardcover(client, imported_book):
     respx.post(API_URL).mock(side_effect=httpx.ConnectError("down"))
 

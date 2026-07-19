@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ book.title }} — Audiobook Library{% endblock %}
+
+{% block content %}
+<div class="book-detail">
+    {% if book.cover_url %}<img src="{{ book.cover_url }}" alt="Cover of {{ book.title }}">{% endif %}
+    <div>
+        <h2>{{ book.title }}</h2>
+        <p>{{ book.author.name }}</p>
+        {% if book.series %}<p><small>{% if book.series.hardcover_id %}<a href="/series/{{ book.series.hardcover_id }}">{{ book.series.name }}</a>{% else %}{{ book.series.name }}{% endif %}{% if book.series_index is not none %} #{{ book.series_index | int if book.series_index == book.series_index | int else book.series_index }}{% endif %}</small></p>{% endif %}
+        {% set dl = book_status(book) %}
+        <p>
+            <span class="badge badge-dl-{{ dl }}">{{ dl.replace('_', ' ') }}</span>
+            {% if book_failed(book) %}<span class="badge badge-dl-failed" title="Last download failed — see Activity">failed</span>{% endif %}
+        </p>
+    </div>
+</div>
+
+{% include "_book_editions.html" %}
+{% endblock %}

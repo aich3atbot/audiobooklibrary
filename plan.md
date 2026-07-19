@@ -211,9 +211,12 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
    review in the UI rather than guessing.
 
 4. **Replace an available edition's files**
-   Clicking the *available* badge on a library card opens a files dialog (per edition:
-   label, every file with size and mutagen bitrate, a rename control) with per-edition
-   "Replace…" actions (plus "Download another edition…" — see "Multi-edition support").
+   Clicking a library card's cover art, title, or *available* badge opens the book
+   detail page (`/books/{id}`) — per edition: label, library path, a rename control,
+   and a lazily loaded file table (size and mutagen bitrate) behind a disclosure on
+   the path — with per-edition "Replace…" actions (plus "Download another edition…" —
+   see "Multi-edition support"). Grabs launched from the detail page answer with an
+   `HX-Redirect` back to it (there is no card to OOB-swap there).
    The replace picker is the normal release picker plus a radio choice: remove the
    current files **after the new download imports** (default — the deferred intent is an
    `app_state` key `replace:{release_id}`, consumed by the importer, which clears the old
@@ -232,7 +235,12 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
 
 - **Library page** (`/`) — grid/list of books with cover art, author, series (+index), read-state
   badge, download-state badge. Filters: read state, download state; text filter; sort by
-  author/title/recent. Inline actions: change read state, search/download.
+  author/title/recent. Inline actions: change read state, search/download. Cover art,
+  title and the *available* badge link to the book detail page.
+- **Book detail page** (`/books/{id}`) — any book, any status: metadata plus every
+  edition (label, path, rename/replace, lazily loaded file table; in-flight editions
+  show their download state) and the download / download-another-edition entries. See
+  workflow 4 and "Multi-edition support".
 - **Search page** (`/search`) — Hardcover search by title/author/series; results show cover +
   metadata; actions: *add with state* (want to read / reading / read) and *find downloads*.
 - **Series page** (`/series/{hardcover_series_id}`) — the full series fetched live from
@@ -245,8 +253,9 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
   posted date; click to grab.
 - **Activity page** (`/activity`) — grabbed/downloading/importing items with the torrent
   client's progress percentage, recent imports, failures needing attention (with retry /
-  manual-match actions). *Cancel & delete* removes the torrent and its data from the client
-  (confirmation prompt first), then stops tracking the release.
+  manual-match actions). Rows show the edition label being downloaded (when set) and
+  book titles link to the book detail page. *Cancel & delete* removes the torrent and
+  its data from the client (confirmation prompt first), then stops tracking the release.
 - **Settings page** (`/settings`) — connection status for Hardcover, the indexer and the
   download client, sync interval, paths (read-only display of env config), "Sync now" button.
 
@@ -390,7 +399,7 @@ library. Complements (does not change) the automatic /downloads pipeline.
   another edition — the row shows an edition-label input. Guardrails mirror the download
   flow: an unlabelled import into an available book refuses ("give these files an
   edition label"), as does a labelled import while the existing files are unlabelled
-  (rename them in the files dialog first).
+  (rename them on the book detail page first).
 - **Safety**: import paths are validated to stay inside IMPORTS_DIR; an edition whose
   label already has files can't be the target of an import.
 
@@ -484,8 +493,8 @@ migration from the single-user schema exists):
   available; a failed download shows as not present plus a failure badge and the
   Activity entry). A book another user made available cannot be grabbed again — search
   offers "add to my library" instead (which shelves it on the searcher's Hardcover) and
-  the files dialog offers "Download another edition". Book rows may belong to no user
-  ("available" only).
+  the book detail page offers "Download another edition". Book rows may belong to no
+  user ("available" only).
 - **Imports**: staged folders are identified by searching Hardcover (author/series/title
   heuristics from folder names), moved to the canonical path, and imported as ownerless
   books — users who have the book in their Hardcover library pick it up automatically on
@@ -531,10 +540,16 @@ Built as an experiment (the user may not keep it), but first-class.
   relative to the edition folder, and ABS file inos are the audio_file row ids, so both
   survive renames. Relabelling moves only that book's folder — series siblings move when
   their own editions are labelled (no bulk moves; a "relabel all series siblings" helper
-  is possible future work). The rename control lives in the book's files dialog.
-- **Adding an edition**: the files dialog's "Download another edition…" opens a picker of
-  the book's Hardcover audiobook editions (`reading_format_id = 2`, `users_count desc` —
-  books can carry dozens of junk/foreign editions) plus a free-label input. If the
+  is possible future work). The rename control lives on the book detail page.
+- **Adding an edition**: the detail page's "Download another edition…" opens a picker
+  that lists the book's *existing* editions first as clearly-marked "replace this
+  edition's files" entries (shortcuts into the per-edition replace flow), then the
+  book's Hardcover audiobook editions (`reading_format_id = 2`, `users_count desc` —
+  books can carry dozens of junk/foreign editions) plus a free-label input. Each
+  Hardcover option leads with the label it would apply ("Full Cast", or "Unnamed
+  edition" when no narrators are listed) with narrator/format/duration/publisher as a
+  secondary line; editions already downloaded (matched by Hardcover edition id or
+  label) are hidden. If the
   existing edition is unlabelled it must be labelled in the same dialog (its folder moves
   right then) — enforcing "all editions carry a suffix once there are two". The release
   picker then carries the edition choice into the grab; the per-edition guard replaces

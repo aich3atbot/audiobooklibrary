@@ -291,23 +291,68 @@ def imported_book(clean_db, book, test_settings):
     return book
 
 
-def test_files_dialog_lists_files(client, imported_book):
-    response = client.get(f"/books/{imported_book.id}/files")
+def test_detail_page_lists_editions(client, imported_book):
+    edition = imported_book.editions[0]
+
+    response = client.get(f"/books/{imported_book.id}")
+
+    assert response.status_code == 200
+    assert "The Mayor of Noobtown" in response.text
+    assert edition.library_path in response.text
+    assert f"/editions/{edition.id}/label" in response.text  # rename form
+    assert f"/editions/{edition.id}/files" in response.text  # lazy file table
+    assert f"replace=1&edition_id={edition.id}" in response.text
+    assert "Download another edition" in response.text
+
+
+def test_detail_page_when_not_available(client, book):
+    response = client.get(f"/books/{book.id}")
+
+    assert response.status_code == 200
+    assert "no downloaded files" in response.text
+    assert "replace=1" not in response.text
+    assert f"/books/{book.id}/releases?detail=1" in response.text  # Download button
+
+
+def test_detail_page_shows_downloading_edition(client, clean_db, book):
+    make_edition(clean_db, book, download_state=DownloadState.DOWNLOADING)
+
+    response = client.get(f"/books/{book.id}")
+
+    assert response.status_code == 200
+    assert "Files will appear here once the download imports." in response.text
+    assert "replace=1" not in response.text
+    assert "Download…" not in response.text
+
+
+def test_detail_page_unknown_book(client, clean_db):
+    assert client.get("/books/99999").status_code == 404
+
+
+def test_edition_files_fragment(client, imported_book):
+    edition = imported_book.editions[0]
+
+    response = client.get(f"/editions/{edition.id}/files")
 
     assert response.status_code == 200
     assert "Part 01.mp3" in response.text
     assert "cover.jpg" in response.text
     assert "128 kb/s" in response.text  # mutagen bitrate for the mp3
     assert response.text.count("<td>?</td>") == 1  # no bitrate for the jpg
-    assert f"/books/{imported_book.id}/releases?replace=1" in response.text
 
 
-def test_files_dialog_when_not_available(client, book):
-    response = client.get(f"/books/{book.id}/files")
+def test_edition_files_fragment_missing_folder(client, clean_db, book):
+    edition = make_edition(clean_db, book, download_state=DownloadState.IMPORTED,
+                           library_path="/audiobooks/gone")
+
+    response = client.get(f"/editions/{edition.id}/files")
 
     assert response.status_code == 200
-    assert "no downloaded files" in response.text
-    assert "replace=1" not in response.text
+    assert "Folder not found" in response.text
+
+
+def test_edition_files_fragment_unknown_edition(client, clean_db):
+    assert client.get("/editions/99999/files").status_code == 404
 
 
 @respx.mock
@@ -391,14 +436,31 @@ def test_grab_refuses_when_downloads_disabled(client, clean_db, book, downloads_
     assert clean_db.query(Release).count() == 0
 
 
-def test_files_dialog_hides_replace_when_downloads_disabled(
+def test_detail_page_hides_replace_when_downloads_disabled(
     client, imported_book, downloads_disabled
 ):
-    response = client.get(f"/books/{imported_book.id}/files")
+    response = client.get(f"/books/{imported_book.id}")
 
     assert response.status_code == 200
-    assert "Part 01.mp3" in response.text  # file details still shown
+    # path (and lazy file table) still shown
+    assert imported_book.editions[0].library_path in response.text
     assert "replace=1" not in response.text
+    assert "Download another edition" not in response.text
+
+
+@respx.mock
+def test_grab_from_detail_page_redirects_back(client, clean_db, imported_book):
+    mock_details()
+    mock_deluge()
+
+    response = client.post(
+        f"/books/{imported_book.id}/grab",
+        data=grab_data(replace="1", from_detail="1"),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["HX-Redirect"] == f"/books/{imported_book.id}"
+    assert clean_db.query(Release).count() == 1
 
 
 @respx.mock

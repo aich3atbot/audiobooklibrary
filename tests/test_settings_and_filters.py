@@ -58,8 +58,7 @@ def library(clean_db, user):
 
 
 def titles(response):
-    return [t.replace("<h4>", "") for t in
-            __import__("re").findall(r"<h4>[^<]+", response.text)]
+    return __import__("re").findall(r"<h4><a[^>]*>([^<]+)</a></h4>", response.text)
 
 
 def test_filter_by_text_matches_series(client, library):

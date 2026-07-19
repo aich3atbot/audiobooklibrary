@@ -347,10 +347,16 @@ def test_scan_no_match_leaves_release_alone(clean_db, edition, release, clean_di
 
 
 def test_activity_page(client, clean_db, edition, release):
+    edition.label = "Stephen Fry"
+    clean_db.commit()
+
     response = client.get("/activity")
     assert response.status_code == 200
     assert "The Mayor of Noobtown" in response.text
     assert "grabbed" in response.text
+    # book links to the detail page; the download shows its edition label
+    assert f'href="/books/{edition.book_id}"' in response.text
+    assert "Stephen Fry" in response.text
 
 
 def test_cancel_release(client, clean_db, edition, release):

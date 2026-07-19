@@ -87,7 +87,7 @@ def relabel_edition(session: Session, edition: Edition, new_label: str) -> Path 
                 shutil.move(str(old_dir), str(new_dir))
             cleanup_empty_parents(old_dir.parent, library_dir)
         # A missing old folder is not an error: the path is simply repointed
-        # (the files dialog only offers renames for folders that exist).
+        # (the detail page only offers renames for imported editions).
     except Exception:
         session.rollback()  # un-stage the label change
         raise

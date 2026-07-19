@@ -284,7 +284,7 @@ def import_entry(
         if unlabelled is not None and unlabelled.library_path:
             raise ImportFailure(
                 f"{book.title}'s existing files need a label first (Rename them "
-                "in the book's files dialog) so both editions get named folders"
+                "on the book's detail page) so both editions get named folders"
             )
     edition = get_or_create_edition(session, book, label, hardcover_edition_id, narrator)
     dest = edition_dir_for(edition)

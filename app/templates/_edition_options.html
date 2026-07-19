@@ -1,15 +1,19 @@
 {# Edition picker fields: Hardcover audiobook editions as radios plus a
    free-form label that overrides the selection. Included by the
-   add-edition dialog and loaded into the plain release picker. #}
+   add-edition dialog and loaded into the plain release picker. The first
+   line of each option is the label the edition will get. #}
 <fieldset id="edition-options">
     {% if warning %}<p><small>{{ warning }}</small></p>{% endif %}
     {% for e in hc_editions %}
-    <label>
+    <label class="edition-option">
         <input type="radio" name="hc_edition" value="{{ e.id }}">
-        {{ e.narrator or e.title }}
-        {%- if e.format %} — {{ e.format }}{% endif %}
-        {%- if e.audio_seconds %} — {{ (e.audio_seconds // 3600) }}h {{ ((e.audio_seconds % 3600) // 60) }}m{% endif %}
-        {%- if e.publisher %} <small>({{ e.publisher }})</small>{% endif %}
+        <span>
+            <strong>{{ e.default_label or "Unnamed edition" }}</strong>
+            <small>{{ e.narrator or e.title }}
+                {%- if e.format %} · {{ e.format }}{% endif %}
+                {%- if e.audio_seconds %} · {{ (e.audio_seconds // 3600) }}h {{ ((e.audio_seconds % 3600) // 60) }}m{% endif %}
+                {%- if e.publisher %} · {{ e.publisher }}{% endif %}</small>
+        </span>
         <input type="hidden" name="hclabel_{{ e.id }}" value="{{ e.default_label }}">
         <input type="hidden" name="hcnarr_{{ e.id }}" value="{{ e.narrator }}">
     </label>

@@ -42,6 +42,7 @@
                     <td>
                         <form hx-post="/books/{{ book.id }}/grab" hx-target="#modal" hx-swap="outerHTML"
                               hx-include="#replace-options, #add-edition-options, #edition-options">
+                            {% if from_detail %}<input type="hidden" name="from_detail" value="1">{% endif %}
                             <input type="hidden" name="guid" value="{{ r.guid }}">
                             <input type="hidden" name="indexer" value="{{ r.indexer }}">
                             <input type="hidden" name="title" value="{{ r.title }}">

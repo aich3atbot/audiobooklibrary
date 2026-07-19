@@ -11,7 +11,7 @@
     <tbody>
         {% for r in active %}
         <tr>
-            <td>{{ r.book.title }}<br><small>{{ r.book.author.name }}</small></td>
+            <td><a href="/books/{{ r.book.id }}">{{ r.book.title }}</a>{% if r.edition.label %} <span class="badge"{% if r.edition.narrator %} title="{{ r.edition.narrator }}"{% endif %}>{{ r.edition.label }}</span>{% endif %}<br><small>{{ r.book.author.name }}</small></td>
             <td><small>{{ r.title }}</small></td>
             <td><span class="badge">{{ r.status }}</span></td>
             <td><small>{{ "%.0f%%" | format(r.progress) if r.progress is not none else "—" }}</small></td>
@@ -45,7 +45,7 @@
     <tbody>
         {% for r in failed %}
         <tr>
-            <td>{{ r.book.title }}<br><small>{{ r.book.author.name }}</small></td>
+            <td><a href="/books/{{ r.book.id }}">{{ r.book.title }}</a>{% if r.edition.label %} <span class="badge"{% if r.edition.narrator %} title="{{ r.edition.narrator }}"{% endif %}>{{ r.edition.label }}</span>{% endif %}<br><small>{{ r.book.author.name }}</small></td>
             <td><small>{{ r.title }}</small></td>
             <td><small class="error">{{ r.error }}</small></td>
             <td class="actions">
@@ -79,7 +79,7 @@
     <tbody>
         {% for e in imported %}
         <tr>
-            <td>{{ e.book.title }}{% if e.label %} <span class="badge">{{ e.label }}</span>{% endif %}<br><small>{{ e.book.author.name }}</small></td>
+            <td><a href="/books/{{ e.book.id }}">{{ e.book.title }}</a>{% if e.label %} <span class="badge">{{ e.label }}</span>{% endif %}<br><small>{{ e.book.author.name }}</small></td>
             <td><small>{{ e.library_path }}</small></td>
         </tr>
         {% endfor %}
