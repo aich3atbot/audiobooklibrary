@@ -7,7 +7,7 @@ import pytest
 import respx
 
 from app.clients.hardcover import API_URL, HardcoverClient
-from app.models import DownloadState, Edition, Release
+from app.models import Book, DownloadState, Edition, Release, Series
 from app.services.sync import get_state
 from tests.test_downloads import (  # noqa: F401  (fixtures)
     DELUGE,
@@ -51,6 +51,20 @@ def mock_editions(rows):
     return respx.post(API_URL).mock(
         return_value=httpx.Response(200, json={"data": {"editions": rows}})
     )
+
+
+def make_sibling(db, book, label="Stephen Fry", narrator="Stephen Fry"):
+    """Put the book in a series next to a sibling that has a labelled edition,
+    so the "Add existing edition" section has something to offer."""
+    series = Series(hardcover_id=900, name="Noobtown")
+    book.series = series
+    book.series_index = 1.0
+    sibling = Book(hardcover_id=646490, title="Noobtown Two", author=book.author,
+                   series=series, series_index=2.0)
+    db.add(sibling)
+    db.add(Edition(book=sibling, label=label, narrator=narrator))
+    db.commit()
+    return sibling
 
 
 # --- fetch_editions ---------------------------------------------------------
@@ -183,6 +197,108 @@ def test_new_edition_submit_threads_detail_flag_to_grab_forms(
     assert 'name="from_detail" value="1"' in response.text
 
 
+# --- the "Add existing edition" (series sibling) section --------------------
+
+
+@respx.mock
+def test_new_edition_dialog_sections_in_order(client, clean_db, imported_book):
+    make_sibling(clean_db, imported_book)
+    mock_editions([edition_row(30920116)])
+
+    response = client.get(f"/books/{imported_book.id}/editions/new")
+
+    assert response.status_code == 200
+    text = response.text
+    assert (
+        text.index("Add existing edition")
+        < text.index("Replace an existing edition")
+        < text.index("Or download a new edition")
+    )
+    # dialog entries are one-click buttons, styled like the replace entries
+    assert '<button type="submit" name="hc_edition"' in text
+    assert 'type="radio"' not in text
+
+
+@respx.mock
+def test_new_edition_dialog_matches_sibling_label_to_hardcover_edition(
+    client, clean_db, imported_book
+):
+    make_sibling(clean_db, imported_book, label="Stephen Fry")
+    mock_editions([
+        edition_row(1, narrators=("Stephen Fry",)),
+        edition_row(2, narrators=("Jim Dale",)),
+    ])
+
+    response = client.get(f"/books/{imported_book.id}/editions/new")
+
+    assert response.status_code == 200
+    # the matched Hardcover edition appears once, in the sibling section only
+    assert response.text.count('name="hc_edition" value="1"') == 1
+    assert 'name="hclabel_1" value="Stephen Fry"' in response.text
+    assert response.text.index('value="1"') < response.text.index("Or download a new edition")
+    # the unmatched Hardcover edition still offers a fresh download below
+    assert 'name="hc_edition" value="2"' in response.text
+
+
+@respx.mock
+def test_new_edition_dialog_offers_unmatched_sibling_label(client, clean_db, imported_book):
+    make_sibling(clean_db, imported_book, label="Stephen Fry", narrator="Stephen Fry")
+    respx.post(API_URL).mock(side_effect=httpx.ConnectError("down"))
+
+    response = client.get(f"/books/{imported_book.id}/editions/new")
+
+    assert response.status_code == 200
+    assert "Add existing edition" in response.text
+    assert 'name="hc_edition" value="sib_0"' in response.text
+    assert 'name="hclabel_sib_0" value="Stephen Fry"' in response.text
+    assert 'name="hcnarr_sib_0" value="Stephen Fry"' in response.text
+    assert "enter a label instead" in response.text  # the warning still shows
+
+
+@respx.mock
+def test_new_edition_submit_accepts_sibling_pick(client, clean_db, imported_book):
+    make_sibling(clean_db, imported_book, label="Stephen Fry", narrator="Stephen Fry")
+    mock_search()
+
+    response = client.post(
+        f"/books/{imported_book.id}/editions/new",
+        data={
+            "existing_label": "Jim Dale",
+            "hc_edition": "sib_0",
+            "hclabel_sib_0": "Stephen Fry",
+            "hcnarr_sib_0": "Stephen Fry",
+        },
+    )
+
+    assert response.status_code == 200
+    # the release picker carries the label-only identity for the grab
+    assert 'name="edition_label" value="Stephen Fry"' in response.text
+    assert 'name="narrator" value="Stephen Fry"' in response.text
+    assert 'name="hc_edition" value=""' in response.text
+
+
+@respx.mock
+def test_edition_options_fragment_sections_sibling_labels(client, clean_db, book):
+    make_sibling(clean_db, book, label="Stephen Fry")
+    mock_editions([
+        edition_row(1, narrators=("Stephen Fry",)),
+        edition_row(2, narrators=("Jim Dale",)),
+    ])
+
+    response = client.get(f"/books/{book.id}/editions/options")
+
+    assert response.status_code == 200
+    assert 'id="edition-options"' in response.text
+    assert "Add existing edition" in response.text
+    assert "Or download a new edition" in response.text
+    # matched sibling edition sits in the sibling section only
+    assert response.text.count('name="hc_edition" value="1"') == 1
+    assert 'name="hc_edition" value="2"' in response.text
+    # the fragment keeps radios — the choice rides along with each Grab form
+    assert 'type="radio"' in response.text
+    assert '<button type="submit"' not in response.text
+
+
 @respx.mock
 def test_new_edition_dialog_degrades_without_hardcover(client, imported_book):
     respx.post(API_URL).mock(side_effect=httpx.ConnectError("down"))
@@ -223,7 +339,7 @@ def test_new_edition_submit_relabels_existing_and_shows_picker(
     # the release picker carries the new edition's identity for the grab
     assert 'name="add_edition" value="1"' in response.text
     assert 'name="edition_label" value="Stephen Fry"' in response.text
-    assert 'name="hcnarr_30920116" value="Stephen Fry"' in response.text
+    assert 'name="narrator" value="Stephen Fry"' in response.text
 
 
 @respx.mock
@@ -293,6 +409,28 @@ def test_grab_add_edition_targets_the_labelled_edition(client, clean_db, importe
     # the existing edition is untouched
     assert existing.download_state == DownloadState.IMPORTED
     assert existing.library_path is not None
+
+
+@respx.mock
+def test_grab_add_edition_with_plain_narrator_field(client, clean_db, imported_book):
+    mock_details()
+    mock_deluge()
+
+    response = client.post(
+        f"/books/{imported_book.id}/grab",
+        data=grab_data(
+            add_edition="1",
+            edition_label="Stephen Fry",
+            narrator="Stephen Fry",
+        ),
+    )
+
+    assert response.status_code == 200
+    clean_db.expire_all()
+    release = clean_db.query(Release).one()
+    assert release.edition.label == "Stephen Fry"
+    assert release.edition.hardcover_edition_id is None
+    assert release.edition.narrator == "Stephen Fry"
 
 
 @respx.mock

@@ -26,6 +26,7 @@ from app.services.collection import (
     match_from_result,
     scan_imports,
 )
+from app.services.editions import suggest_labels
 from app.services.importer import ImportFailure
 from app.services.sync import run_sync_all
 from app.templating import templates
@@ -46,9 +47,16 @@ def _row(db: Session, entry, match, error=None) -> dict:
         confidence = "low"
     # a Book that already exists locally for this match (may be "available")
     book = None
+    label_suggestions: list[str] = []
     if match is not None:
         book = db.scalar(select(Book).where(Book.hardcover_id == match["hardcover_id"]))
+    if book is not None:
+        # series-mates' labels for the edition-label input; a label this book
+        # already has imported would be refused, so don't suggest it
+        taken = {e.label for e in book.editions if e.library_path}
+        label_suggestions = [s for s in suggest_labels(db, book) if s not in taken]
     return {"entry": entry, "match": match, "book": book,
+            "label_suggestions": label_suggestions,
             "confidence": confidence, "error": error}
 
 

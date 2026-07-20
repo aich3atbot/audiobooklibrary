@@ -19,7 +19,7 @@
             <input type="hidden" name="add_edition" value="1">
             <input type="hidden" name="edition_label" value="{{ edition_label }}">
             <input type="hidden" name="hc_edition" value="{{ hardcover_edition_id or '' }}">
-            {% if hardcover_edition_id %}<input type="hidden" name="hcnarr_{{ hardcover_edition_id }}" value="{{ narrator }}">{% endif %}
+            <input type="hidden" name="narrator" value="{{ narrator }}">
         </fieldset>
         {% endif %}
         {% if releases and not replace and not add_edition %}

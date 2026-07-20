@@ -443,6 +443,27 @@ def test_set_match_renders_manual_row(client, clean_db, dirs, book):
     assert "The Mayor of Noobtown" in response.text
 
 
+def test_available_book_row_suggests_series_labels(client, clean_db, dirs, book):
+    book.editions.append(Edition(label="Jim Dale", download_state=DownloadState.IMPORTED,
+                                 library_path="/audiobooks/somewhere"))
+    sibling = Book(hardcover_id=646490, title="Noobtown Two", author=book.author,
+                   series=book.series, series_index=2.0)
+    sibling.editions.append(Edition(label="Stephen Fry"))
+    clean_db.add(sibling)
+    clean_db.commit()
+    put(dirs, "The Mayor of Noobtown")
+
+    response = client.post(
+        "/imports/set-match",
+        data={"rel": "The Mayor of Noobtown", "book_id": str(book.id)},
+    )
+
+    assert response.status_code == 200
+    assert "datalist" in response.text
+    assert 'value="Stephen Fry"' in response.text  # the series-mate's label
+    assert 'value="Jim Dale"' not in response.text  # already imported here
+
+
 def test_set_hardcover_match_caches_choice(client, clean_db, dirs):
     put(dirs, "Oddly Named Thing")
 

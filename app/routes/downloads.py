@@ -12,7 +12,12 @@ from app.db import get_db
 from app.clients.hardcover import HardcoverClient
 from app.models import Book, Edition, User, book_status, display_status
 from app.services.downloads import grab_release, search_releases
-from app.services.editions import get_or_create_edition, relabel_edition, suggest_labels
+from app.services.editions import (
+    get_or_create_edition,
+    relabel_edition,
+    series_edition_candidates,
+    suggest_labels,
+)
 from app.services.importer import (
     AUDIO_EXTS,
     ImportFailure,
@@ -97,7 +102,33 @@ def _fetch_hc_editions(user: User, book: Book) -> tuple[list[dict], str | None]:
     ]
     if not editions:
         return [], "All of Hardcover's audiobook editions are already downloaded — enter a label instead."
-    return editions[:HC_EDITIONS_SHOWN], None
+    return editions, None
+
+
+def _edition_sections(
+    db: Session, user: User, book: Book
+) -> tuple[list[dict], list[dict], str | None]:
+    """The picker's sections: sibling-series labels this book lacks (matched
+    to the book's Hardcover editions by default label when possible) and the
+    remaining Hardcover editions. Sibling labels survive a failed Hardcover
+    fetch — they then offer the label with the sibling's narrator."""
+    editions, warning = _fetch_hc_editions(user, book)
+    by_label: dict[str, dict] = {}
+    for e in editions:
+        # first occurrence wins = highest users_count (Hardcover's fetch order)
+        if e["default_label"] and e["default_label"] not in by_label:
+            by_label[e["default_label"]] = e
+    existing_options: list[dict] = []
+    used: set[int] = set()
+    for cand in series_edition_candidates(db, book):
+        hc = by_label.get(cand["label"])
+        if hc is not None:
+            used.add(hc["id"])
+            existing_options.append({"label": cand["label"], "narrator": hc["narrator"], "hc": hc})
+        else:
+            existing_options.append({"label": cand["label"], "narrator": cand["narrator"], "hc": None})
+    rest = [e for e in editions if e["id"] not in used][:HC_EDITIONS_SHOWN]
+    return existing_options, rest, warning
 
 
 async def _edition_choice(request: Request) -> tuple[str, int | None, str]:
@@ -107,9 +138,11 @@ async def _edition_choice(request: Request) -> tuple[str, int | None, str]:
     label = str(form.get("edition_label") or "").strip()
     raw = str(form.get("hc_edition") or "")
     hc_id = int(raw) if raw.isdigit() else None
-    narrator = str(form.get(f"hcnarr_{hc_id}") or "").strip() if hc_id else ""
-    if not label and hc_id:
-        label = str(form.get(f"hclabel_{hc_id}") or "").strip()
+    narrator = str(form.get(f"hcnarr_{raw}") or "").strip() if raw else ""
+    if not narrator:
+        narrator = str(form.get("narrator") or "").strip()
+    if not label and raw:
+        label = str(form.get(f"hclabel_{raw}") or "").strip()
     return label, hc_id, narrator
 
 
@@ -211,12 +244,13 @@ def edition_options(
     """The edition picker fields (Hardcover editions + free label), loaded as
     its own fragment so a slow Hardcover call never blocks the release list."""
     book = _get_book(db, book_id)
-    hc_editions, warning = _fetch_hc_editions(user, book)
+    existing_options, hc_editions, warning = _edition_sections(db, user, book)
     return templates.TemplateResponse(
         request,
         "_edition_options.html",
         {
             "book": book,
+            "existing_options": existing_options,
             "hc_editions": hc_editions,
             "warning": warning,
             "suggestions": suggest_labels(db, book),
@@ -234,13 +268,14 @@ def new_edition_dialog(
 ):
     """Dialog for downloading another edition of an available book."""
     book = _get_book(db, book_id)
-    hc_editions, warning = _fetch_hc_editions(user, book)
+    existing_options, hc_editions, warning = _edition_sections(db, user, book)
     unlabelled = next((e for e in book.editions if e.label == ""), None)
     return templates.TemplateResponse(
         request,
         "_edition_new.html",
         {
             "book": book,
+            "existing_options": existing_options,
             "hc_editions": hc_editions,
             "warning": warning,
             "suggestions": suggest_labels(db, book),
@@ -270,12 +305,13 @@ async def new_edition_submit(
     unlabelled = next((e for e in book.editions if e.label == ""), None)
 
     def dialog_error(message: str):
-        hc_editions, warning = _fetch_hc_editions(user, book)
+        existing_options, hc_editions, warning = _edition_sections(db, user, book)
         return templates.TemplateResponse(
             request,
             "_edition_new.html",
             {
                 "book": book,
+                "existing_options": existing_options,
                 "hc_editions": hc_editions,
                 "warning": warning,
                 "suggestions": suggest_labels(db, book),

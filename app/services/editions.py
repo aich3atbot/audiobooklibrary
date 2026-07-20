@@ -97,6 +97,28 @@ def relabel_edition(session: Session, edition: Edition, new_label: str) -> Path 
     return new_dir
 
 
+def series_edition_candidates(session: Session, book: Book) -> list[dict[str, str]]:
+    """Edition labels sibling books in the series already have but this book
+    lacks, each with a representative narrator — the "Add existing edition"
+    section of the pickers. Standalone books have no siblings."""
+    if book.series_id is None:
+        return []
+    own = {e.label for e in book.editions if e.label}
+    rows = session.execute(
+        select(Edition.label, Edition.narrator)
+        .join(Book)
+        .where(Book.series_id == book.series_id, Book.id != book.id, Edition.label != "")
+        .order_by(Edition.label)
+    ).all()
+    candidates: dict[str, str] = {}
+    for label, narrator in rows:
+        if label in own:
+            continue
+        if label not in candidates or (not candidates[label] and narrator):
+            candidates[label] = narrator or ""
+    return [{"label": label, "narrator": narrator} for label, narrator in candidates.items()]
+
+
 def suggest_labels(session: Session, book: Book) -> list[str]:
     """Labels already in use across the book's series, so edition groups line
     up ("Stephen Fry" for book 3 once books 1-2 use it). Standalone books

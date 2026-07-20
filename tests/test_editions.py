@@ -13,7 +13,12 @@ from app.models import (
     Series,
     UserBook,
 )
-from app.services.editions import get_or_create_edition, relabel_edition, suggest_labels
+from app.services.editions import (
+    get_or_create_edition,
+    relabel_edition,
+    series_edition_candidates,
+    suggest_labels,
+)
 from app.services.importer import ImportFailure, edition_dir_for
 
 
@@ -267,6 +272,31 @@ def test_suggest_labels_from_the_series(clean_db, rowling):
 
     assert suggest_labels(clean_db, chamber) == ["Full Cast", "Stephen Fry"]
     assert suggest_labels(clean_db, other) == ["Tom Hollander"]
+
+
+def test_series_edition_candidates_excludes_own_labels_and_carries_narrator(
+    clean_db, rowling
+):
+    series = Series(hardcover_id=300, name="Harry Potter")
+    stone = make_book(clean_db, rowling, "Philosopher's Stone", series=series, index=1.0)
+    goblet = make_book(clean_db, rowling, "Goblet of Fire", series=series, index=4.0)
+    other = make_book(clean_db, rowling, "The Casual Vacancy")
+    make_edition(clean_db, stone, label="Stephen Fry", narrator="Stephen Fry")
+    make_edition(clean_db, stone, label="Full Cast")
+    make_edition(clean_db, stone, label="")  # unlabelled never offered
+    make_edition(clean_db, other, label="Tom Hollander")  # different series
+    make_edition(clean_db, goblet, label="Full Cast")  # already on this book
+
+    assert series_edition_candidates(clean_db, goblet) == [
+        {"label": "Stephen Fry", "narrator": "Stephen Fry"}
+    ]
+
+
+def test_series_edition_candidates_standalone_book_is_empty(clean_db, rowling):
+    book = make_book(clean_db, rowling, "The Casual Vacancy")
+    make_edition(clean_db, book, label="Tom Hollander")
+
+    assert series_edition_candidates(clean_db, book) == []
 
 
 # --- the rename route -------------------------------------------------------

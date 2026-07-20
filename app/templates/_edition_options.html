@@ -1,25 +1,35 @@
-{# Edition picker fields: Hardcover audiobook editions as radios plus a
-   free-form label that overrides the selection. Included by the
-   add-edition dialog and loaded into the plain release picker. The first
-   line of each option is the label the edition will get. #}
-<fieldset id="edition-options">
-    {% if warning %}<p><small>{{ warning }}</small></p>{% endif %}
-    {% for e in hc_editions %}
-    <label class="edition-option">
-        <input type="radio" name="hc_edition" value="{{ e.id }}">
-        <span>
+{# Edition picker fields: Hardcover audiobook editions plus a free-form label
+   that overrides the selection. Included by the add-edition dialog (`buttons`
+   set: one-click submit buttons, styled like the dialog's replace entries)
+   and loaded into the plain release picker (radios the Grab forms hx-include).
+   The first line of each option is the label the edition will get. #}
+{% macro option_body(e) %}
             <strong>{{ e.default_label or "Unnamed edition" }}</strong>
             <small>{{ e.narrator or e.title }}
                 {%- if e.format %} · {{ e.format }}{% endif %}
                 {%- if e.audio_seconds %} · {{ (e.audio_seconds // 3600) }}h {{ ((e.audio_seconds % 3600) // 60) }}m{% endif %}
                 {%- if e.publisher %} · {{ e.publisher }}{% endif %}</small>
-        </span>
-        <input type="hidden" name="hclabel_{{ e.id }}" value="{{ e.default_label }}">
-        <input type="hidden" name="hcnarr_{{ e.id }}" value="{{ e.narrator }}">
+{% endmacro %}
+<fieldset id="edition-options">
+    {% include "_edition_existing.html" %}
+    {% if existing_options %}<h5>Or download a new edition</h5>{% endif %}
+    {% if warning %}<p><small>{{ warning }}</small></p>{% endif %}
+    {% for e in hc_editions %}
+    {% if buttons %}
+    <button type="submit" name="hc_edition" value="{{ e.id }}" class="secondary edition-option">
+        {{ option_body(e) }}
+    </button>
+    {% else %}
+    <label class="edition-option">
+        <input type="radio" name="hc_edition" value="{{ e.id }}">
+        <span>{{ option_body(e) }}</span>
     </label>
+    {% endif %}
+    <input type="hidden" name="hclabel_{{ e.id }}" value="{{ e.default_label }}">
+    <input type="hidden" name="hcnarr_{{ e.id }}" value="{{ e.narrator }}">
     {% endfor %}
     <input type="text" name="edition_label" list="label-suggestions"
-           placeholder="Label (e.g. Stephen Fry){% if hc_editions %} — overrides the selection above{% endif %}"
+           placeholder="Label (e.g. Stephen Fry){% if hc_editions and not buttons %} — overrides the selection above{% endif %}"
            aria-label="Edition label">
     {% if suggestions %}
     <datalist id="label-suggestions">

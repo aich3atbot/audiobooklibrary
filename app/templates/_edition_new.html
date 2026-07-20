@@ -6,19 +6,6 @@
             <strong>Another edition — {{ book.title }}</strong>
         </header>
         {% if error %}<p class="error">{{ error }}</p>{% endif %}
-        {% if replaceable %}
-        <h5>Replace an existing edition</h5>
-        <p><small>A download picked here replaces the edition's current files.</small></p>
-        {% for e in replaceable %}
-        <button type="button" class="secondary edition-option"
-                hx-get="/books/{{ book.id }}/releases?replace=1&edition_id={{ e.id }}{% if detail %}&detail=1{% endif %}"
-                hx-target="#modal" hx-swap="outerHTML">
-            <strong>{{ e.label or "Unlabelled edition" }}</strong>
-            <small>{% if e.narrator %}{{ e.narrator }} — {% endif %}replace this edition's files</small>
-        </button>
-        {% endfor %}
-        <h5>Or download a new edition</h5>
-        {% endif %}
         <form hx-post="/books/{{ book.id }}/editions/new" hx-target="#modal" hx-swap="outerHTML">
             {% if detail %}<input type="hidden" name="detail" value="1">{% endif %}
             {% if unlabelled %}
@@ -31,7 +18,22 @@
                        so the current files move to a labelled folder too.</small>
             </label>
             {% endif %}
-            {% include "_edition_options.html" %}
+            {% with buttons=true %}{% include "_edition_existing.html" %}{% endwith %}
+            {% if replaceable %}
+            <h5>Replace an existing edition</h5>
+            <p><small>A download picked here replaces the edition's current files.</small></p>
+            {% for e in replaceable %}
+            <button type="button" class="secondary edition-option"
+                    hx-get="/books/{{ book.id }}/releases?replace=1&edition_id={{ e.id }}{% if detail %}&detail=1{% endif %}"
+                    hx-target="#modal" hx-swap="outerHTML">
+                <strong>{{ e.label or "Unlabelled edition" }}</strong>
+                <small>{% if e.narrator %}{{ e.narrator }} — {% endif %}replace this edition's files</small>
+            </button>
+            {% endfor %}
+            {% endif %}
+            {% if existing_options or replaceable %}<h5>Or download a new edition</h5>{% endif %}
+            {# section 1 already rendered above, in dialog order #}
+            {% with existing_options=[], buttons=true %}{% include "_edition_options.html" %}{% endwith %}
             <footer>
                 <button type="submit">Search for downloads…</button>
             </footer>

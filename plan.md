@@ -541,20 +541,33 @@ Built as an experiment (the user may not keep it), but first-class.
   survive renames. Relabelling moves only that book's folder — series siblings move when
   their own editions are labelled (no bulk moves; a "relabel all series siblings" helper
   is possible future work). The rename control lives on the book detail page.
-- **Adding an edition**: the detail page's "Download another edition…" opens a picker
-  that lists the book's *existing* editions first as clearly-marked "replace this
-  edition's files" entries (shortcuts into the per-edition replace flow), then the
-  book's Hardcover audiobook editions (`reading_format_id = 2`, `users_count desc` —
-  books can carry dozens of junk/foreign editions) plus a free-label input. Each
-  Hardcover option leads with the label it would apply ("Full Cast", or "Unnamed
-  edition" when no narrators are listed) with narrator/format/duration/publisher as a
-  secondary line; editions already downloaded (matched by Hardcover edition id or
-  label) are hidden. If the
+- **Adding an edition**: the detail page's "Download another edition…" opens a
+  three-section picker. First, **"Add existing edition"**: every edition label sibling
+  books in the series already have but this book lacks
+  (`series_edition_candidates`), matched to the book's Hardcover audiobook editions by
+  default label — a matched entry shows that edition's Hardcover info and carries its
+  edition id, an unmatched one offers the label alone with the sibling's narrator (so
+  series folders line up even when Hardcover data is missing or unreachable). Second,
+  the book's *existing* editions as clearly-marked "replace this edition's files"
+  entries (shortcuts into the per-edition replace flow). Third, the remaining Hardcover
+  audiobook editions (`reading_format_id = 2`, `users_count desc` — books can carry
+  dozens of junk/foreign editions; sibling-matched ones are not repeated here) plus a
+  free-label input. In the dialog every entry in all three sections is a one-click
+  button (a pick submits straight into the release search); the first-grab picker uses
+  radios instead, since the choice rides along with each release row's Grab form. Each
+  Hardcover option leads with the label it would apply ("Full
+  Cast", or "Unnamed edition" when no narrators are listed) with
+  narrator/format/duration/publisher as a secondary line; editions already downloaded
+  (matched by Hardcover edition id or label) are hidden. If the
   existing edition is unlabelled it must be labelled in the same dialog (its folder moves
   right then) — enforcing "all editions carry a suffix once there are two". The release
   picker then carries the edition choice into the grab; the per-edition guard replaces
   the book-level available/downloading block for additional editions. A *first* grab may
-  optionally pick an edition too (defaults to the unlabelled edition). Editions rows are
+  optionally pick an edition too (defaults to the unlabelled edition); its lazy edition
+  picker shows the same "Add existing edition" section above the Hardcover list (no
+  replace section). On the Imports page, the edition-label input of a row matched to an
+  available book suggests the series' labels via a datalist (minus labels this book has
+  already imported); no Hardcover editions fetch there. Editions rows are
   created at grab/import time, never by the dialog alone.
 - **Replace is per edition** (`?replace=1&edition_id=N`): the new download lands on the
   same edition row; siblings are never touched.

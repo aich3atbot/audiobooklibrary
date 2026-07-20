@@ -1,0 +1,37 @@
+{# "Add existing edition": edition labels sibling books in the series already
+   have but this book lacks. Matched entries carry the book's own Hardcover
+   edition (same hclabel_/hcnarr_ mechanics as the Hardcover options); unmatched
+   ones offer the label alone with the sibling's narrator. `buttons` renders
+   one-click submit buttons (the add-edition dialog, styled like its replace
+   entries); otherwise radios (the release picker's fieldset, where the choice
+   rides along with each release's Grab form). #}
+{% macro option_body(opt) %}
+        <strong>{{ opt.label }}</strong>
+        {% if opt.hc %}
+        <small>{{ opt.hc.narrator or opt.hc.title }}
+            {%- if opt.hc.format %} · {{ opt.hc.format }}{% endif %}
+            {%- if opt.hc.audio_seconds %} · {{ (opt.hc.audio_seconds // 3600) }}h {{ ((opt.hc.audio_seconds % 3600) // 60) }}m{% endif %}
+            {%- if opt.hc.publisher %} · {{ opt.hc.publisher }}{% endif %}</small>
+        {% else %}
+        <small>{% if opt.narrator %}{{ opt.narrator }} — {% endif %}used by other books in this series</small>
+        {% endif %}
+{% endmacro %}
+{% if existing_options %}
+<h5>Add existing edition</h5>
+<p><small>Editions other books in this series already have.</small></p>
+{% for opt in existing_options %}
+{% set val = opt.hc.id if opt.hc else "sib_" ~ loop.index0 %}
+{% if buttons %}
+<button type="submit" name="hc_edition" value="{{ val }}" class="secondary edition-option">
+    {{ option_body(opt) }}
+</button>
+{% else %}
+<label class="edition-option">
+    <input type="radio" name="hc_edition" value="{{ val }}">
+    <span>{{ option_body(opt) }}</span>
+</label>
+{% endif %}
+<input type="hidden" name="hclabel_{{ val }}" value="{{ opt.label }}">
+<input type="hidden" name="hcnarr_{{ val }}" value="{{ opt.hc.narrator if opt.hc else opt.narrator }}">
+{% endfor %}
+{% endif %}
