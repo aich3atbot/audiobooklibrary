@@ -11,7 +11,12 @@
     <tbody>
         {% for r in active %}
         <tr>
-            <td><a href="/books/{{ r.book.id }}">{{ r.book.title }}</a>{% if r.edition.label %} <span class="badge"{% if r.edition.narrator %} title="{{ r.edition.narrator }}"{% endif %}>{{ r.edition.label }}</span>{% endif %}<br><small>{{ r.book.author.name }}</small></td>
+            <td>
+                <div class="book-cell">
+                    {% if r.book.cover_url %}<a class="activity-cover" href="/books/{{ r.book.id }}"><img src="{{ r.book.cover_url }}" alt="Cover of {{ r.book.title }}" loading="lazy"></a>{% else %}<span class="activity-cover placeholder"></span>{% endif %}
+                    <div><a href="/books/{{ r.book.id }}">{{ r.book.title }}</a>{% if r.edition.label %} <span class="badge"{% if r.edition.narrator %} title="{{ r.edition.narrator }}"{% endif %}>{{ r.edition.label }}</span>{% endif %}<br><small>{{ r.book.author.name }}</small></div>
+                </div>
+            </td>
             <td><small>{{ r.title }}</small></td>
             <td><span class="badge">{{ r.status }}</span></td>
             <td><small>{{ "%.0f%%" | format(r.progress) if r.progress is not none else "—" }}</small></td>
@@ -45,7 +50,12 @@
     <tbody>
         {% for r in failed %}
         <tr>
-            <td><a href="/books/{{ r.book.id }}">{{ r.book.title }}</a>{% if r.edition.label %} <span class="badge"{% if r.edition.narrator %} title="{{ r.edition.narrator }}"{% endif %}>{{ r.edition.label }}</span>{% endif %}<br><small>{{ r.book.author.name }}</small></td>
+            <td>
+                <div class="book-cell">
+                    {% if r.book.cover_url %}<a class="activity-cover" href="/books/{{ r.book.id }}"><img src="{{ r.book.cover_url }}" alt="Cover of {{ r.book.title }}" loading="lazy"></a>{% else %}<span class="activity-cover placeholder"></span>{% endif %}
+                    <div><a href="/books/{{ r.book.id }}">{{ r.book.title }}</a>{% if r.edition.label %} <span class="badge"{% if r.edition.narrator %} title="{{ r.edition.narrator }}"{% endif %}>{{ r.edition.label }}</span>{% endif %}<br><small>{{ r.book.author.name }}</small></div>
+                </div>
+            </td>
             <td><small>{{ r.title }}</small></td>
             <td><small class="error">{{ r.error }}</small></td>
             <td class="actions">
@@ -79,7 +89,12 @@
     <tbody>
         {% for e in imported %}
         <tr>
-            <td><a href="/books/{{ e.book.id }}">{{ e.book.title }}</a>{% if e.label %} <span class="badge">{{ e.label }}</span>{% endif %}<br><small>{{ e.book.author.name }}</small></td>
+            <td>
+                <div class="book-cell">
+                    {% if e.book.cover_url %}<a class="activity-cover" href="/books/{{ e.book.id }}"><img src="{{ e.book.cover_url }}" alt="Cover of {{ e.book.title }}" loading="lazy"></a>{% else %}<span class="activity-cover placeholder"></span>{% endif %}
+                    <div><a href="/books/{{ e.book.id }}">{{ e.book.title }}</a>{% if e.label %} <span class="badge">{{ e.label }}</span>{% endif %}<br><small>{{ e.book.author.name }}</small></div>
+                </div>
+            </td>
             <td><small>{{ e.library_path }}</small></td>
         </tr>
         {% endfor %}

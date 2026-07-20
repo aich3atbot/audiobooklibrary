@@ -88,6 +88,31 @@
 
 .error { color: #d32f2f; }
 
+.book-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.activity-cover {
+    flex: 0 0 auto;
+    display: block;
+    width: 48px;
+    height: 72px;
+}
+
+.activity-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 3px;
+}
+
+.activity-cover.placeholder {
+    background: var(--pico-muted-border-color, #e2e2e2);
+    border-radius: 3px;
+}
+
 .login-box {
     max-width: 24rem;
     margin: 4rem auto;

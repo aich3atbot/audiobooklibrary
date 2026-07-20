@@ -357,6 +357,15 @@ def test_activity_page(client, clean_db, edition, release):
     # book links to the detail page; the download shows its edition label
     assert f'href="/books/{edition.book_id}"' in response.text
     assert "Stephen Fry" in response.text
+    # no cover on the book yet: the row shows the fixed-size placeholder
+    assert 'class="activity-cover placeholder"' in response.text
+
+    edition.book.cover_url = "https://assets.hardcover.test/noobtown.jpg"
+    clean_db.commit()
+
+    response = client.get("/activity")
+    assert 'src="https://assets.hardcover.test/noobtown.jpg"' in response.text
+    assert 'class="activity-cover placeholder"' not in response.text
 
 
 def test_cancel_release(client, clean_db, edition, release):
