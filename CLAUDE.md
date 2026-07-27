@@ -39,6 +39,14 @@ covers (`/api/items/:id/cover`) and direct-play streaming
 (`/public/session/:id/track/:index`) take no token — the apps send none, gated on the
 `serverVersion` we advertise. They live in `app/abs/public_routes.py` and `/public/` is
 open in `RequireAuthMiddleware`; putting either behind auth breaks covers and playback.
+**Chapters**: mutagen reads ID3 `CHAP` (mp3) but exposes *nothing* for MP4, so
+`app/services/mp4_chapters.py` parses the container itself — Nero `moov/udta/chpl` first,
+then a QuickTime chapter text track via the audio track's `tref/chap`. Files with no
+embedded chapters fall back to one chapter per track, and a book's chapters are its
+files' chapters shifted by each file's start offset. Improving extraction means bumping
+`CHAPTER_SCAN_VERSION` in `app/services/audio_meta.py`, which triggers a one-time
+re-scan of already-scanned MP4s at startup (marker in `app_state`).
+
 Third-party clients (Lissen) are supported too, and they exercise paths the official app
 never touches: item detail **without** `expanded=1` (must return the full item, not the
 minified list shape), `?filter=<group>.<base64>` on the items list, the author landing

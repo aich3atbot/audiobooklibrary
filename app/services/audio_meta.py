@@ -12,10 +12,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_sessionmaker
-from app.models import AudioFile, Edition
+from app.models import AppState, AudioFile, Edition
 from app.services.importer import AUDIO_EXTS
+from app.services.mp4_chapters import read_mp4_chapters
 
 logger = logging.getLogger(__name__)
+
+MP4_EXTS = (".m4b", ".m4a", ".mp4")
+# Bumped when chapter extraction improves, to re-scan libraries scanned by an
+# older build (see rescan_for_chapters).
+CHAPTER_SCAN_VERSION = "2"
+CHAPTER_SCAN_KEY = "audio_chapter_scan_version"
 
 MIME_TYPES = {
     ".m4b": "audio/mp4",
@@ -33,8 +40,10 @@ def _natural_key(path: Path):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(path))]
 
 
-def _read_chapters(parsed) -> list[dict] | None:
-    """Best effort: ID3 CHAP frames (mp3). Returns ABS chapter shape or None."""
+def _read_chapters(parsed, path: Path) -> list[dict] | None:
+    """Best effort: ID3 CHAP frames (mp3), else the MP4 container's own
+    chapters (mutagen exposes none — see app/services/mp4_chapters.py).
+    Returns the ABS chapter shape or None."""
     chapters = []
     tags = getattr(parsed, "tags", None)
     if tags is not None and hasattr(tags, "getall"):
@@ -55,21 +64,8 @@ def _read_chapters(parsed) -> list[dict] | None:
             )
     if chapters:
         return chapters
-    # MP4 chapter support depends on the mutagen version/file; use if present.
-    mp4_chapters = getattr(parsed, "chapters", None)
-    if mp4_chapters:
-        try:
-            return [
-                {
-                    "id": i,
-                    "start": float(ch.start),
-                    "end": float(mp4_chapters[i + 1].start) if i + 1 < len(mp4_chapters) else None,
-                    "title": ch.title or f"Chapter {i + 1}",
-                }
-                for i, ch in enumerate(mp4_chapters)
-            ]
-        except Exception:
-            return None
+    if path.suffix.lower() in MP4_EXTS:
+        return read_mp4_chapters(path)
     return None
 
 
@@ -94,13 +90,19 @@ def scan_edition_audio(session: Session, edition: Edition) -> int:
     for i, path in enumerate(paths, start=1):
         duration = None
         chapters = None
+        parsed = None
         try:
             parsed = mutagen.File(path)
             if parsed is not None and parsed.info is not None:
                 duration = float(parsed.info.length)
-            chapters = _read_chapters(parsed) if parsed is not None else None
         except Exception:
             logger.exception("Audio scan: failed to parse %s", path)
+        # Chapters are read from the container, so a tag-parse failure must
+        # not cost them (and vice versa).
+        try:
+            chapters = _read_chapters(parsed, path)
+        except Exception:
+            logger.exception("Audio scan: failed to read chapters from %s", path)
         if chapters:
             # chapter ends may be missing on mp4; close them with track length
             for ch in chapters:
@@ -144,11 +146,49 @@ def scan_missing() -> int:
     return scanned
 
 
+def rescan_for_chapters() -> int:
+    """One-time pass after chapter extraction improves: re-scan editions whose
+    MP4 tracks were scanned by an older build and so hold no chapters. Guarded
+    by a version marker in app_state, so it runs once, not every startup."""
+    with get_sessionmaker()() as session:
+        from app.services.sync import get_state, set_state
+
+        if get_state(session, CHAPTER_SCAN_KEY) == CHAPTER_SCAN_VERSION:
+            return 0
+        editions = session.scalars(
+            select(Edition)
+            .where(Edition.library_path.is_not(None))
+            .where(
+                Edition.audio_files.any(
+                    AudioFile.chapters_json.is_(None)
+                    & AudioFile.mime_type.in_(("audio/mp4",))
+                )
+            )
+        ).all()
+        rescanned = 0
+        for edition in editions:
+            try:
+                if scan_edition_audio(session, edition):
+                    rescanned += 1
+            except Exception:
+                logger.exception("Chapter re-scan failed for %s", edition.book.title)
+        set_state(session, CHAPTER_SCAN_KEY, CHAPTER_SCAN_VERSION)
+        session.commit()
+        return rescanned
+
+
 async def audio_backfill_task() -> None:
-    """One-shot startup task: scan any imported editions missing audio metadata."""
+    """One-shot startup task: scan any imported editions missing audio metadata,
+    then re-scan MP4s whose chapters an older build could not read."""
     try:
         scanned = await asyncio.to_thread(scan_missing)
         if scanned:
             logger.info("Audio backfill: scanned %d editions", scanned)
     except Exception:
         logger.exception("Audio backfill task failed")
+    try:
+        rescanned = await asyncio.to_thread(rescan_for_chapters)
+        if rescanned:
+            logger.info("Chapter re-scan: re-scanned %d editions", rescanned)
+    except Exception:
+        logger.exception("Chapter re-scan task failed")

@@ -159,7 +159,9 @@ minified shape leaves a book unplayable ("The book has no chapters").
   discNumFromFilename: null, format: null, duration, bitRate: null, language: null,
   codec: null, timeBase: null, channels: null, channelLayout: null, chapters: [],
   embeddedCoverArt: null, metaTags: null, mimeType}]`
-- `media.chapters`: `[{id, start, end, title}]` (seconds), `media.ebookFile: null`,
+- `media.chapters`: `[{id, start, end, title}]` (seconds — embedded chapters per file,
+  shifted by that file's start offset; one per track for files with none),
+  `media.ebookFile: null`,
   `media.tracks`: audioTracks (see playback), `media.duration`, `media.size`,
   `media.libraryItemId`
 - top-level `lastScan: null`, `scanVersion: null`, `libraryFiles: []` and, with

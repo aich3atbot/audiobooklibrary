@@ -166,6 +166,30 @@ def test_item_detail_without_expanded_is_the_full_item(client, token, library):
     assert audio["metadata"]["size"] > 0
 
 
+def test_chapters_merge_embedded_across_files(client, token, library):
+    """A file's own chapters are shifted by where the file starts; files
+    without any still contribute one chapter each."""
+    import json
+
+    db = library["db"]
+    mayor = library["mayor"]
+    first, second = mayor.audio_files
+    first.chapters_json = json.dumps([
+        {"id": 0, "start": 0.0, "end": 1.0, "title": "Opening"},
+        {"id": 1, "start": 1.0, "end": None, "title": "Middle"},
+    ])
+    db.commit()
+
+    chapters = get(client, token, f"/api/items/li_{mayor.id}").json()["media"]["chapters"]
+
+    assert [c["title"] for c in chapters] == ["Opening", "Middle", "Part 2"]
+    assert [c["id"] for c in chapters] == [0, 1, 2]
+    # the open-ended chapter is closed with its own track's length
+    assert chapters[1]["end"] == pytest.approx(first.duration)
+    assert chapters[2]["start"] == pytest.approx(first.duration)
+    assert chapters[2]["end"] == pytest.approx(first.duration + second.duration)
+
+
 def test_item_detail_progress_include(client, token, library, user):
     db = library["db"]
     db.add(MediaProgress(user_id=user.id, edition_id=library["mayor"].id,

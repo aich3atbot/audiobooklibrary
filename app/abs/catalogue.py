@@ -108,22 +108,34 @@ def edition_size(edition: Edition) -> int:
 
 
 def edition_chapters(edition: Edition) -> list[dict[str, Any]]:
-    """Embedded chapters when a single file carries them, else one chapter
-    per track (matches how ABS treats multi-file books without metadata)."""
-    if len(edition.audio_files) == 1 and edition.audio_files[0].chapters_json:
-        return json.loads(edition.audio_files[0].chapters_json)
-    chapters = []
+    """Embedded chapters, shifted by each file's start offset, and one chapter
+    per track for files that carry none (matches how ABS treats multi-file
+    books without metadata)."""
+    chapters: list[dict[str, Any]] = []
     offset = 0.0
-    for i, file in enumerate(edition.audio_files):
+    for file in edition.audio_files:
         duration = file.duration or 0.0
-        chapters.append(
-            {
-                "id": i,
-                "start": offset,
-                "end": offset + duration,
-                "title": Path(file.rel_path).stem,
-            }
-        )
+        embedded = json.loads(file.chapters_json) if file.chapters_json else None
+        if embedded:
+            for chapter in embedded:
+                end = chapter["end"]
+                chapters.append(
+                    {
+                        "id": len(chapters),
+                        "start": offset + chapter["start"],
+                        "end": offset + (duration if end is None else end),
+                        "title": chapter["title"],
+                    }
+                )
+        else:
+            chapters.append(
+                {
+                    "id": len(chapters),
+                    "start": offset,
+                    "end": offset + duration,
+                    "title": Path(file.rel_path).stem,
+                }
+            )
         offset += duration
     return chapters
 
