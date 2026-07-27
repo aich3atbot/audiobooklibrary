@@ -157,6 +157,27 @@ def _bitrate(path: Path) -> int | None:
         return None
 
 
+def _dir_size(library_path: str | None) -> int | None:
+    """Total bytes under an edition's folder, or None when it is gone. This is
+    stat-only (no mutagen), so unlike the file table it is cheap enough to run
+    on page load."""
+    if not library_path:
+        return None
+    root = Path(library_path)
+    if not root.is_dir():
+        return None
+    total = 0
+    for p in root.rglob("*"):
+        try:
+            if p.is_file():
+                total += p.stat().st_size
+        except OSError:
+            # a broken symlink or a file moving out from under us must not
+            # take down the page
+            continue
+    return total
+
+
 def _editions_context(book: Book, error: str | None = None) -> dict:
     """Context for the book detail page's editions section. Imported editions
     are listed even when their folder has gone missing, so rename/replace stay
@@ -167,7 +188,13 @@ def _editions_context(book: Book, error: str | None = None) -> dict:
         for e in book.editions
         if not e.library_path and display_status(e.download_state) != "not_present"
     ]
-    return {"book": book, "imported": imported, "in_flight": in_flight, "error": error}
+    return {
+        "book": book,
+        "imported": imported,
+        "in_flight": in_flight,
+        "dir_sizes": {e.id: _dir_size(e.library_path) for e in imported},
+        "error": error,
+    }
 
 
 def _get_edition(db: Session, edition_id: int) -> Edition:

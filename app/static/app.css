@@ -243,9 +243,12 @@ a.badge { color: white; text-decoration: none; }
     gap: 0.3rem;
 }
 
+/* tighter than Pico's default form-element spacing, but the label keeps its
+   full size — these read as controls beside the text, not as page CTAs */
 .edition-actions button {
     width: auto;
     margin: 0;
+    padding: 0.3rem 0.9rem;
 }
 
 .edition-files {
@@ -254,6 +257,17 @@ a.badge { color: white; text-decoration: none; }
 
 .edition-files table {
     font-size: 0.85rem;
+}
+
+/* the folder's total size, shown on the summary line so it reads without
+   expanding the file list */
+.dir-size {
+    margin-left: 0.5rem;
+    opacity: 0.7;
+}
+
+.edition-files + .edition-actions {
+    margin-top: 0.5rem;
 }
 
 /* the picker's folded-away "Or download a new edition" tail, shown when the

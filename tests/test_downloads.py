@@ -17,9 +17,11 @@ from app.models import (
     Series,
     UserBook,
 )
+from app.routes.downloads import _dir_size
 from app.services.downloads import grab_release, search_releases
 from app.services.importer import replace_key
 from app.services.sync import get_state
+from app.templating import human_size
 from tests.conftest import make_user_book
 from tests.test_audio_meta import write_mp3
 
@@ -303,6 +305,38 @@ def test_detail_page_lists_editions(client, imported_book):
     assert f"/editions/{edition.id}/files" in response.text  # lazy file table
     assert f"replace=1&edition_id={edition.id}" in response.text
     assert "Download another edition" in response.text
+    # the folder's total size reads without expanding the dropdown, and the
+    # actions sit below it
+    assert human_size(_dir_size(edition.library_path)) in response.text
+    assert response.text.index(edition.library_path) < response.text.index(
+        f"/editions/{edition.id}/rename"
+    )
+
+
+def test_detail_page_size_counts_every_file(client, imported_book):
+    """The summary total walks the folder — it covers the cover art too, and
+    does not come from the (deliberately wrong) audio_file row sizes."""
+    edition = imported_book.editions[0]
+    root = Path(edition.library_path)
+    expected = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+
+    response = client.get(f"/books/{imported_book.id}")
+
+    assert expected > (root / "Part 01.mp3").stat().st_size  # cover.jpg counted
+    assert human_size(expected) in response.text
+    assert human_size(100) not in response.text  # not the audio_file row's size
+
+
+def test_detail_page_missing_folder_keeps_actions(client, clean_db, book):
+    edition = make_edition(clean_db, book, download_state=DownloadState.IMPORTED,
+                           library_path="/audiobooks/gone")
+
+    response = client.get(f"/books/{book.id}")
+
+    assert response.status_code == 200
+    assert '<span class="dir-size">?</span>' in response.text
+    assert f"/editions/{edition.id}/rename" in response.text
+    assert f"replace=1&edition_id={edition.id}" in response.text
 
 
 def test_detail_page_when_not_available(client, book):

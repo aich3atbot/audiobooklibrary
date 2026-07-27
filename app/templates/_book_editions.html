@@ -8,6 +8,12 @@
             <strong>{{ e.label or "Unlabelled edition" }}</strong>
             {% if e.narrator %} <small>({{ e.narrator }})</small>{% endif %}
         </header>
+        <details class="edition-files">
+            <summary><small>{{ e.library_path }}<span class="dir-size">{{ dir_sizes[e.id] | human_size }}</span></small></summary>
+            <div hx-get="/editions/{{ e.id }}/files"
+                 hx-trigger="toggle once from:closest details"
+                 hx-swap="innerHTML"><p aria-busy="true">Loading files…</p></div>
+        </details>
         <div class="edition-actions">
             <button type="button" class="secondary"
                     hx-get="/editions/{{ e.id }}/rename" hx-target="#modal" hx-swap="outerHTML"
@@ -18,12 +24,6 @@
                     hx-target="#modal" hx-swap="outerHTML">Replace</button>
             {% endif %}
         </div>
-        <details class="edition-files">
-            <summary><small>{{ e.library_path }}</small></summary>
-            <div hx-get="/editions/{{ e.id }}/files"
-                 hx-trigger="toggle once from:closest details"
-                 hx-swap="innerHTML"><p aria-busy="true">Loading files…</p></div>
-        </details>
     </article>
     {% endfor %}
     {% for e in in_flight %}
