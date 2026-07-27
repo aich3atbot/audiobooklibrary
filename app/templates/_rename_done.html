@@ -1,0 +1,4 @@
+{# Successful rename: close the modal and swap the detail page's editions
+   section out of band so the new label, folder and files show. #}
+<div id="modal"></div>
+{% with oob = true %}{% include "_book_editions.html" %}{% endwith %}

@@ -540,7 +540,16 @@ Built as an experiment (the user may not keep it), but first-class.
   relative to the edition folder, and ABS file inos are the audio_file row ids, so both
   survive renames. Relabelling moves only that book's folder — series siblings move when
   their own editions are labelled (no bulk moves; a "relabel all series siblings" helper
-  is possible future work). The rename control lives on the book detail page.
+  is possible future work). The rename control lives on the book detail page: a
+  "Rename…" button per edition opens an overlay carrying the *same* picker the download
+  flows use (series-sibling labels first, then the book's remaining Hardcover audiobook
+  editions, then a free-form box that overrides the selection), with a Rename button to
+  confirm — no bare text field. Picking an entry re-stamps the edition's
+  `hardcover_edition_id` and narrator (the old narrator belonged to the old label); a
+  typed label leaves both alone. Submitting nothing drops the label, moving the files
+  back to the unsuffixed folder. A refused move (duplicate label, occupied destination)
+  keeps the dialog open with the reason; success closes it and swaps the detail page's
+  editions section out of band.
 - **Adding an edition**: the detail page's "Download another edition…" opens a
   three-section picker. First, **"Add existing edition"**: every edition label sibling
   books in the series already have but this book lacks
@@ -565,7 +574,12 @@ Built as an experiment (the user may not keep it), but first-class.
   the book-level available/downloading block for additional editions. A *first* grab may
   optionally pick an edition too (defaults to the unlabelled edition); its lazy edition
   picker shows the same "Add existing edition" section above the Hardcover list (no
-  replace section). On the Imports page, the edition-label input of a row matched to an
+  replace section). That picker is collapsed behind an "Edition (optional)" toggle only
+  when the book's series has no labelled editions to offer; when it does
+  (`series_edition_candidates` is non-empty) the release dialog loads the picker
+  immediately with those sibling labels on show and folds just the Hardcover list and
+  free-label box away behind "Or download a new edition", so a book joining a labelled
+  series lands in the right group by default. On the Imports page, the edition-label input of a row matched to an
   available book suggests the series' labels via a datalist (minus labels this book has
   already imported); no Hardcover editions fetch there. Editions rows are
   created at grab/import time, never by the dialog alone.

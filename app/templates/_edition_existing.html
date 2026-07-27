@@ -4,7 +4,9 @@
    ones offer the label alone with the sibling's narrator. `buttons` renders
    one-click submit buttons (the add-edition dialog, styled like its replace
    entries); otherwise radios (the release picker's fieldset, where the choice
-   rides along with each release's Grab form). #}
+   rides along with each release's Grab form). `existing_heading` renames the
+   section for dialogs where nothing is being added (the rename picker). #}
+{% set existing_heading = existing_heading if existing_heading is defined else "Add existing edition" %}
 {% macro option_body(opt) %}
         <strong>{{ opt.label }}</strong>
         {% if opt.hc %}
@@ -17,7 +19,7 @@
         {% endif %}
 {% endmacro %}
 {% if existing_options %}
-<h5>Add existing edition</h5>
+<h5>{{ existing_heading }}</h5>
 <p><small>Editions other books in this series already have.</small></p>
 {% for opt in existing_options %}
 {% set val = opt.hc.id if opt.hc else "sib_" ~ loop.index0 %}

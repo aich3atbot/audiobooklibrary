@@ -1,8 +1,15 @@
 {# Edition picker fields: Hardcover audiobook editions plus a free-form label
    that overrides the selection. Included by the add-edition dialog (`buttons`
-   set: one-click submit buttons, styled like the dialog's replace entries)
-   and loaded into the plain release picker (radios the Grab forms hx-include).
-   The first line of each option is the label the edition will get. #}
+   set: one-click submit buttons, styled like the dialog's replace entries),
+   loaded into the plain release picker (radios the Grab forms hx-include) and
+   included by the rename dialog. The first line of each option is the label
+   the edition will get.
+   In the release picker the sibling-series options lead and the Hardcover
+   list folds away behind them, so a book in a labelled series opens with its
+   siblings' labels already visible (`collapse_new`, on by default there;
+   the rename dialog passes it off — its Hardcover list is the point). #}
+{% set collapse_new = collapse_new if collapse_new is defined else (existing_options and not buttons) %}
+{% set new_heading = new_heading if new_heading is defined else "Or download a new edition" %}
 {% macro option_body(e) %}
             <strong>{{ e.default_label or "Unnamed edition" }}</strong>
             <small>{{ e.narrator or e.title }}
@@ -12,7 +19,10 @@
 {% endmacro %}
 <fieldset id="edition-options">
     {% include "_edition_existing.html" %}
-    {% if existing_options %}<h5>Or download a new edition</h5>{% endif %}
+    {% if collapse_new %}
+    <details class="new-edition">
+        <summary>{{ new_heading }}</summary>
+    {% elif existing_options %}<h5>{{ new_heading }}</h5>{% endif %}
     {% if warning %}<p><small>{{ warning }}</small></p>{% endif %}
     {% for e in hc_editions %}
     {% if buttons %}
@@ -36,4 +46,5 @@
         {% for s in suggestions %}<option value="{{ s }}">{% endfor %}
     </datalist>
     {% endif %}
+    {% if collapse_new %}</details>{% endif %}
 </fieldset>

@@ -235,12 +235,35 @@ a.badge { color: white; text-decoration: none; }
     margin: 0;
 }
 
+/* the detail page's per-edition and download buttons: shrink-wrapped and
+   ranged right, each its own button rather than a joined group */
+.edition-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.3rem;
+}
+
+.edition-actions button {
+    width: auto;
+    margin: 0;
+}
+
 .edition-files {
     margin: 0.5rem 0 0;
 }
 
 .edition-files table {
     font-size: 0.85rem;
+}
+
+/* the picker's folded-away "Or download a new edition" tail, shown when the
+   series' own labels lead */
+#edition-options .new-edition {
+    margin: 0.5rem 0 0;
+}
+
+#edition-options .new-edition summary {
+    font-weight: bold;
 }
 
 .edition-option {

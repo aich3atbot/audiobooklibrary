@@ -1,6 +1,7 @@
 """Edition folder layout and the relabel/rename engine."""
 
 import pytest
+import respx
 
 from app.models import (
     AppState,
@@ -20,6 +21,7 @@ from app.services.editions import (
     suggest_labels,
 )
 from app.services.importer import ImportFailure, edition_dir_for
+from tests.test_editions_grab import edition_row, mock_editions
 
 
 @pytest.fixture
@@ -299,7 +301,90 @@ def test_series_edition_candidates_standalone_book_is_empty(clean_db, rowling):
     assert series_edition_candidates(clean_db, book) == []
 
 
-# --- the rename route -------------------------------------------------------
+# --- the rename dialog and route --------------------------------------------
+
+
+@respx.mock
+def test_rename_dialog_offers_sibling_and_hardcover_options(
+    client, clean_db, clean_dirs, rowling
+):
+    series = Series(hardcover_id=300, name="Harry Potter")
+    sibling = make_book(clean_db, rowling, "Chamber of Secrets", series=series, index=2.0)
+    make_edition(clean_db, sibling, label="Stephen Fry", narrator="Stephen Fry")
+    book = make_book(clean_db, rowling, "Deathly Hallows", series=series, index=7.0)
+    old_dir = place_files(clean_dirs.library_dir / "J.K. Rowling" / "Harry Potter"
+                          / "7 - Deathly Hallows")
+    edition = make_edition(clean_db, book, library_path=str(old_dir),
+                           download_state=DownloadState.IMPORTED)
+    mock_editions([edition_row(1, narrators=("Jim Dale",))])
+
+    response = client.get(f"/editions/{edition.id}/rename")
+
+    assert response.status_code == 200
+    assert f'hx-post="/editions/{edition.id}/label"' in response.text
+    assert "Editions used in this series" in response.text  # the sibling section
+    assert "Stephen Fry" in response.text
+    assert 'name="hc_edition" value="1"' in response.text  # Hardcover's editions
+    assert 'name="edition_label"' in response.text  # the free-form box
+    # the picker is the point of this dialog, so nothing folds away here
+    assert "<details" not in response.text
+
+
+@respx.mock
+def test_rename_route_restamps_narrator_from_a_picked_edition(
+    client, clean_db, clean_dirs, rowling
+):
+    book = make_book(clean_db, rowling, "Standalone")
+    old_dir = place_files(clean_dirs.library_dir / "J.K. Rowling" / "Standalone {Fry}")
+    edition = make_edition(clean_db, book, label="Fry", narrator="Stephen Fry",
+                           hardcover_edition_id=1, library_path=str(old_dir),
+                           download_state=DownloadState.IMPORTED)
+
+    response = client.post(
+        f"/editions/{edition.id}/label",
+        data={"hc_edition": "2", "hclabel_2": "Full Cast", "hcnarr_2": "Simon Pegg"},
+    )
+
+    assert response.status_code == 200
+    clean_db.expire_all()
+    assert edition.label == "Full Cast"
+    assert edition.narrator == "Simon Pegg"
+    assert edition.hardcover_edition_id == 2
+
+
+@respx.mock
+def test_rename_route_typed_label_wins_and_keeps_metadata(
+    client, clean_db, clean_dirs, rowling
+):
+    book = make_book(clean_db, rowling, "Standalone")
+    old_dir = place_files(clean_dirs.library_dir / "J.K. Rowling" / "Standalone {Fry}")
+    edition = make_edition(clean_db, book, label="Fry", narrator="Stephen Fry",
+                           hardcover_edition_id=1, library_path=str(old_dir),
+                           download_state=DownloadState.IMPORTED)
+
+    response = client.post(f"/editions/{edition.id}/label",
+                           data={"edition_label": "Fry (abridged)"})
+
+    assert response.status_code == 200
+    clean_db.expire_all()
+    assert edition.label == "Fry (abridged)"
+    assert edition.narrator == "Stephen Fry"
+    assert edition.hardcover_edition_id == 1
+
+
+@respx.mock
+def test_rename_route_empty_submit_drops_the_label(client, clean_db, clean_dirs, rowling):
+    book = make_book(clean_db, rowling, "Standalone")
+    old_dir = place_files(clean_dirs.library_dir / "J.K. Rowling" / "Standalone {Fry}")
+    edition = make_edition(clean_db, book, label="Fry", library_path=str(old_dir),
+                           download_state=DownloadState.IMPORTED)
+
+    response = client.post(f"/editions/{edition.id}/label", data={"edition_label": ""})
+
+    assert response.status_code == 200
+    clean_db.expire_all()
+    assert edition.label == ""
+    assert (clean_dirs.library_dir / "J.K. Rowling" / "Standalone" / "Part 1.mp3").exists()
 
 
 def test_relabel_route_moves_folder_and_rerenders(client, clean_db, clean_dirs, rowling):
@@ -308,10 +393,13 @@ def test_relabel_route_moves_folder_and_rerenders(client, clean_db, clean_dirs, 
     edition = make_edition(clean_db, book, library_path=str(old_dir),
                            download_state=DownloadState.IMPORTED)
 
-    response = client.post(f"/editions/{edition.id}/label", data={"label": "Stephen Fry"})
+    response = client.post(f"/editions/{edition.id}/label",
+                           data={"edition_label": "Stephen Fry"})
 
     assert response.status_code == 200
-    assert 'id="editions"' in response.text  # the detail page's editions fragment
+    assert '<div id="modal"></div>' in response.text  # the dialog closes
+    # the detail page's editions section, swapped out of band
+    assert 'id="editions" hx-swap-oob="outerHTML"' in response.text
     assert "Standalone {Stephen Fry}" in response.text
     assert (clean_dirs.library_dir / "J.K. Rowling" / "Standalone {Stephen Fry}"
             / "Part 1.mp3").exists()
@@ -319,7 +407,9 @@ def test_relabel_route_moves_folder_and_rerenders(client, clean_db, clean_dirs, 
     assert edition.label == "Stephen Fry"
 
 
+@respx.mock
 def test_relabel_route_shows_conflict_error(client, clean_db, clean_dirs, rowling):
+    mock_editions([])
     book = make_book(clean_db, rowling, "Standalone")
     old_dir = place_files(clean_dirs.library_dir / "J.K. Rowling" / "Standalone")
     place_files(clean_dirs.library_dir / "J.K. Rowling" / "Standalone {Fry}",
@@ -327,12 +417,17 @@ def test_relabel_route_shows_conflict_error(client, clean_db, clean_dirs, rowlin
     edition = make_edition(clean_db, book, library_path=str(old_dir),
                            download_state=DownloadState.IMPORTED)
 
-    response = client.post(f"/editions/{edition.id}/label", data={"label": "Fry"})
+    response = client.post(f"/editions/{edition.id}/label", data={"edition_label": "Fry"})
 
     assert response.status_code == 200
     assert "destination already exists" in response.text
+    # the dialog stays open with the reason instead of closing
+    assert f'hx-post="/editions/{edition.id}/label"' in response.text
     assert (old_dir / "Part 1.mp3").exists()
 
 
 def test_relabel_route_unknown_edition_404(client, clean_db):
-    assert client.post("/editions/99999/label", data={"label": "X"}).status_code == 404
+    assert client.get("/editions/99999/rename").status_code == 404
+    assert client.post(
+        "/editions/99999/label", data={"edition_label": "X"}
+    ).status_code == 404

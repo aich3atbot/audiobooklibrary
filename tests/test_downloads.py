@@ -299,7 +299,7 @@ def test_detail_page_lists_editions(client, imported_book):
     assert response.status_code == 200
     assert "The Mayor of Noobtown" in response.text
     assert edition.library_path in response.text
-    assert f"/editions/{edition.id}/label" in response.text  # rename form
+    assert f"/editions/{edition.id}/rename" in response.text  # rename dialog
     assert f"/editions/{edition.id}/files" in response.text  # lazy file table
     assert f"replace=1&edition_id={edition.id}" in response.text
     assert "Download another edition" in response.text
@@ -322,7 +322,7 @@ def test_detail_page_shows_downloading_edition(client, clean_db, book):
     assert response.status_code == 200
     assert "Files will appear here once the download imports." in response.text
     assert "replace=1" not in response.text
-    assert "Download…" not in response.text
+    assert "btn-download" not in response.text  # no grab entry while it downloads
 
 
 def test_detail_page_unknown_book(client, clean_db):
@@ -418,7 +418,7 @@ def test_no_download_button_when_downloads_disabled(client, book, downloads_disa
 
     assert response.status_code == 200
     assert "The Mayor of Noobtown" in response.text
-    assert "Download…" not in response.text
+    assert "download-btn" not in response.text
 
 
 def test_release_picker_refuses_when_downloads_disabled(client, book, downloads_disabled):

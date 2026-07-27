@@ -484,6 +484,49 @@ def test_plain_release_picker_offers_edition_options(client, book):
 
     assert response.status_code == 200
     assert f"/books/{book.id}/editions/options" in response.text
+    # nothing in the series uses labels, so the picker stays behind the toggle
+    assert "<summary>Edition (optional)</summary>" in response.text
+    assert 'hx-trigger="toggle once from:closest details"' in response.text
+
+
+@respx.mock
+def test_plain_release_picker_expands_when_the_series_uses_labels(client, clean_db, book):
+    make_sibling(clean_db, book, label="Stephen Fry")
+    mock_search()
+
+    response = client.get(f"/books/{book.id}/releases")
+
+    assert response.status_code == 200
+    # the picker loads straight away instead of hiding behind the toggle
+    assert 'hx-trigger="load"' in response.text
+    assert "Edition (optional)" not in response.text
+
+
+@respx.mock
+def test_edition_options_fragment_folds_the_new_edition_tail_behind_siblings(
+    client, clean_db, book
+):
+    make_sibling(clean_db, book, label="Stephen Fry")
+    mock_editions([edition_row(2, narrators=("Jim Dale",))])
+
+    response = client.get(f"/books/{book.id}/editions/options")
+
+    assert response.status_code == 200
+    text = response.text
+    # the sibling labels lead, outside the fold; Hardcover's rest sits inside it
+    assert text.index('value="sib_0"') < text.index('<details class="new-edition">')
+    assert text.index('<details class="new-edition">') < text.index('value="2"')
+    assert "<summary>Or download a new edition</summary>" in text
+
+
+@respx.mock
+def test_edition_options_fragment_has_no_fold_without_siblings(client, book):
+    mock_editions([edition_row(2, narrators=("Jim Dale",))])
+
+    response = client.get(f"/books/{book.id}/editions/options")
+
+    assert response.status_code == 200
+    assert "<details" not in response.text
 
 
 @respx.mock

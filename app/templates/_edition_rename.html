@@ -1,0 +1,28 @@
+{# Rename dialog for an existing edition: the same picker the download flows
+   use (series siblings first, then Hardcover's editions, then a free-form
+   label), with a Rename button instead of a search. Re-rendered with `error`
+   when the move is refused, so the dialog stays open on a conflict. #}
+<div id="modal">
+<dialog open>
+    <article class="release-dialog">
+        <header>
+            <button aria-label="Close" rel="prev" onclick="this.closest('dialog').remove()"></button>
+            <strong>Rename edition — {{ book.title }}</strong>
+        </header>
+        <p><small>Currently {% if edition.label %}“{{ edition.label }}”{% else %}unlabelled{% endif %} — renaming moves its library folder to match.</small></p>
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+        <form hx-post="/editions/{{ edition.id }}/label" hx-target="#modal" hx-swap="outerHTML">
+            {% with existing_heading="Editions used in this series",
+                    new_heading="Hardcover's editions",
+                    collapse_new=false %}
+            {% include "_edition_options.html" %}
+            {% endwith %}
+            <small>Pick nothing and leave the box empty to drop the label, moving the
+                   files back to the unlabelled folder.</small>
+            <footer>
+                <button type="submit">Rename</button>
+            </footer>
+        </form>
+    </article>
+</dialog>
+</div>

@@ -1,6 +1,6 @@
-{# The detail page's editions section; re-rendered by the rename route, so it
-   must stay a self-contained #editions fragment. #}
-<section id="editions">
+{# The detail page's editions section; swapped in out of band after a rename,
+   so it must stay a self-contained #editions fragment. #}
+<section id="editions"{% if oob is defined and oob %} hx-swap-oob="outerHTML"{% endif %}>
     {% if error %}<p class="error">{{ error }}</p>{% endif %}
     {% for e in imported %}
     <article class="edition">
@@ -8,19 +8,16 @@
             <strong>{{ e.label or "Unlabelled edition" }}</strong>
             {% if e.narrator %} <small>({{ e.narrator }})</small>{% endif %}
         </header>
-        <form hx-post="/editions/{{ e.id }}/label" hx-target="#editions" hx-swap="outerHTML">
-            <fieldset role="group">
-                <input type="text" name="label" value="{{ e.label }}"
-                       placeholder="Edition label (e.g. Stephen Fry)" aria-label="Edition label">
-                <button type="submit" class="secondary"
-                        title="Rename this edition's label; its library folder moves to match">Rename</button>
-                {% if downloads_enabled() %}
-                <button type="button" class="secondary"
-                        hx-get="/books/{{ book.id }}/releases?replace=1&edition_id={{ e.id }}&detail=1"
-                        hx-target="#modal" hx-swap="outerHTML">Replace…</button>
-                {% endif %}
-            </fieldset>
-        </form>
+        <div class="edition-actions">
+            <button type="button" class="secondary"
+                    hx-get="/editions/{{ e.id }}/rename" hx-target="#modal" hx-swap="outerHTML"
+                    title="Rename this edition's label; its library folder moves to match">Rename</button>
+            {% if downloads_enabled() %}
+            <button type="button" class="secondary"
+                    hx-get="/books/{{ book.id }}/releases?replace=1&edition_id={{ e.id }}&detail=1"
+                    hx-target="#modal" hx-swap="outerHTML">Replace</button>
+            {% endif %}
+        </div>
         <details class="edition-files">
             <summary><small>{{ e.library_path }}</small></summary>
             <div hx-get="/editions/{{ e.id }}/files"
@@ -43,12 +40,14 @@
     <p>This book has no downloaded files.</p>
     {% endif %}
     {% if downloads_enabled() %}
+    <div class="edition-actions">
         {% if imported %}
         <button class="btn-download" hx-get="/books/{{ book.id }}/editions/new?detail=1"
-                hx-target="#modal" hx-swap="outerHTML">Download another edition…</button>
+                hx-target="#modal" hx-swap="outerHTML">Download another edition</button>
         {% elif not in_flight %}
         <button class="btn-download" hx-get="/books/{{ book.id }}/releases?detail=1"
-                hx-target="#modal" hx-swap="outerHTML">Download…</button>
+                hx-target="#modal" hx-swap="outerHTML">Download</button>
         {% endif %}
+    </div>
     {% endif %}
 </section>

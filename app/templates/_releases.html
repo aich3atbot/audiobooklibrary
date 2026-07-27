@@ -23,11 +23,19 @@
         </fieldset>
         {% endif %}
         {% if releases and not replace and not add_edition %}
+        {% if expand_editions %}
+        {# Other books in this series already carry edition labels, so the
+           picker loads straight away with those siblings on show; only its
+           Hardcover tail stays folded. #}
+        <div hx-get="/books/{{ book.id }}/editions/options" hx-trigger="load"
+             hx-swap="innerHTML"><p aria-busy="true">Loading editions…</p></div>
+        {% else %}
         <details>
             <summary>Edition (optional)</summary>
             <div hx-get="/books/{{ book.id }}/editions/options" hx-trigger="toggle once from:closest details"
                  hx-swap="innerHTML"><p aria-busy="true">Loading editions…</p></div>
         </details>
+        {% endif %}
         {% endif %}
         {% if releases %}
         <table>

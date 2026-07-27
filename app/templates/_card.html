@@ -21,6 +21,6 @@
         {% if ub.pending_push %}<span class="badge badge-pending" title="Change not yet confirmed by Hardcover">sync pending</span>{% endif %}
     </p>
     {% if dl == 'not_present' and downloads_enabled() %}
-    <button class="download-btn btn-download" hx-get="/books/{{ book.id }}/releases" hx-target="#modal" hx-swap="outerHTML">Download…</button>
+    <button class="download-btn btn-download" hx-get="/books/{{ book.id }}/releases" hx-target="#modal" hx-swap="outerHTML">Download</button>
     {% endif %}
 </article>

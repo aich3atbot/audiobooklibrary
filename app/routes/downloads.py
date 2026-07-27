@@ -170,6 +170,31 @@ def _editions_context(book: Book, error: str | None = None) -> dict:
     return {"book": book, "imported": imported, "in_flight": in_flight, "error": error}
 
 
+def _get_edition(db: Session, edition_id: int) -> Edition:
+    edition = db.get(Edition, edition_id)
+    if edition is None:
+        raise HTTPException(status_code=404, detail="edition not found")
+    return edition
+
+
+def _rename_context(
+    db: Session, user: User, edition: Edition, error: str | None = None
+) -> dict:
+    """Context for the rename overlay — the download flows' picker sections
+    pointed at an edition that already exists."""
+    book = edition.book
+    existing_options, hc_editions, warning = _edition_sections(db, user, book)
+    return {
+        "book": book,
+        "edition": edition,
+        "existing_options": existing_options,
+        "hc_editions": hc_editions,
+        "warning": warning,
+        "suggestions": suggest_labels(db, book),
+        "error": error,
+    }
+
+
 def _edition_files(edition: Edition) -> list[dict]:
     root = Path(edition.library_path)
     return [
@@ -205,33 +230,59 @@ def edition_files(edition_id: int, request: Request, db: Session = Depends(get_d
     )
 
 
-@router.post("/editions/{edition_id}/label", response_class=HTMLResponse)
-def relabel(
+@router.get("/editions/{edition_id}/rename", response_class=HTMLResponse)
+def rename_dialog(
     edition_id: int,
     request: Request,
-    label: str = Form(""),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """Rename an edition's label; its library folder moves to the labelled
-    location immediately. Re-renders the detail page's editions section."""
-    edition = db.get(Edition, edition_id)
-    if edition is None:
-        raise HTTPException(status_code=404, detail="edition not found")
-    book = edition.book
+    """The rename overlay. `_edition_sections` hides labels and Hardcover
+    editions the book already holds, so the picker only ever offers a name the
+    edition doesn't have."""
+    edition = _get_edition(db, edition_id)
+    return templates.TemplateResponse(
+        request, "_edition_rename.html", _rename_context(db, user, edition)
+    )
 
-    def section(error: str | None = None):
+
+@router.post("/editions/{edition_id}/label", response_class=HTMLResponse)
+async def relabel(
+    edition_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Rename an edition from the overlay picker; its library folder moves to
+    the labelled location immediately. A picked Hardcover or sibling entry also
+    re-stamps the edition's Hardcover id and narrator — the old narrator
+    belonged to the old label — while a typed label leaves both alone. Closes
+    the modal and swaps the detail page's editions section; a refused move
+    keeps the dialog open with the reason."""
+    edition = _get_edition(db, edition_id)
+    book = edition.book
+    label, hc_id, narrator = await _edition_choice(request)
+
+    def dialog_error(message: str):
         return templates.TemplateResponse(
-            request, "_book_editions.html", _editions_context(book, error=error)
+            request,
+            "_edition_rename.html",
+            _rename_context(db, user, edition, error=message),
         )
 
     try:
         relabel_edition(db, edition, label)
     except ImportFailure as exc:
-        return section(error=str(exc))
+        return dialog_error(str(exc))
     except Exception:
         logger.exception("Relabel failed for %s", book.title)
-        return section(error="Rename failed — see the app log.")
-    return section()
+        return dialog_error("Rename failed — see the app log.")
+    if hc_id is not None:
+        edition.hardcover_edition_id = hc_id
+    if narrator:
+        edition.narrator = narrator
+    db.commit()
+    return templates.TemplateResponse(request, "_rename_done.html", _editions_context(book))
 
 
 @router.get("/books/{book_id}/editions/options", response_class=HTMLResponse)
@@ -408,6 +459,9 @@ def list_releases(
             "replace": replacing,
             "replace_edition_id": target.id if target else None,
             "from_detail": detail,
+            # Siblings in the series already use labels: open the picker with
+            # them on show instead of behind the "Edition (optional)" toggle.
+            "expand_editions": bool(series_edition_candidates(db, book)),
         },
     )
 
