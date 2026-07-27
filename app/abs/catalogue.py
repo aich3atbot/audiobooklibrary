@@ -5,10 +5,12 @@ Shapes are pinned in docs/abs-api-contract.md.
 A library item is one *edition* (a book can hold several recordings); item
 ids are li_<edition.id>. Book metadata is read through edition.book."""
 
+import base64
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
@@ -254,7 +256,23 @@ def media_minified(edition: Edition) -> dict[str, Any]:
     }
 
 
-def item_minified(edition: Edition) -> dict[str, Any]:
+def media_full(edition: Edition) -> dict[str, Any]:
+    """Book.toOldJSON: the full (non-minified) media block — chapters and
+    audio files, no track/duration/size counters."""
+    return {
+        "id": f"bk_{edition.id}",
+        "libraryItemId": payloads.item_id(edition.id),
+        "metadata": metadata_expanded(edition),
+        "coverPath": str(find_cover_file(edition) or "")
+        or ("internal" if edition.book.cover_url else None),
+        "tags": [],
+        "audioFiles": [audio_file_json(edition, f) for f in edition.audio_files],
+        "chapters": edition_chapters(edition),
+        "ebookFile": None,
+    }
+
+
+def _item_base(edition: Edition) -> dict[str, Any]:
     settings = get_settings()
     path = Path(edition.library_path)
     try:
@@ -280,21 +298,42 @@ def item_minified(edition: Edition) -> dict[str, Any]:
         "isMissing": False,
         "isInvalid": False,
         "mediaType": "book",
+    }
+
+
+def item_minified(edition: Edition) -> dict[str, Any]:
+    """LibraryItem.toOldJSONMinified: the list/shelf shape. Item *detail*
+    must never use this — see item_full."""
+    return {
+        **_item_base(edition),
         "media": media_minified(edition),
         "numFiles": len(edition.audio_files),
         "size": edition_size(edition),
     }
 
 
+def item_full(edition: Edition) -> dict[str, Any]:
+    """LibraryItem.toOldJSON: what GET /api/items/:id returns without
+    `expanded=1`. Clients that skip that param (Lissen) still need the audio
+    files and chapters, so this is *not* the minified shape."""
+    return {
+        **_item_base(edition),
+        "lastScan": None,
+        "scanVersion": None,
+        "media": media_full(edition),
+        "libraryFiles": [],
+    }
+
+
 def item_expanded(edition: Edition) -> dict[str, Any]:
+    """LibraryItem.toOldJSONExpanded: minified plus the full media block and
+    the playable tracks."""
     item = item_minified(edition)
     media = item["media"]
-    media["libraryItemId"] = item["id"]
-    media["metadata"] = metadata_expanded(edition)
-    media["audioFiles"] = [audio_file_json(edition, f) for f in edition.audio_files]
-    media["chapters"] = edition_chapters(edition)
-    media["ebookFile"] = None
+    media.update(media_full(edition))  # incl. expanded metadata
     media["tracks"] = audio_tracks(edition)
+    item["lastScan"] = None
+    item["scanVersion"] = None
     item["libraryFiles"] = []
     return item
 
@@ -363,12 +402,79 @@ SORT_KEYS = {
     "updatedAt": lambda e: e.updated_at,
     "size": edition_size,
     "media.duration": edition_duration,
+    # Only meaningful within one series; ABS ignores it for other filters.
+    "sequence": lambda e: (e.book.series_index is None, e.book.series_index or 0.0),
 }
 
 
-def sorted_editions(editions: list[Edition], sort: str | None, desc: bool) -> list[Edition]:
+def sorted_editions(editions: list[Edition], sort: str | None, desc: bool,
+                    filter_by: str | None = None) -> list[Edition]:
+    if sort == "sequence" and not (filter_by or "").startswith("series."):
+        sort = None  # ABS drops a sequence sort outside a series filter
     key = SORT_KEYS.get(sort or "media.metadata.title", SORT_KEYS["media.metadata.title"])
     return sorted(editions, key=key, reverse=desc)
+
+
+# ABS filters are "<group>.<base64 value>" (or a bare group like "issues").
+# We hold no genres/tags/publishers/languages, so those groups legitimately
+# match nothing — same as upstream with an empty column.
+FILTER_GROUPS = ("genres", "tags", "series", "authors", "progress", "narrators",
+                 "publishers", "publishedDecades", "missing", "languages", "tracks",
+                 "ebooks")
+
+
+def parse_filter(filter_by: str | None) -> tuple[str, str] | None:
+    """-> (group, decoded value), or None when there is no filter."""
+    if not filter_by:
+        return None
+    group = next((g for g in FILTER_GROUPS if filter_by.startswith(f"{g}.")), None)
+    if group is None:
+        return filter_by, ""
+    raw = unquote(filter_by[len(group) + 1 :])
+    try:
+        value = base64.b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        value = ""
+    return group, value
+
+
+def _progress_matches(progress: MediaProgress | None, value: str) -> bool:
+    finished = bool(progress and progress.is_finished)
+    started = bool(progress and progress.current_time > 0)
+    if value == "finished":
+        return finished
+    if value == "not-finished":
+        return not finished
+    if value == "in-progress":
+        return started and not finished
+    if value == "not-started":
+        return not started and not finished
+    return False
+
+
+def filtered_editions(
+    db: Session, editions: list[Edition], filter_by: str | None, user: User | None
+) -> list[Edition]:
+    parsed = parse_filter(filter_by)
+    if parsed is None:
+        return editions
+    group, value = parsed
+    if group == "series":
+        return [e for e in editions if f"ser_{e.book.series_id}" == value]
+    if group == "authors":
+        return [e for e in editions if f"aut_{e.book.author_id}" == value]
+    if group == "narrators":
+        return [e for e in editions if (e.narrator or e.label) == value]
+    if group == "progress" and user is not None:
+        by_edition = {
+            p.edition_id: p
+            for p in db.scalars(
+                select(MediaProgress).where(MediaProgress.user_id == user.id)
+            )
+        }
+        return [e for e in editions if _progress_matches(by_edition.get(e.id), value)]
+    # A group we hold no data for (genres, tags, issues, ...) matches nothing.
+    return []
 
 
 def progress_json(progress: MediaProgress, user: User) -> dict[str, Any]:
@@ -439,6 +545,45 @@ def author_entry(book: Book) -> dict[str, Any]:
         "numBooks": 0,
         "libraryId": payloads.LIBRARY_ID,
     }
+
+
+def author_json(author_id: int, name: str) -> dict[str, Any]:
+    """Author.toOldJSON — the single-author payload (no numBooks)."""
+    return {
+        "id": f"aut_{author_id}",
+        "asin": None,
+        "name": name,
+        "description": None,
+        "imagePath": None,
+        "libraryId": payloads.LIBRARY_ID,
+        "addedAt": payloads.LIBRARY_CREATED_AT_MS,
+        "updatedAt": payloads.LIBRARY_CREATED_AT_MS,
+    }
+
+
+def author_series_groups(editions: list[Edition]) -> list[dict[str, Any]]:
+    """`?include=items,series`: the author's items grouped by series, each
+    item's metadata.series flattened to the one series it is grouped under."""
+    groups: dict[int, dict[str, Any]] = {}
+    for edition in editions:
+        book = edition.book
+        if book.series is None:
+            continue
+        group = groups.setdefault(
+            book.series_id,
+            {"id": f"ser_{book.series_id}", "name": book.series.name, "items": []},
+        )
+        item = item_minified(edition)
+        item["media"]["metadata"]["series"] = {
+            "id": f"ser_{book.series_id}",
+            "name": book.series.name,
+            "nameIgnorePrefix": title_prefix_at_end(book.series.name),
+            "sequence": _sequence(book),
+        }
+        group["items"].append(item)
+    for group in groups.values():
+        group["items"].sort(key=lambda i: float(i["media"]["metadata"]["series"]["sequence"] or 0))
+    return list(groups.values())
 
 
 def search_library(db: Session, query: str, limit: int) -> dict[str, Any]:

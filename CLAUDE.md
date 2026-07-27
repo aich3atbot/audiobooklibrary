@@ -39,6 +39,10 @@ covers (`/api/items/:id/cover`) and direct-play streaming
 (`/public/session/:id/track/:index`) take no token — the apps send none, gated on the
 `serverVersion` we advertise. They live in `app/abs/public_routes.py` and `/public/` is
 open in `RequireAuthMiddleware`; putting either behind auth breaks covers and playback.
+Third-party clients (Lissen) are supported too, and they exercise paths the official app
+never touches: item detail **without** `expanded=1` (must return the full item, not the
+minified list shape), `?filter=<group>.<base64>` on the items list, the author landing
+page, and `POST /api/items/batch/get`.
 
 ## Key decisions (do not silently revisit)
 

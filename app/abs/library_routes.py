@@ -55,9 +55,14 @@ def library_items(
     sort: str | None = None,
     desc: str = "0",
     db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
 ):
     _check_library(library_id)
-    editions = catalogue.sorted_editions(catalogue.eligible_editions(db), sort, desc == "1")
+    filter_by = request.query_params.get("filter")
+    editions = catalogue.filtered_editions(
+        db, catalogue.eligible_editions(db), filter_by, user
+    )
+    editions = catalogue.sorted_editions(editions, sort, desc == "1", filter_by)
     total = len(editions)
     offset = page * limit if limit else 0
     if limit:
@@ -69,7 +74,7 @@ def library_items(
         "page": page,
         "sortBy": sort,
         "sortDesc": desc == "1",
-        "filterBy": request.query_params.get("filter"),
+        "filterBy": filter_by,
         "mediaType": "book",
         "minified": request.query_params.get("minified") == "1",
         "collapseseries": False,
@@ -134,6 +139,41 @@ def library_authors(library_id: str, db: Session = Depends(get_db)):
     return {"authors": sorted(counts.values(), key=lambda a: a["name"].lower())}
 
 
+@router.get("/authors/{author_id}")
+def author(author_id: str, include: str = "", db: Session = Depends(get_db)):
+    """The author landing page: `?include=items` (optionally `,series`) is how
+    clients list an author's books."""
+    editions = [
+        e for e in catalogue.eligible_editions(db)
+        if f"aut_{e.book.author_id}" == author_id
+    ]
+    if not editions:
+        raise HTTPException(status_code=404, detail="Author not found")
+    book = editions[0].book
+    payload = catalogue.author_json(book.author_id, book.author.name)
+    includes = include.split(",")
+    if "items" in includes:
+        editions = catalogue.sorted_editions(editions, "media.metadata.title", False)
+        if "series" in includes:
+            payload["series"] = catalogue.author_series_groups(editions)
+        payload["libraryItems"] = [catalogue.item_minified(e) for e in editions]
+    return payload
+
+
+@router.post("/items/batch/get")
+async def batch_get_items(request: Request, db: Session = Depends(get_db)):
+    body = await request.json()
+    item_ids = body.get("libraryItemIds") or []
+    if not item_ids:
+        raise HTTPException(status_code=403, detail="Invalid payload")
+    items = []
+    for item_id in item_ids:
+        edition = catalogue.get_edition_by_item_id(db, item_id)
+        if edition is not None:
+            items.append(catalogue.item_expanded(edition))
+    return {"libraryItems": items}
+
+
 @router.get("/libraries/{library_id}/search")
 def library_search(library_id: str, q: str = "", limit: int = 12,
                    db: Session = Depends(get_db)):
@@ -163,7 +203,10 @@ def library_collections(library_id: str, limit: int = 0, page: int = 0):
 def get_item(item_id: str, expanded: int = 0, include: str = "",
              db: Session = Depends(get_db), user: User = Depends(require_abs_user)):
     edition = _get_edition(db, item_id)
-    item = catalogue.item_expanded(edition) if expanded else catalogue.item_minified(edition)
+    # Without expanded=1 ABS still returns the *full* item (audio files and
+    # chapters), not the minified list shape — clients that skip the param
+    # can't play a book otherwise.
+    item = catalogue.item_expanded(edition) if expanded else catalogue.item_full(edition)
     if "progress" in include:
         progress = catalogue.get_progress(db, user, edition.id)
         item["userMediaProgress"] = (

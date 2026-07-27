@@ -138,6 +138,44 @@ def test_item_expanded(client, token, library):
     assert media["metadata"]["series"][0]["sequence"] == "1"
 
 
+def test_item_detail_without_expanded_is_the_full_item(client, token, library):
+    """ABS returns the *full* item (not the minified list shape) when a client
+    omits expanded=1 — Lissen does, and builds its chapter list from these."""
+    item_id = f"li_{library['mayor'].id}"
+    body = get(client, token, f"/api/items/{item_id}").json()
+    media = body["media"]
+
+    assert len(media["chapters"]) == 2
+    assert media["chapters"][0]["title"] == "Part 1"
+    assert len(media["audioFiles"]) == 2
+    assert media["libraryItemId"] == item_id
+    assert media["ebookFile"] is None
+    assert body["libraryFiles"] == []
+    # expanded metadata, not the minified block
+    assert media["metadata"]["authors"][0]["name"] == "Ryan Rimmel"
+    assert media["metadata"]["narrators"] == []
+    assert media["metadata"]["series"][0]["sequence"] == "1"
+    # playable tracks are expanded-only upstream
+    assert "tracks" not in media
+
+    # the fields clients deserialize as non-null (Lissen's Moshi adapters)
+    assert body["ino"] and body["libraryId"] and body["addedAt"] and body["ctimeMs"]
+    audio = media["audioFiles"][0]
+    assert audio["ino"] and audio["mimeType"] == "audio/mpeg"
+    assert audio["metadata"]["filename"] and audio["metadata"]["ext"]
+    assert audio["metadata"]["size"] > 0
+
+
+def test_item_detail_progress_include(client, token, library, user):
+    db = library["db"]
+    db.add(MediaProgress(user_id=user.id, edition_id=library["mayor"].id,
+                         current_time=10.0, duration=100.0))
+    db.commit()
+    body = get(client, token, f"/api/items/li_{library['mayor'].id}",
+               include="progress").json()
+    assert body["userMediaProgress"]["currentTime"] == 10.0
+
+
 def test_item_not_found(client, token, library):
     assert get(client, token, "/api/items/li_99999").status_code == 404
     assert get(client, token, "/api/items/garbage").status_code == 404

@@ -106,6 +106,21 @@ which then retries forever.
   series: [{id, name}], narrators: [], languages: [], publishers: [], publishedDecades: []}`
 - `GET /api/libraries/:id/series` / `/authors` → paged results like items (low priority;
   official app browse pages).
+- `GET /api/authors/:id?include=items[,series]` → `Author.toOldJSON` =
+  `{id, asin: null, name, description: null, imagePath: null, libraryId, addedAt,
+  updatedAt}`; with `items` add `libraryItems: [<minified>]`, with `series` also
+  `series: [{id, name, items: [<minified, metadata.series flattened to {id, name,
+  nameIgnorePrefix, sequence}>]}]` sorted by sequence. 404 for an unknown author. This is
+  the author landing page in third-party clients. (`/api/authors/:id/image` is
+  unauthenticated upstream; we have no author artwork and 404 it.)
+
+**Filters** (`?filter=` on `/items`) are `<group>.<base64 value>`, url-decoded then
+base64-decoded, or a bare group (`issues`, `missing`). Groups: genres, tags, series,
+authors, progress, narrators, publishers, publishedDecades, missing, languages, tracks,
+ebooks. We answer `series.<ser_id>`, `authors.<aut_id>`, `narrators.<name>` and
+`progress.<finished|in-progress|not-started|not-finished>` (per requesting user); any
+other group matches nothing, as upstream does with an empty column. `sort=sequence`
+applies **only** under a `series.` filter — ABS drops it otherwise.
 
 ## Library items
 
@@ -126,6 +141,15 @@ narratorName: "", seriesName: "<Series #idx>"|"", genres: [], publishedYear: nul
 publishedDate: null, publisher: null, description: null, isbn: null, asin: null,
 language: null, explicit: false, abridged: false}`
 
+**Three item shapes, and item detail is not the minified one.** `toOldJSONMinified()`
+(above) is for list/shelf endpoints only. `GET /api/items/:id` **without** `expanded=1`
+returns `toOldJSON()`: the base fields plus `lastScan`/`scanVersion`, `libraryFiles`, and
+a full `media` = `{id, libraryItemId, metadata: <expanded>, coverPath, tags, audioFiles,
+chapters, ebookFile}` — no `numTracks`/`numAudioFiles`/`numChapters`/`duration`/`size`
+counters and **no `tracks`**. Clients that skip `expanded=1` (Lissen) build their chapter
+list from `media.chapters`, falling back to `media.audioFiles`; answering them with the
+minified shape leaves a book unplayable ("The book has no chapters").
+
 `GET /api/items/:id?expanded=1&include=progress` → minified fields plus:
 - `media.metadata` gains `authors: [{id, name}]`, `narrators: []`,
   `series: [{id, name, sequence: "<idx as string>"}]`, `descriptionPlain`
@@ -138,7 +162,11 @@ language: null, explicit: false, abridged: false}`
 - `media.chapters`: `[{id, start, end, title}]` (seconds), `media.ebookFile: null`,
   `media.tracks`: audioTracks (see playback), `media.duration`, `media.size`,
   `media.libraryItemId`
-- top-level `libraryFiles: []` and, with include=progress, `userMediaProgress`
+- top-level `lastScan: null`, `scanVersion: null`, `libraryFiles: []` and, with
+  include=progress, `userMediaProgress`
+- `POST /api/items/batch/get` — body `{libraryItemIds: [...]}` → `{libraryItems:
+  [<expanded>]}`; **403** (not 400) on an empty list. Third-party clients resolve series
+  search hits through this.
 - `GET /api/items/:id/cover?width=&height=&format=&raw=` → image bytes (local cover file
   if present, else 302 to the Hardcover CDN cover_url). **No auth** — see Auth above.
 
