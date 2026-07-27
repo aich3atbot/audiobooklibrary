@@ -34,7 +34,11 @@ item is one *edition* (`li_<edition.id>`); only editions with `library_path` set
 exposed, progress/bookmarks are per edition, and multi-edition books carry their label
 in the item title. ABS logins are user accounts (the virtual admin is rejected); token
 `userId` is the account's stable uuid. Finishing any edition in an app marks the book
-read on Hardcover via `update_read_state`.
+read on Hardcover via `update_read_state`. **Not every ABS endpoint is authenticated**:
+covers (`/api/items/:id/cover`) and direct-play streaming
+(`/public/session/:id/track/:index`) take no token — the apps send none, gated on the
+`serverVersion` we advertise. They live in `app/abs/public_routes.py` and `/public/` is
+open in `RequireAuthMiddleware`; putting either behind auth breaks covers and playback.
 
 ## Key decisions (do not silently revisit)
 

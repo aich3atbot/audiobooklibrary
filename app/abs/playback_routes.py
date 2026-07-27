@@ -72,9 +72,17 @@ async def start_playback(
     session_id = f"play_{uuid.uuid4().hex}"
     duration = catalogue.edition_duration(edition)
 
+    # One open session per user+device: clients re-open a session on every
+    # playback error, so without this a retry storm grows the dict unbounded.
+    device_id = device_info["id"]
+    for stale_id, stale in list(open_sessions.items()):
+        if stale["user_id"] == user.id and stale.get("device_id") == device_id:
+            del open_sessions[stale_id]
+
     open_sessions[session_id] = {
         "edition_id": edition.id,
         "user_id": user.id,
+        "device_id": device_id,
         "started_at": payloads.now_ms(),
     }
 

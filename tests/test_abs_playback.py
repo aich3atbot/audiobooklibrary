@@ -89,6 +89,36 @@ def test_stream_file_with_range(client, token, library):
     assert partial.headers["content-range"].startswith("bytes 0-99/")
 
 
+def test_public_session_track_streams_without_token(client, token, library):
+    """Direct play (server >= 2.22.0) streams from /public/session/:id/track/:index
+    with no credential but the session id — and must not be redirected to /login."""
+    session_id = play(client, token, f"li_{library['mayor'].id}").json()["id"]
+
+    full = client.get(f"/public/session/{session_id}/track/1", follow_redirects=False)
+    assert full.status_code == 200
+    assert full.headers["content-type"] == "audio/mpeg"
+
+    partial = client.get(
+        f"/public/session/{session_id}/track/2", headers={"Range": "bytes=0-99"}
+    )
+    assert partial.status_code == 206
+    assert len(partial.content) == 100
+    assert partial.headers["content-range"].startswith("bytes 0-99/")
+
+
+def test_public_session_track_unknown_session_or_index(client, token, library):
+    session_id = play(client, token, f"li_{library['mayor'].id}").json()["id"]
+    assert client.get(f"/public/session/{session_id}/track/9").status_code == 404
+    assert client.get("/public/session/play_missing/track/1").status_code == 404
+
+
+def test_play_replaces_previous_session_for_device(client, token, library):
+    first = play(client, token, f"li_{library['mayor'].id}").json()["id"]
+    second = play(client, token, f"li_{library['hail'].id}").json()["id"]
+    assert first not in open_sessions
+    assert second in open_sessions
+
+
 def test_download_file_attachment(client, token, library):
     item_id = f"li_{library['mayor'].id}"
     expanded = get(client, token, f"/api/items/{item_id}", expanded=1).json()

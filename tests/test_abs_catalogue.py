@@ -143,22 +143,24 @@ def test_item_not_found(client, token, library):
     assert get(client, token, "/api/items/garbage").status_code == 404
 
 
-def test_cover_local_file(client, token, library):
+def test_cover_local_file(client, library):
+    """Covers are unauthenticated (as upstream): since server 2.17.0 the
+    official apps send no token with cover requests at all."""
     item_id = f"li_{library['mayor'].id}"
-    response = get(client, token, f"/api/items/{item_id}/cover")
+    response = client.get(f"/api/items/{item_id}/cover")
     assert response.status_code == 200
     assert response.content == b"cover-bytes"
 
 
-def test_cover_redirects_to_hardcover(client, token, library):
+def test_cover_redirects_to_hardcover(client, library):
     item_id = f"li_{library['hail'].id}"
-    response = client.get(
-        f"/api/items/{item_id}/cover",
-        headers={"Authorization": f"Bearer {token}"},
-        follow_redirects=False,
-    )
+    response = client.get(f"/api/items/{item_id}/cover", follow_redirects=False)
     assert response.status_code == 302
     assert response.headers["location"] == "https://assets.hardcover.app/phm.jpg"
+
+
+def test_cover_unknown_item_404(client, library):
+    assert client.get("/api/items/li_99999/cover").status_code == 404
 
 
 def test_personalized_shelves(client, token, library, user):

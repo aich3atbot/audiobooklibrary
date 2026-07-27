@@ -25,8 +25,10 @@ ADMIN_USERNAME = "admin"
 # /status, /ping, /healthcheck: ABS client discovery must be public.
 OPEN_PATHS = {"/login", "/healthz", "/status", "/ping", "/healthcheck"}
 # /api/ and /auth/ are the ABS surface: bearer-token auth enforced per-route
-# (app/abs/deps.py), not by this cookie-redirect middleware.
-OPEN_PREFIXES = ("/static/", "/api/", "/auth/")
+# (app/abs/deps.py), not by this cookie-redirect middleware. /public/ is the
+# ABS surface that carries no token at all (app/abs/public_routes.py) — a
+# redirect to /login there feeds an HTML page to the app's audio player.
+OPEN_PREFIXES = ("/static/", "/api/", "/auth/", "/public/")
 
 
 def resolve_session_secret() -> str:

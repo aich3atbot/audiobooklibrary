@@ -3,7 +3,6 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.abs import catalogue, payloads
@@ -173,12 +172,5 @@ def get_item(item_id: str, expanded: int = 0, include: str = "",
     return item
 
 
-@router.get("/items/{item_id}/cover")
-def item_cover(item_id: str, db: Session = Depends(get_db)):
-    edition = _get_edition(db, item_id)
-    cover = catalogue.find_cover_file(edition)
-    if cover is not None:
-        return FileResponse(cover)
-    if edition.book.cover_url:
-        return RedirectResponse(url=edition.book.cover_url, status_code=302)
-    raise HTTPException(status_code=404, detail="No cover")
+# GET /api/items/:id/cover is unauthenticated upstream and lives in
+# app/abs/public_routes.py.

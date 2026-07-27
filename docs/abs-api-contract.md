@@ -24,8 +24,23 @@ narrator credits or its label.
 
 Tokens are HS256 JWTs, payload `{userId, username, type: "access"|"refresh", exp}`.
 Access expiry 1h, refresh 30d (ABS defaults). Accepted via `Authorization: Bearer <t>`
-**or `?token=<t>` query param** (streaming/cover URLs rely on this). Legacy tokens have no
+**or `?token=<t>` query param** (streaming URLs rely on this). Legacy tokens have no
 `exp` and no `type` and are accepted indefinitely.
+
+**Endpoints that must take no auth at all** (upstream `Auth.ignorePatterns` + the
+`/public` router, and the app version-gates on the `serverVersion` we advertise, so these
+are not optional):
+
+- `GET /api/items/:id/cover` — since server 2.17.0 the apps send *no* token with cover
+  requests (Android loads them through Glide's bare `HttpURLConnection`, which carries no
+  headers). Requiring auth here shows blank covers everywhere, with 401s in the log.
+- `GET /api/authors/:id/image` — same exemption upstream; we don't serve author images
+  (our author `coverPath` is always null, so the apps never ask).
+- `GET /public/session/:id/track/:index` — see Playback; the session id is the credential.
+
+Our UI's cookie-redirect middleware must leave `/public/` alone too — a 303 to `/login`
+hands the HTML login page to the app's audio player (`UnrecognizedInputFormatException`),
+which then retries forever.
 
 - `POST /login` — JSON `{username, password}`. The mobile app sends header
   `x-return-tokens: true`; when present include `user.refreshToken`, else set it null and
@@ -125,7 +140,7 @@ language: null, explicit: false, abridged: false}`
   `media.libraryItemId`
 - top-level `libraryFiles: []` and, with include=progress, `userMediaProgress`
 - `GET /api/items/:id/cover?width=&height=&format=&raw=` → image bytes (local cover file
-  if present, else proxy the Hardcover CDN cover_url)
+  if present, else 302 to the Hardcover CDN cover_url). **No auth** — see Auth above.
 
 ## Playback
 
@@ -150,7 +165,13 @@ language: null, explicit: false, abridged: false}`
  "libraryItem": <expanded library item>}
 ```
   playMethod: 0=direct play. startTime = saved progress currentTime (0 if finished — ABS
-  restarts finished books).
+  restarts finished books). One open session per user+device: opening a new one drops the
+  device's previous session (clients re-open on every playback error).
+- `GET /public/session/:id/track/:index` — **how the app actually direct-plays** since
+  server 2.22.0 (advplyr/audiobookshelf#4263): it ignores the session's `contentUrl` and
+  streams here, unauthenticated, matching `audioTracks[].index` (1-based). 404 for an
+  unknown session or index; Range support required (seeking). Only the pre-2.22.0 path
+  uses `contentUrl` with `?token=`.
 - `GET /api/items/:id/file/:ino` — stream with HTTP Range support (`?token=` auth).
 - `GET /api/items/:id/file/:ino/download` — same but `Content-Disposition: attachment`
   (the app's offline download fetches every audio file this way).
@@ -212,7 +233,8 @@ Socket failure only shows a "disconnected" indicator; REST keeps working.
 
 1. `GET /status` (server check) → 2. `POST /login` (`x-return-tokens: true`) →
 3. socket connect + `auth` → 4. `GET /api/libraries` → 5. personalized/items browsing →
-6. `POST /api/items/:id/play` → stream contentUrl with Range → 7. `/api/session/:id/sync`
+6. `POST /api/items/:id/play` → stream `/public/session/:id/track/:index` with Range
+(pre-2.22.0 servers: `contentUrl`) → 7. `/api/session/:id/sync`
 every ~15s, `close` on stop. Offline: download each audio file + cover, then
 `/api/session/local(-all)` when back online. Token expiry → `POST /auth/refresh` with
 `x-refresh-token`.
