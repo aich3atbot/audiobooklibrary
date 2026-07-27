@@ -575,10 +575,12 @@ Built as an experiment (the user may not keep it), but first-class.
   progress and bookmarks; multi-edition items carry their label in the display title;
   narrators surface in metadata and filterdata. **Read state stays book-level**:
   finishing any edition marks the book read on the user's Hardcover.
-- **Migration** (`7e21c3a90d44`): every book with pipeline state got one unlabelled
-  edition whose path is byte-identical to the old book path — DB-only, no files moved.
-  ABS item ids changed (`li_<book.id>` → `li_<edition.id>`); server-side progress
-  migrated, apps re-fetch and may 404 one stale sync.
+- **Migration**: the editions rollout added one unlabelled edition per book with
+  pipeline state, at a path byte-identical to the old book path — DB-only, no files
+  moved. ABS item ids changed (`li_<book.id>` → `li_<edition.id>`); server-side progress
+  migrated, apps re-fetch and may 404 one stale sync. That revision has since been
+  squashed away: the Alembic history is now the single revision `4279694b0300`, which
+  creates the current schema outright.
 
 ## Future work (out of scope for this build)
 

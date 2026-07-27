@@ -15,9 +15,9 @@ replaced Prowlarr), the **multi-user conversion** (mandatory accounts, virtual a
 per-user Hardcover sync and ABS progress over a shared /audiobooks store — see plan.md
 "Multi-user conversion"), and **multi-edition support** (a book can hold several
 recordings as `edition` rows — see plan.md "Multi-edition support") are built, tested,
-and committed. The Alembic history is the squashed initial revision plus the editions
-migration `7e21c3a90d44` (backfills one unlabelled edition per book; DB-only, no files
-move; existing installs migrate in place). Run `uv run pytest` (all external APIs are
+and committed. The Alembic history is a **single squashed revision**, `4279694b0300`
+(creates the whole current schema; no upgrade path from any earlier revision — the only
+live database, `data/config/`, was stamped at it by hand). Run `uv run pytest` (all external APIs are
 mocked with respx). Awaiting real-world verification: the ABS API with the official app
 (per user account; note item ids changed to `li_<edition.id>`), one real UI grab →
 download → import through the user's own Deluge, the admin/imports flows, and the new

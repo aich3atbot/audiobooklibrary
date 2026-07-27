@@ -1,8 +1,13 @@
-"""initial multi-user schema
+"""initial schema
 
-Revision ID: 91acd8a782ef
-Revises: 
-Create Date: 2026-07-13 01:13:11.060608
+The whole current schema in one revision: the previous history (initial
+multi-user schema + editions) was squashed away, so there is no upgrade path
+from any earlier revision. Existing databases were stamped at this revision by
+hand after verifying their schema matches what upgrade() creates.
+
+Revision ID: 4279694b0300
+Revises:
+Create Date: 2026-07-27 00:46:34.024909
 
 """
 from typing import Sequence, Union
@@ -11,7 +16,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = '91acd8a782ef'
+revision: str = '4279694b0300'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -62,8 +67,6 @@ def upgrade() -> None:
     sa.Column('series_id', sa.Integer(), nullable=True),
     sa.Column('series_index', sa.Float(), nullable=True),
     sa.Column('cover_url', sa.Text(), nullable=True),
-    sa.Column('download_state', sa.Enum('none', 'wanted', 'grabbed', 'downloading', 'downloaded', 'imported', 'failed', name='downloadstate', native_enum=False), nullable=False),
-    sa.Column('library_path', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['author_id'], ['author.id'], ),
@@ -73,77 +76,22 @@ def upgrade() -> None:
     with op.batch_alter_table('book', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_book_hardcover_id'), ['hardcover_id'], unique=True)
 
-    op.create_table('audio_file',
+    op.create_table('edition',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('book_id', sa.Integer(), nullable=False),
-    sa.Column('index', sa.Integer(), nullable=False),
-    sa.Column('rel_path', sa.Text(), nullable=False),
-    sa.Column('size', sa.Integer(), nullable=False),
-    sa.Column('mtime_ms', sa.Integer(), nullable=False),
-    sa.Column('duration', sa.Float(), nullable=True),
-    sa.Column('mime_type', sa.String(length=50), nullable=False),
-    sa.Column('chapters_json', sa.Text(), nullable=True),
-    sa.ForeignKeyConstraint(['book_id'], ['book.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    with op.batch_alter_table('audio_file', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_audio_file_book_id'), ['book_id'], unique=False)
-
-    op.create_table('bookmark',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('user_id', sa.Integer(), nullable=False),
-    sa.Column('book_id', sa.Integer(), nullable=False),
-    sa.Column('time', sa.Float(), nullable=False),
-    sa.Column('title', sa.Text(), nullable=False),
+    sa.Column('hardcover_edition_id', sa.Integer(), nullable=True),
+    sa.Column('label', sa.String(length=200), server_default='', nullable=False),
+    sa.Column('narrator', sa.String(length=500), server_default='', nullable=False),
+    sa.Column('download_state', sa.Enum('none', 'grabbed', 'downloading', 'imported', 'failed', name='downloadstate', native_enum=False), nullable=False),
+    sa.Column('library_path', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
-    sa.ForeignKeyConstraint(['book_id'], ['book.id'], ),
-    sa.ForeignKeyConstraint(['user_id'], ['user.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
-    with op.batch_alter_table('bookmark', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_bookmark_book_id'), ['book_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_bookmark_user_id'), ['user_id'], unique=False)
-
-    op.create_table('media_progress',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('user_id', sa.Integer(), nullable=False),
-    sa.Column('book_id', sa.Integer(), nullable=False),
-    sa.Column('current_time', sa.Float(), nullable=False),
-    sa.Column('duration', sa.Float(), nullable=False),
-    sa.Column('is_finished', sa.Boolean(), server_default='0', nullable=False),
-    sa.Column('started_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
-    sa.Column('finished_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
-    sa.ForeignKeyConstraint(['book_id'], ['book.id'], ),
-    sa.ForeignKeyConstraint(['user_id'], ['user.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['book_id'], ['book.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('user_id', 'book_id')
+    sa.UniqueConstraint('book_id', 'label')
     )
-    with op.batch_alter_table('media_progress', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_media_progress_book_id'), ['book_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_media_progress_user_id'), ['user_id'], unique=False)
-
-    op.create_table('release',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('book_id', sa.Integer(), nullable=False),
-    sa.Column('user_id', sa.Integer(), nullable=True),
-    sa.Column('guid', sa.Text(), nullable=False),
-    sa.Column('indexer', sa.String(length=100), nullable=False),
-    sa.Column('title', sa.Text(), nullable=False),
-    sa.Column('size', sa.Integer(), nullable=True),
-    sa.Column('info_hash', sa.String(length=64), nullable=True),
-    sa.Column('magnet_uri', sa.Text(), nullable=True),
-    sa.Column('progress', sa.Float(), nullable=True),
-    sa.Column('grabbed_at', sa.DateTime(), nullable=True),
-    sa.Column('status', sa.String(length=50), nullable=False),
-    sa.Column('error', sa.Text(), nullable=True),
-    sa.ForeignKeyConstraint(['book_id'], ['book.id'], ),
-    sa.ForeignKeyConstraint(['user_id'], ['user.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id')
-    )
-    with op.batch_alter_table('release', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_release_book_id'), ['book_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_release_info_hash'), ['info_hash'], unique=False)
+    with op.batch_alter_table('edition', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_edition_book_id'), ['book_id'], unique=False)
 
     op.create_table('user_book',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -164,35 +112,111 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_user_book_book_id'), ['book_id'], unique=False)
         batch_op.create_index(batch_op.f('ix_user_book_user_id'), ['user_id'], unique=False)
 
+    op.create_table('audio_file',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('edition_id', sa.Integer(), nullable=False),
+    sa.Column('index', sa.Integer(), nullable=False),
+    sa.Column('rel_path', sa.Text(), nullable=False),
+    sa.Column('size', sa.Integer(), nullable=False),
+    sa.Column('mtime_ms', sa.Integer(), nullable=False),
+    sa.Column('duration', sa.Float(), nullable=True),
+    sa.Column('mime_type', sa.String(length=50), nullable=False),
+    sa.Column('chapters_json', sa.Text(), nullable=True),
+    sa.ForeignKeyConstraint(['edition_id'], ['edition.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    with op.batch_alter_table('audio_file', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_audio_file_edition_id'), ['edition_id'], unique=False)
+
+    op.create_table('bookmark',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.Column('edition_id', sa.Integer(), nullable=False),
+    sa.Column('time', sa.Float(), nullable=False),
+    sa.Column('title', sa.Text(), nullable=False),
+    sa.Column('created_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.ForeignKeyConstraint(['edition_id'], ['edition.id'], ),
+    sa.ForeignKeyConstraint(['user_id'], ['user.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    with op.batch_alter_table('bookmark', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_bookmark_edition_id'), ['edition_id'], unique=False)
+        batch_op.create_index(batch_op.f('ix_bookmark_user_id'), ['user_id'], unique=False)
+
+    op.create_table('media_progress',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.Column('edition_id', sa.Integer(), nullable=False),
+    sa.Column('current_time', sa.Float(), nullable=False),
+    sa.Column('duration', sa.Float(), nullable=False),
+    sa.Column('is_finished', sa.Boolean(), server_default='0', nullable=False),
+    sa.Column('started_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('finished_at', sa.DateTime(), nullable=True),
+    sa.Column('updated_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.ForeignKeyConstraint(['edition_id'], ['edition.id'], ),
+    sa.ForeignKeyConstraint(['user_id'], ['user.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('user_id', 'edition_id')
+    )
+    with op.batch_alter_table('media_progress', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_media_progress_edition_id'), ['edition_id'], unique=False)
+        batch_op.create_index(batch_op.f('ix_media_progress_user_id'), ['user_id'], unique=False)
+
+    op.create_table('release',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('edition_id', sa.Integer(), nullable=True),
+    sa.Column('user_id', sa.Integer(), nullable=True),
+    sa.Column('guid', sa.Text(), nullable=False),
+    sa.Column('indexer', sa.String(length=100), nullable=False),
+    sa.Column('title', sa.Text(), nullable=False),
+    sa.Column('size', sa.Integer(), nullable=True),
+    sa.Column('info_hash', sa.String(length=64), nullable=True),
+    sa.Column('magnet_uri', sa.Text(), nullable=True),
+    sa.Column('progress', sa.Float(), nullable=True),
+    sa.Column('grabbed_at', sa.DateTime(), nullable=True),
+    sa.Column('status', sa.String(length=50), nullable=False),
+    sa.Column('error', sa.Text(), nullable=True),
+    sa.ForeignKeyConstraint(['edition_id'], ['edition.id'], ),
+    sa.ForeignKeyConstraint(['user_id'], ['user.id'], ondelete='SET NULL'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    with op.batch_alter_table('release', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_release_edition_id'), ['edition_id'], unique=False)
+        batch_op.create_index(batch_op.f('ix_release_info_hash'), ['info_hash'], unique=False)
+
     # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     # ### commands auto generated by Alembic - please adjust! ###
+    with op.batch_alter_table('release', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_release_info_hash'))
+        batch_op.drop_index(batch_op.f('ix_release_edition_id'))
+
+    op.drop_table('release')
+    with op.batch_alter_table('media_progress', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_media_progress_user_id'))
+        batch_op.drop_index(batch_op.f('ix_media_progress_edition_id'))
+
+    op.drop_table('media_progress')
+    with op.batch_alter_table('bookmark', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_bookmark_user_id'))
+        batch_op.drop_index(batch_op.f('ix_bookmark_edition_id'))
+
+    op.drop_table('bookmark')
+    with op.batch_alter_table('audio_file', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_audio_file_edition_id'))
+
+    op.drop_table('audio_file')
     with op.batch_alter_table('user_book', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_user_book_user_id'))
         batch_op.drop_index(batch_op.f('ix_user_book_book_id'))
 
     op.drop_table('user_book')
-    with op.batch_alter_table('release', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_release_info_hash'))
-        batch_op.drop_index(batch_op.f('ix_release_book_id'))
+    with op.batch_alter_table('edition', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_edition_book_id'))
 
-    op.drop_table('release')
-    with op.batch_alter_table('media_progress', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_media_progress_user_id'))
-        batch_op.drop_index(batch_op.f('ix_media_progress_book_id'))
-
-    op.drop_table('media_progress')
-    with op.batch_alter_table('bookmark', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_bookmark_user_id'))
-        batch_op.drop_index(batch_op.f('ix_bookmark_book_id'))
-
-    op.drop_table('bookmark')
-    with op.batch_alter_table('audio_file', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_audio_file_book_id'))
-
-    op.drop_table('audio_file')
+    op.drop_table('edition')
     with op.batch_alter_table('book', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_book_hardcover_id'))
 
