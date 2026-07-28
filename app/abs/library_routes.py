@@ -149,8 +149,7 @@ def author(author_id: str, include: str = "", db: Session = Depends(get_db)):
     ]
     if not editions:
         raise HTTPException(status_code=404, detail="Author not found")
-    book = editions[0].book
-    payload = catalogue.author_json(book.author_id, book.author.name)
+    payload = catalogue.author_json(editions[0].book.author)
     includes = include.split(",")
     if "items" in includes:
         editions = catalogue.sorted_editions(editions, "media.metadata.title", False)

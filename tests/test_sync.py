@@ -6,7 +6,12 @@ import respx
 
 from app.clients.hardcover import API_URL, PAGE_SIZE, HardcoverClient
 from app.models import AppState, Author, Book, ReadState, Release, Series, UserBook
-from app.services.sync import parse_read_at, pick_series, sync_from_hardcover
+from app.services.sync import (
+    backfill_author_images,
+    parse_read_at,
+    pick_series,
+    sync_from_hardcover,
+)
 
 
 @pytest.fixture
@@ -34,6 +39,7 @@ def entry(
     last_read_date=None,
     reads=None,
     cover=None,
+    author_image=None,
 ):
     return {
         "id": ub_id,
@@ -43,7 +49,15 @@ def entry(
             "id": book_id,
             "title": title,
             "cached_image": {"url": cover} if cover else None,
-            "contributions": [{"author": {"id": author_id, "name": author_name}}],
+            "contributions": [
+                {
+                    "author": {
+                        "id": author_id,
+                        "name": author_name,
+                        "cached_image": {"url": author_image} if author_image else None,
+                    }
+                }
+            ],
             "book_series": book_series or [],
         },
         "user_book_reads": reads or [],
@@ -111,7 +125,8 @@ def test_sync_creates_books(clean_db, user):
                     cover="https://assets.hardcover.app/cover.jpg",
                 ),
                 entry(status_id=2, ub_id=2, book_id=1001, title="Standalone", author_id=500,
-                      author_name="Brandon Sanderson"),
+                      author_name="Brandon Sanderson",
+                      author_image="https://assets.hardcover.app/authors/500/bs.jpg"),
             ]
         )
     )
@@ -131,6 +146,7 @@ def test_sync_creates_books(clean_db, user):
     assert ub.read_at == date(2024, 3, 1)
     # one shared author row, standalone book has no series
     assert clean_db.query(Author).count() == 1
+    assert book.author.image_url == "https://assets.hardcover.app/authors/500/bs.jpg"
     other = clean_db.query(Book).filter_by(hardcover_id=1001).one()
     assert other.series is None
     assert user_book_for(clean_db, user, 1001).read_state == ReadState.READING
@@ -240,3 +256,33 @@ def test_bearer_prefix_stripped_from_token():
     with HardcoverClient("Bearer abc123") as client:
         client.fetch_user_books()
     assert route.calls[0].request.headers["Authorization"] == "Bearer abc123"
+
+
+@respx.mock
+def test_backfill_author_images_fills_and_marks_the_rest(clean_db):
+    """Authors stored before we asked Hardcover for photos get filled in once;
+    an author Hardcover has no photo for is marked so we stop asking."""
+    with_photo = Author(hardcover_id=500, name="Brandon Sanderson")
+    without = Author(hardcover_id=501, name="Obscure Author")
+    local_only = Author(hardcover_id=None, name="Hand Added")
+    clean_db.add_all([with_photo, without, local_only])
+    clean_db.commit()
+
+    route = respx.post(API_URL).mock(
+        return_value=httpx.Response(200, json={"data": {"authors": [
+            {"id": 500, "cached_image": {"url": "https://assets.hardcover.app/a/500.jpg"}},
+            {"id": 501, "cached_image": None},
+        ]}})
+    )
+
+    with HardcoverClient("token") as client:
+        assert backfill_author_images(clean_db, client) == 1
+
+        clean_db.expire_all()
+        assert with_photo.image_url == "https://assets.hardcover.app/a/500.jpg"
+        assert without.image_url == ""
+        assert local_only.image_url is None  # no hardcover id, nothing to ask
+
+        # nothing left to look up: no second request
+        assert backfill_author_images(clean_db, client) == 0
+    assert route.call_count == 1

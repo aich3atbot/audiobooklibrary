@@ -146,6 +146,37 @@ def test_author_unknown_404(client, token, library):
     assert get(client, token, "/api/authors/aut_9999").status_code == 404
 
 
+def test_author_image_redirects_to_hardcover(client, token, library):
+    """Author photos come from Hardcover's CDN, and the endpoint takes no
+    token — upstream exempts it exactly like covers."""
+    db = library["db"]
+    author = library["hail"].book.author
+    author.image_url = "https://assets.hardcover.app/authors/501/weir.jpg"
+    db.commit()
+
+    body = get(client, token, f"/api/authors/aut_{author.id}").json()
+    assert body["imagePath"] == "internal"
+
+    response = client.get(f"/api/authors/aut_{author.id}/image", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == author.image_url
+
+
+def test_author_image_missing_or_unknown_404(client, token, library):
+    author = library["hail"].book.author
+    assert author.image_url in (None, "")
+    assert client.get(f"/api/authors/aut_{author.id}/image").status_code == 404
+    assert client.get("/api/authors/aut_9999/image").status_code == 404
+    assert client.get("/api/authors/garbage/image").status_code == 404
+
+
+def test_author_image_path_null_without_an_image(client, token, library):
+    author_id = f"aut_{library['hail'].book.author_id}"
+    assert get(client, token, f"/api/authors/{author_id}").json()["imagePath"] is None
+    authors = get(client, token, "/api/libraries/lib_audiobooks/authors").json()["authors"]
+    assert all(a["imagePath"] is None for a in authors)
+
+
 def test_batch_get_items(client, token, library):
     mayor = f"li_{library['mayor'].id}"
     hail = f"li_{library['hail'].id}"

@@ -1,4 +1,4 @@
-"""The Alembic history is a single squashed revision. Upgrading an empty
+"""The Alembic history starts from one squashed revision. Upgrading an empty
 database to head must produce exactly the schema the models expect, and the
 ORM must be able to read and write it."""
 
@@ -28,11 +28,15 @@ def migrated(test_settings, tmp_path, monkeypatch):
     engine.dispose()
 
 
-def test_history_is_a_single_revision():
+def test_history_is_linear_from_the_squashed_base():
+    """One unbroken chain rooted at the squash (4279694b0300) — no branches,
+    and nothing below it, since there is no upgrade path from before it."""
     script = ScriptDirectory(str(REPO / "alembic"))
     revisions = list(script.walk_revisions())
-    assert len(revisions) == 1
-    assert revisions[0].down_revision is None
+    assert revisions[-1].revision == "4279694b0300"
+    assert revisions[-1].down_revision is None
+    for older, newer in zip(revisions[1:], revisions[:-1]):
+        assert newer.down_revision == older.revision
 
 
 def test_migrated_schema_matches_the_models(migrated):

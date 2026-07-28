@@ -88,6 +88,8 @@ def upsert_book_metadata(session: Session, book_data: dict[str, Any], caches: Ca
             authors[author_data["id"]] = author
     else:
         author.name = author_data["name"]
+    # "" records "Hardcover has no photo", so the backfill stops asking.
+    author.image_url = (author_data.get("cached_image") or {}).get("url") or ""
 
     series_data, series_index = pick_series(book_data.get("book_series") or [])
     series = None
@@ -322,6 +324,46 @@ def run_sync_for_user(user_id: int) -> dict[str, int]:
                 raise
 
 
+AUTHOR_IMAGE_BATCH = 50
+
+
+def backfill_author_images(session: Session, client: HardcoverClient) -> int:
+    """Fill in photos for authors stored before we asked Hardcover for them.
+    Only NULL rows are fetched — once looked up, an author without a photo
+    holds "" and is never asked about again."""
+    authors = session.scalars(
+        select(Author)
+        .where(Author.hardcover_id.is_not(None), Author.image_url.is_(None))
+        .order_by(Author.id)
+    ).all()
+    filled = 0
+    for start in range(0, len(authors), AUTHOR_IMAGE_BATCH):
+        batch = authors[start : start + AUTHOR_IMAGE_BATCH]
+        images = client.fetch_author_images([a.hardcover_id for a in batch])
+        for author in batch:
+            author.image_url = images.get(author.hardcover_id, "")
+            if author.image_url:
+                filled += 1
+    if authors:
+        session.commit()
+    return filled
+
+
+def run_author_image_backfill() -> int:
+    """Once-per-sync-pass top-up, run with the first available token (author
+    photos are shared metadata, so any user's token will do)."""
+    with get_sessionmaker()() as session:
+        user = session.scalars(
+            select(User)
+            .where(User.enabled, User.hardcover_token != "")
+            .order_by(User.id)
+        ).first()
+        if user is None:
+            return 0
+        with HardcoverClient(user.hardcover_token) as client:
+            return backfill_author_images(session, client)
+
+
 def run_sync_all() -> dict[str, int]:
     """Sync every enabled user that has a token; per-user failures are
     isolated so one bad token can't block the others."""
@@ -345,6 +387,14 @@ def run_sync_all() -> dict[str, int]:
         totals["users"] += 1
         for key in ("created", "updated", "total"):
             totals[key] += result[key]
+
+    try:
+        filled = run_author_image_backfill()
+        if filled:
+            logger.info("Author images: filled in %d", filled)
+    except Exception:
+        # Cosmetic metadata; never fail a sync pass over it.
+        logger.exception("Author image backfill failed")
     return totals
 
 

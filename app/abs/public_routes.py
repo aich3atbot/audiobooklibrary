@@ -36,6 +36,16 @@ def item_cover(item_id: str, db: Session = Depends(get_db)):
     raise HTTPException(status_code=404, detail="No cover")
 
 
+@router.get("/api/authors/{author_id}/image")
+def author_image(author_id: str, db: Session = Depends(get_db)):
+    """Author photo, from Hardcover's CDN. Unauthenticated like covers —
+    upstream exempts this exact path too."""
+    author = catalogue.get_author_by_id(db, author_id)
+    if author is None or not author.image_url:
+        raise HTTPException(status_code=404, detail="No author image")
+    return RedirectResponse(url=author.image_url, status_code=302)
+
+
 @router.get("/public/session/{session_id}/track/{index}")
 def session_track(session_id: str, index: int, db: Session = Depends(get_db)):
     """Stream one track of an open playback session (direct play)."""

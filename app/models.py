@@ -112,6 +112,9 @@ class Author(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     hardcover_id: Mapped[int | None] = mapped_column(Integer, unique=True)
     name: Mapped[str] = mapped_column(String(500))
+    # Hardcover's author photo. NULL = never looked up, "" = looked up and
+    # there is none (so the backfill doesn't ask again every startup).
+    image_url: Mapped[str | None] = mapped_column(Text)
 
     books: Mapped[list["Book"]] = relationship(back_populates="author")
 

@@ -20,7 +20,7 @@ USER_BOOK_FIELDS = """
         title
         cached_image
         contributions {
-          author { id name }
+          author { id name cached_image }
         }
         book_series {
           position
@@ -60,7 +60,7 @@ query BookById($id: Int!) {
     title
     cached_image
     contributions {
-      author { id name }
+      author { id name cached_image }
     }
     book_series {
       position
@@ -88,7 +88,7 @@ query SeriesBooks($sid: Int!) {
       cached_image
       users_count
       contributions {
-        author { id name }
+        author { id name cached_image }
       }
     }
   }
@@ -122,6 +122,18 @@ query AudioEditions($bookId: Int!) {
 # The contribution role string is inconsistent in the wild: usually
 # "Narrator", but also "narrator", "Reader", "Sprecher"; null for the author.
 NARRATOR_ROLES = {"narrator", "reader", "sprecher"}
+
+
+# Author photos for authors already in the library, verified live 2026-07-28.
+# `cached_image` has the same shape as a book's.
+AUTHOR_IMAGES_QUERY = """
+query AuthorImages($ids: [Int!]) {
+  authors(where: {id: {_in: $ids}}) {
+    id
+    cached_image
+  }
+}
+"""
 
 
 # search results is raw Typesense JSON (jsonb), not typed GraphQL fields
@@ -187,6 +199,17 @@ class HardcoverClient:
         if payload.get("errors"):
             raise HardcoverError(f"Hardcover query failed: {payload['errors']}")
         return payload["data"]
+
+    def fetch_author_images(self, author_ids: list[int]) -> dict[int, str]:
+        """Author photo urls keyed by Hardcover author id; authors without one
+        are simply absent."""
+        data = self.execute(AUTHOR_IMAGES_QUERY, {"ids": author_ids})
+        images = {}
+        for row in data.get("authors") or []:
+            url = (row.get("cached_image") or {}).get("url")
+            if url:
+                images[row["id"]] = url
+        return images
 
     def insert_user_book(
         self, book_id: int, status_id: int, last_read_date: str | None = None

@@ -60,7 +60,8 @@ One FastAPI process running:
 
 - **user** — id, uuid (ABS userId), username (unique), password_hash (scrypt), hardcover_token,
   enabled, created_at, last_sync_at, last_sync_result. The `admin` account is virtual — never a row.
-- **author** — id, hardcover_id, name
+- **author** — id, hardcover_id, name, image_url (Hardcover's author photo; NULL = never
+  looked up, "" = Hardcover has none)
 - **series** — id, hardcover_id, name
 - **book** — shared metadata only: id, hardcover_id, title, author_id,
   series_id (nullable), series_index (nullable), cover_url, created_at, updated_at.

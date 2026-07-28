@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.abs import payloads
 from app.config import get_settings
-from app.models import Book, Bookmark, Edition, MediaProgress, User
+from app.models import Author, Book, Bookmark, Edition, MediaProgress, User
 
 COVER_NAMES = ("cover", "folder")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
@@ -54,6 +54,27 @@ def get_edition_by_item_id(db: Session, item_id: str) -> Edition | None:
     if edition is None or not edition.library_path:
         return None
     return edition
+
+
+def get_author_by_id(db: Session, author_id: str) -> Author | None:
+    """`aut_<author.id>` -> Author, and only authors with an exposed edition,
+    matching what the rest of the API admits exists."""
+    if not author_id.startswith("aut_"):
+        return None
+    try:
+        pk = int(author_id[4:])
+    except ValueError:
+        return None
+    author = db.get(Author, pk)
+    if author is None:
+        return None
+    exposed = db.scalar(
+        select(Edition.id)
+        .join(Edition.book)
+        .where(Book.author_id == pk, Edition.library_path.is_not(None))
+        .limit(1)
+    )
+    return author if exposed else None
 
 
 def title_prefix_at_end(title: str) -> str:
@@ -544,6 +565,13 @@ def all_bookmarks(db: Session, user: User) -> list[dict[str, Any]]:
     return [bookmark_json(row) for row in rows]
 
 
+def author_image_path(author) -> str | None:
+    """ABS reports a server-side path here and clients only test it for
+    null-ness before asking /api/authors/:id/image — same as coverPath, our
+    remote images report "internal"."""
+    return "internal" if author.image_url else None
+
+
 def author_entry(book: Book) -> dict[str, Any]:
     return {
         "id": f"aut_{book.author_id}",
@@ -551,7 +579,7 @@ def author_entry(book: Book) -> dict[str, Any]:
         "name": book.author.name,
         "lastFirst": name_last_first(book.author.name),
         "description": None,
-        "imagePath": None,
+        "imagePath": author_image_path(book.author),
         "addedAt": payloads.LIBRARY_CREATED_AT_MS,
         "updatedAt": payloads.LIBRARY_CREATED_AT_MS,
         "numBooks": 0,
@@ -559,14 +587,14 @@ def author_entry(book: Book) -> dict[str, Any]:
     }
 
 
-def author_json(author_id: int, name: str) -> dict[str, Any]:
+def author_json(author) -> dict[str, Any]:
     """Author.toOldJSON — the single-author payload (no numBooks)."""
     return {
-        "id": f"aut_{author_id}",
+        "id": f"aut_{author.id}",
         "asin": None,
-        "name": name,
+        "name": author.name,
         "description": None,
-        "imagePath": None,
+        "imagePath": author_image_path(author),
         "libraryId": payloads.LIBRARY_ID,
         "addedAt": payloads.LIBRARY_CREATED_AT_MS,
         "updatedAt": payloads.LIBRARY_CREATED_AT_MS,

@@ -34,8 +34,8 @@ are not optional):
 - `GET /api/items/:id/cover` — since server 2.17.0 the apps send *no* token with cover
   requests (Android loads them through Glide's bare `HttpURLConnection`, which carries no
   headers). Requiring auth here shows blank covers everywhere, with 401s in the log.
-- `GET /api/authors/:id/image` — same exemption upstream; we don't serve author images
-  (our author `coverPath` is always null, so the apps never ask).
+- `GET /api/authors/:id/image` — same exemption upstream; we 302 to the author's
+  Hardcover photo (`author.image_url`), 404 when there is none.
 - `GET /public/session/:id/track/:index` — see Playback; the session id is the credential.
 
 Our UI's cookie-redirect middleware must leave `/public/` alone too — a 303 to `/login`
@@ -111,8 +111,9 @@ which then retries forever.
   updatedAt}`; with `items` add `libraryItems: [<minified>]`, with `series` also
   `series: [{id, name, items: [<minified, metadata.series flattened to {id, name,
   nameIgnorePrefix, sequence}>]}]` sorted by sequence. 404 for an unknown author. This is
-  the author landing page in third-party clients. (`/api/authors/:id/image` is
-  unauthenticated upstream; we have no author artwork and 404 it.)
+  the author landing page in third-party clients. `imagePath` is `"internal"` when we hold
+  a Hardcover photo (clients only test it for null before requesting
+  `/api/authors/:id/image`), else null.
 
 **Filters** (`?filter=` on `/items`) are `<group>.<base64 value>`, url-decoded then
 base64-decoded, or a bare group (`issues`, `missing`). Groups: genres, tags, series,
