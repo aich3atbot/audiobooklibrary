@@ -19,10 +19,12 @@ from app.services.collection import (
     clear_cached_match,
     ensure_book,
     entry_for,
+    fill_slugs_from_book,
     find_local_matches,
     identify_entry,
     import_entry,
     match_from_book,
+    match_is_stale,
     match_from_result,
     scan_imports,
 )
@@ -50,6 +52,7 @@ def _row(db: Session, entry, match, error=None) -> dict:
     label_suggestions: list[str] = []
     if match is not None:
         book = db.scalar(select(Book).where(Book.hardcover_id == match["hardcover_id"]))
+        fill_slugs_from_book(match, book)
     if book is not None:
         # series-mates' labels for the edition-label input; a label this book
         # already has imported would be refused, so don't suggest it
@@ -67,16 +70,22 @@ def _identify(db: Session, user: User, entry) -> tuple[dict | None, str | None]:
     from app.services.collection import MATCH_CACHE_PREFIX
     from app.services.sync import get_state
 
+    cached = None
     if get_state(db, MATCH_CACHE_PREFIX + entry.rel) is not None:
-        return cached_match(db, entry), None
+        cached = cached_match(db, entry)
+        # a stale match falls through to re-identification, which re-caches it
+        # in the current shape; it stays usable meanwhile — only its
+        # hardcover.app link is missing
+        if not match_is_stale(cached):
+            return cached, None
     if not user.hardcover_token:
-        return None, "no Hardcover token on your account"
+        return cached, None if cached else "no Hardcover token on your account"
     try:
         with HardcoverClient(user.hardcover_token) as client:
             match = identify_entry(client, entry)
     except Exception:
         logger.exception("Hardcover identification failed for %s", entry.rel)
-        return None, "Hardcover identification failed"
+        return cached, "Hardcover identification failed"
     cache_match(db, entry.rel, match)
     return match, None
 
@@ -168,8 +177,10 @@ def set_hardcover_match(
     rel: str = Form(...),
     hardcover_id: int = Form(...),
     title: str = Form(...),
+    slug: str = Form(""),
     author: str = Form(""),
     series_name: str = Form(""),
+    series_slug: str = Form(""),
     series_position: float | None = Form(None),
     db: Session = Depends(get_db),
 ):
@@ -179,10 +190,12 @@ def set_hardcover_match(
     match = match_from_result(
         {
             "hardcover_id": hardcover_id,
+            "slug": slug or None,
             "title": title,
             "authors": [author] if author else [],
             "series_name": series_name or None,
             "series_position": series_position,
+            "series_slug": series_slug or None,
         },
         score=None,  # manual choice
     )

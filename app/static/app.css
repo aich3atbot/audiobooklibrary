@@ -222,6 +222,19 @@ a.badge { color: white; text-decoration: none; }
     margin-bottom: 1.5rem;
 }
 
+/* the hardcover.app badges, between the series line and the status row */
+.hardcover-links,
+.match-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+/* the imports Match column is dense: keep the badge row tight to the title */
+.match-badges {
+    margin: 0.3rem 0;
+}
+
 .book-detail img {
     width: 200px;
     border-radius: 4px;

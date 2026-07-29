@@ -169,10 +169,13 @@ def score_result(entry: ImportEntry, result: dict[str, Any]) -> float:
 def match_from_result(result: dict[str, Any], score: float | None) -> dict[str, Any]:
     return {
         "hardcover_id": result["hardcover_id"],
+        # slugs are what hardcover.app urls use; absent on older cached matches
+        "slug": result.get("slug"),
         "title": result["title"],
         "author": (result.get("authors") or [""])[0],
         "series_name": result.get("series_name"),
         "series_position": result.get("series_position"),
+        "series_slug": result.get("series_slug"),
         "score": score,
     }
 
@@ -180,10 +183,14 @@ def match_from_result(result: dict[str, Any], score: float | None) -> dict[str, 
 def match_from_book(book: Book) -> dict[str, Any]:
     return {
         "hardcover_id": book.hardcover_id,
+        # null until the sync backfill has seen the row; the row then renders
+        # unlinked rather than pointing at a dead url
+        "slug": book.hardcover_slug or None,
         "title": book.title,
         "author": book.author.name,
         "series_name": book.series.name if book.series else None,
         "series_position": book.series_index,
+        "series_slug": (book.series.hardcover_slug or None) if book.series else None,
         "score": None,  # manual
     }
 
@@ -202,6 +209,25 @@ def identify_entry(client: HardcoverClient, entry: ImportEntry) -> dict[str, Any
     if best is None or best_score < MIN_CONFIDENCE:
         return None
     return match_from_result(best, best_score)
+
+
+def match_is_stale(match: dict[str, Any] | None) -> bool:
+    """True for a match cached before we recorded hardcover.app slugs.
+    Re-identifying it costs one Hardcover search and gains the link. A
+    *manual* match (no score) is the user's own choice, so it is never
+    silently re-run — it picks its slug up from the local book instead."""
+    return match is not None and "slug" not in match and match.get("score") is not None
+
+
+def fill_slugs_from_book(match: dict[str, Any], book: Book | None) -> None:
+    """Backstop a match's slugs from the local book row, for matches cached
+    before slugs existed or chosen when the backfill hadn't run yet."""
+    if book is None:
+        return
+    if not match.get("slug"):
+        match["slug"] = book.hardcover_slug or None
+    if not match.get("series_slug") and book.series:
+        match["series_slug"] = book.series.hardcover_slug or None
 
 
 def cached_match(session: Session, entry: ImportEntry) -> dict[str, Any] | None:

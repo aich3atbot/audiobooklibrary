@@ -3,9 +3,11 @@
 <form hx-post="/imports/set-hardcover-match" hx-target="closest tr" hx-swap="outerHTML" class="hc-option">
     <input type="hidden" name="rel" value="{{ rel }}">
     <input type="hidden" name="hardcover_id" value="{{ r.hardcover_id }}">
+    <input type="hidden" name="slug" value="{{ r.slug or '' }}">
     <input type="hidden" name="title" value="{{ r.title }}">
     <input type="hidden" name="author" value="{{ r.authors | join(', ') }}">
     <input type="hidden" name="series_name" value="{{ r.series_name or '' }}">
+    <input type="hidden" name="series_slug" value="{{ r.series_slug or '' }}">
     {% if r.series_position is not none %}
     <input type="hidden" name="series_position" value="{{ r.series_position }}">
     {% endif %}

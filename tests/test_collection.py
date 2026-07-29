@@ -69,9 +69,11 @@ def put(dirs, rel, files=("part1.mp3", "part2.mp3")):
 
 MAYOR_DOC = {
     "hardcover_id": 646489,
+    "slug": "the-mayor-of-noobtown",
     "title": "The Mayor of Noobtown",
     "authors": ["Ryan Rimmel"],
     "series_name": "Noobtown",
+    "series_slug": "noobtown",
     "series_position": 1.0,
     "cover_url": None,
     "release_year": 2019,
@@ -84,6 +86,7 @@ def typesense_doc(parsed):
     """Turn a parsed-result dict back into the raw search document shape."""
     return {
         "id": str(parsed["hardcover_id"]),
+        "slug": parsed.get("slug"),
         "title": parsed["title"],
         "author_names": parsed["authors"],
         "contribution_types": ["Author"] * len(parsed["authors"]),
@@ -91,7 +94,9 @@ def typesense_doc(parsed):
             {"author": {"id": 1, "name": name}} for name in parsed["authors"]
         ],
         "featured_series": (
-            {"position": parsed["series_position"], "series": {"id": 2, "name": parsed["series_name"]}}
+            {"position": parsed["series_position"],
+             "series": {"id": 2, "name": parsed["series_name"],
+                        "slug": parsed.get("series_slug")}}
             if parsed.get("series_name")
             else None
         ),
@@ -326,6 +331,69 @@ def test_imports_page_identifies_and_caches(client, clean_db, dirs):
     response = client.get("/imports")
     assert response.status_code == 200
     assert route.call_count == first_calls
+
+
+@respx.mock
+def test_imports_page_links_match_to_hardcover(client, clean_db, dirs):
+    put(dirs, "The Mayor of Noobtown")
+    hardcover_dispatch([MAYOR_DOC])
+
+    response = client.get("/imports")
+
+    # badges, not inline links: the title and series lines stay plain text
+    assert '<strong>The Mayor of Noobtown — Ryan Rimmel</strong>' in response.text
+    assert 'class="match-badges"' in response.text
+    assert ('<a class="badge" href="https://hardcover.app/books/the-mayor-of-noobtown"'
+            in response.text)
+    assert '<a class="badge" href="https://hardcover.app/series/noobtown"' in response.text
+    assert 'target="_blank"' in response.text
+    # the header's select-all toggle must not be posted with the row selection
+    assert "Select all matched" in response.text
+
+
+@respx.mock
+def test_stale_cached_match_is_reidentified_for_its_slug(client, clean_db, dirs):
+    """Matches cached before we recorded slugs carry no link. An
+    auto-identified one is re-identified once to pick the slug up."""
+    put(dirs, "The Mayor of Noobtown")
+    clean_db.add(AppState(
+        key="imports_match:The Mayor of Noobtown",
+        value=json.dumps({"hardcover_id": 646489, "title": "The Mayor of Noobtown",
+                          "author": "Ryan Rimmel", "series_name": "Noobtown",
+                          "series_position": 1.0, "score": 0.9}),
+    ))
+    clean_db.commit()
+    route = hardcover_dispatch([MAYOR_DOC])
+
+    response = client.get("/imports")
+
+    assert 'href="https://hardcover.app/books/the-mayor-of-noobtown"' in response.text
+    # re-cached in the current shape: the next load is a cache hit again
+    calls = route.call_count
+    assert client.get("/imports").status_code == 200
+    assert route.call_count == calls
+
+
+def test_stale_manual_match_takes_slugs_from_the_local_book(client, clean_db, dirs, book):
+    """A manual match is the user's own choice, so it is never silently
+    re-identified — its slugs come from the local book row instead."""
+    book.hardcover_slug = "the-mayor-of-noobtown"
+    book.series.hardcover_slug = "noobtown"
+    clean_db.commit()
+    put(dirs, "Oddly Named Thing")
+    clean_db.add(AppState(
+        key="imports_match:Oddly Named Thing",
+        value=json.dumps({"hardcover_id": 646489, "title": "The Mayor of Noobtown",
+                          "author": "Ryan Rimmel", "series_name": "Noobtown",
+                          "series_position": 1.0, "score": None}),
+    ))
+    clean_db.commit()
+
+    # no respx mock: re-identifying would raise on the unmocked request
+    response = client.get("/imports")
+
+    assert 'href="https://hardcover.app/books/the-mayor-of-noobtown"' in response.text
+    assert 'href="https://hardcover.app/series/noobtown"' in response.text
 
 
 @respx.mock

@@ -1,8 +1,12 @@
 {% extends "base.html" %}
+{% from "_hardcover_badge.html" import hardcover_badge %}
 {% block title %}{{ series_name }} — Audiobook Library{% endblock %}
 
 {% block content %}
 <h2>{{ series_name }}</h2>
+{% if series_slug %}
+<p class="hardcover-links">{{ hardcover_badge("series", series_slug, "Series on Hardcover") }}</p>
+{% endif %}
 
 {% include "_series_content.html" %}
 {% endblock %}

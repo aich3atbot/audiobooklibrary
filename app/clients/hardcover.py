@@ -18,6 +18,7 @@ USER_BOOK_FIELDS = """
       book {
         id
         title
+        slug
         cached_image
         contributions {
           author { id name cached_image }
@@ -25,7 +26,7 @@ USER_BOOK_FIELDS = """
         book_series {
           position
           featured
-          series { id name }
+          series { id name slug }
         }
       }
       user_book_reads { finished_at }
@@ -58,6 +59,7 @@ query BookById($id: Int!) {
   books(where: {id: {_eq: $id}}) {
     id
     title
+    slug
     cached_image
     contributions {
       author { id name cached_image }
@@ -65,7 +67,7 @@ query BookById($id: Int!) {
     book_series {
       position
       featured
-      series { id name }
+      series { id name slug }
     }
   }
 }
@@ -77,7 +79,7 @@ query BookById($id: Int!) {
 # popular edition per position.
 SERIES_BOOKS_QUERY = """
 query SeriesBooks($sid: Int!) {
-  series(where: {id: {_eq: $sid}}) { name }
+  series(where: {id: {_eq: $sid}}) { name slug }
   book_series(where: {series_id: {_eq: $sid}, book: {canonical_id: {_is_null: true}}},
               order_by: [{position: asc}, {book: {users_count: desc}}]) {
     position
@@ -131,6 +133,27 @@ query AuthorImages($ids: [Int!]) {
   authors(where: {id: {_in: $ids}}) {
     id
     cached_image
+  }
+}
+"""
+
+
+# Slugs for books/series stored before we asked for them, verified live
+# 2026-07-29. hardcover.app routes on the slug, so a link needs it.
+BOOK_SLUGS_QUERY = """
+query BookSlugs($ids: [Int!]) {
+  books(where: {id: {_in: $ids}}) {
+    id
+    slug
+  }
+}
+"""
+
+SERIES_SLUGS_QUERY = """
+query SeriesSlugs($ids: [Int!]) {
+  series(where: {id: {_in: $ids}}) {
+    id
+    slug
   }
 }
 """
@@ -210,6 +233,21 @@ class HardcoverClient:
             if url:
                 images[row["id"]] = url
         return images
+
+    def fetch_book_slugs(self, book_ids: list[int]) -> dict[int, str]:
+        """hardcover.app slugs keyed by Hardcover book id; books without one
+        are simply absent."""
+        return self._fetch_slugs(BOOK_SLUGS_QUERY, "books", book_ids)
+
+    def fetch_series_slugs(self, series_ids: list[int]) -> dict[int, str]:
+        """hardcover.app slugs keyed by Hardcover series id."""
+        return self._fetch_slugs(SERIES_SLUGS_QUERY, "series", series_ids)
+
+    def _fetch_slugs(self, query: str, key: str, ids: list[int]) -> dict[int, str]:
+        data = self.execute(query, {"ids": ids})
+        return {
+            row["id"]: row["slug"] for row in data.get(key) or [] if row.get("slug")
+        }
 
     def insert_user_book(
         self, book_id: int, status_id: int, last_read_date: str | None = None
@@ -291,12 +329,16 @@ class HardcoverClient:
         results = (data.get("search") or {}).get("results") or {}
         return [_parse_search_document(hit["document"]) for hit in results.get("hits", [])]
 
-    def fetch_series(self, series_id: int) -> tuple[str | None, list[dict[str, Any]]]:
-        """The series name and its books, one per position (most-shelved
-        canonical edition wins), in the search-result dict shape."""
+    def fetch_series(
+        self, series_id: int
+    ) -> tuple[str | None, str | None, list[dict[str, Any]]]:
+        """The series name, its hardcover.app slug, and its books, one per
+        position (most-shelved canonical edition wins), in the search-result
+        dict shape."""
         data = self.execute(SERIES_BOOKS_QUERY, {"sid": series_id})
         series_rows = data.get("series") or []
         name = series_rows[0]["name"] if series_rows else None
+        slug = series_rows[0].get("slug") if series_rows else None
         books = []
         seen_positions: set[float] = set()
         # ponytail: null-position rows (companions) aren't deduped; dedupe by
@@ -323,7 +365,7 @@ class HardcoverClient:
                     "users_count": book.get("users_count") or 0,
                 }
             )
-        return name, books
+        return name, slug, books
 
 
 def _parse_search_document(doc: dict[str, Any]) -> dict[str, Any]:
@@ -343,10 +385,12 @@ def _parse_search_document(doc: dict[str, Any]) -> dict[str, Any]:
     image = doc.get("image") or {}
     return {
         "hardcover_id": int(doc["id"]),
+        "slug": doc.get("slug"),
         "title": doc["title"],
         "authors": authors,
         "series_id": int(featured_series["id"]) if featured_series.get("id") is not None else None,
         "series_name": featured_series.get("name"),
+        "series_slug": featured_series.get("slug"),
         "series_position": featured.get("position"),
         "cover_url": image.get("url"),
         "release_year": doc.get("release_year"),

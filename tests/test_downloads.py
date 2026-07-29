@@ -339,6 +339,29 @@ def test_detail_page_missing_folder_keeps_actions(client, clean_db, book):
     assert f"replace=1&edition_id={edition.id}" in response.text
 
 
+def test_detail_page_links_book_and_series_to_hardcover(client, clean_db, book):
+    book.hardcover_slug = "the-mayor-of-noobtown"
+    book.series = Series(hardcover_id=300, name="Noobtown", hardcover_slug="noobtown")
+    clean_db.commit()
+
+    response = client.get(f"/books/{book.id}")
+
+    assert 'href="https://hardcover.app/books/the-mayor-of-noobtown"' in response.text
+    assert 'href="https://hardcover.app/series/noobtown"' in response.text
+    assert 'target="_blank"' in response.text
+
+
+def test_detail_page_omits_hardcover_links_without_slugs(client, clean_db, book):
+    """Slugs are NULL until the sync backfill has seen the row — a badge
+    pointing at hardcover.app/books/None would be a dead link."""
+    book.series = Series(hardcover_id=300, name="Noobtown")
+    clean_db.commit()
+
+    response = client.get(f"/books/{book.id}")
+
+    assert "hardcover.app" not in response.text
+
+
 def test_detail_page_when_not_available(client, book):
     response = client.get(f"/books/{book.id}")
 

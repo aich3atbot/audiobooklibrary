@@ -14,7 +14,15 @@
 </div>
 <table class="imports-list">
     <thead>
-        <tr><th></th><th>Folder</th><th>Audio</th><th>Size</th><th>Match</th><th></th></tr>
+        <tr>
+            <th>
+                {# no name: hx-include posts the whole table, and this is a UI control only #}
+                <input type="checkbox" aria-label="Select all matched"
+                       title="Select all matched"
+                       onchange="this.closest('table').querySelectorAll('tbody input[name=sel]:not([disabled])').forEach(c => c.checked = this.checked)">
+            </th>
+            <th>Folder</th><th>Audio</th><th>Size</th><th>Match</th><th></th>
+        </tr>
     </thead>
     <tbody>
         {% for m in rows %}

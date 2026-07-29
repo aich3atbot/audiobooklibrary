@@ -42,9 +42,10 @@ def series_book(book_id, title, position, users=0, author="Test Author"):
     }
 
 
-def series_response(name, rows):
+def series_response(name, rows, slug="the-stormlight-archive"):
     return httpx.Response(
-        200, json={"data": {"series": [{"name": name}], "book_series": rows}}
+        200,
+        json={"data": {"series": [{"name": name, "slug": slug}], "book_series": rows}},
     )
 
 
@@ -63,9 +64,10 @@ def test_fetch_series_dedupes_and_orders():
     )
 
     with HardcoverClient("token") as client:
-        name, books = client.fetch_series(300)
+        name, slug, books = client.fetch_series(300)
 
     assert name == "The Stormlight Archive"
+    assert slug == "the-stormlight-archive"
     # one book per position (most-shelved edition wins), null positions kept
     assert [b["hardcover_id"] for b in books] == [1000, 2000, 3000]
     first = books[0]
@@ -112,13 +114,32 @@ def test_series_page_merges_local_state(client, clean_db, user):
 
 
 @respx.mock
+def test_series_page_links_to_hardcover(client, clean_db, user):
+    respx.post(API_URL).mock(
+        return_value=series_response("The Stormlight Archive",
+                                     [series_book(1000, "The Way of Kings", 1.0)])
+    )
+
+    response = client.get("/series/300")
+
+    assert 'href="https://hardcover.app/series/the-stormlight-archive"' in response.text
+    assert "Series on Hardcover" in response.text
+
+
+@respx.mock
 def test_series_page_hardcover_down(client, clean_db, user):
     respx.post(API_URL).mock(side_effect=httpx.ConnectError("boom"))
+    clean_db.add(Series(hardcover_id=300, name="The Stormlight Archive",
+                        hardcover_slug="the-stormlight-archive"))
+    clean_db.commit()
 
     response = client.get("/series/300")
 
     assert response.status_code == 200
     assert "Hardcover series lookup failed" in response.text
+    # the stored row carries the name and the link through the outage
+    assert "The Stormlight Archive" in response.text
+    assert 'href="https://hardcover.app/series/the-stormlight-archive"' in response.text
 
 
 def test_series_page_without_token(client, tokenless_user):

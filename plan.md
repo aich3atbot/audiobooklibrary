@@ -62,9 +62,11 @@ One FastAPI process running:
   enabled, created_at, last_sync_at, last_sync_result. The `admin` account is virtual — never a row.
 - **author** — id, hardcover_id, name, image_url (Hardcover's author photo; NULL = never
   looked up, "" = Hardcover has none)
-- **series** — id, hardcover_id, name
-- **book** — shared metadata only: id, hardcover_id, title, author_id,
+- **series** — id, hardcover_id, name, hardcover_slug
+- **book** — shared metadata only: id, hardcover_id, hardcover_slug, title, author_id,
   series_id (nullable), series_index (nullable), cover_url, created_at, updated_at.
+  `hardcover_slug` (both tables) is what hardcover.app urls route on — same three
+  states as author.image_url, filled by sync and topped up by a backfill.
   A book may belong to no user's library. Its UI download status is the aggregate over
   its editions (`book_status`: available if any edition has files, else downloading if
   any edition is in the pipeline, else not present).

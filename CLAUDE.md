@@ -132,6 +132,11 @@ with the current policy.
 - **Hardcover** (`https://api.hardcover.app/v1/graphql`, bearer token): the API is beta and
   the schema shifts. Verify field/query names against the live API (introspection with the
   user's token) before writing or changing queries — do not trust remembered schema.
+  **hardcover.app (the site) routes on slugs, not ids**, so outbound links need
+  `book.hardcover_slug` / `series.hardcover_slug`; `slug` rides along on the queries we
+  already make, and `backfill_hardcover_slugs` tops up rows stored before that. The site
+  itself is *not* reachable from the sandbox (only `api.hardcover.app` is), so link urls
+  can't be verified by fetching them.
 - **AudioBookBay** (HTML scraping, no API — contract pinned in plan.md, verified live):
   a **browser User-Agent is mandatory** (ABB blocks tool UAs); an exhausted search page
   returns 200 with zero posts, not a 404; post metadata sits in inline `<span>`s split by

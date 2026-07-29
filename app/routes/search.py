@@ -103,6 +103,7 @@ def search_add(
 def _series_context(db: Session, user: User, series_id: int) -> dict:
     """The full series as Hardcover knows it, merged with local state."""
     name = None
+    slug = None
     books = []
     error = None
     known: dict[int, Book] = {}
@@ -112,16 +113,20 @@ def _series_context(db: Session, user: User, series_id: int) -> dict:
     else:
         try:
             with HardcoverClient(user.hardcover_token) as client:
-                name, books = client.fetch_series(series_id)
+                name, slug, books = client.fetch_series(series_id)
         except Exception:
             logger.exception("Hardcover series lookup failed")
             error = "Hardcover series lookup failed — check the connection and try again."
         known, mine = _local_state(db, user, [b["hardcover_id"] for b in books])
-    if name is None:
+    if name is None or not slug:
+        # the stored row carries us through a failed lookup
         local = db.scalar(select(Series).where(Series.hardcover_id == series_id))
-        name = local.name if local else "Series"
+        if name is None:
+            name = local.name if local else "Series"
+        slug = slug or (local.hardcover_slug if local else None)
     return {
         "series_name": name,
+        "series_slug": slug,
         "series_id": series_id,
         "results": books,
         "known": known,

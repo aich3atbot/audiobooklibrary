@@ -8,6 +8,7 @@ from app.clients.hardcover import API_URL, PAGE_SIZE, HardcoverClient
 from app.models import AppState, Author, Book, ReadState, Release, Series, UserBook
 from app.services.sync import (
     backfill_author_images,
+    backfill_hardcover_slugs,
     parse_read_at,
     pick_series,
     sync_from_hardcover,
@@ -40,6 +41,7 @@ def entry(
     reads=None,
     cover=None,
     author_image=None,
+    slug=None,
 ):
     return {
         "id": ub_id,
@@ -48,6 +50,7 @@ def entry(
         "book": {
             "id": book_id,
             "title": title,
+            "slug": slug,
             "cached_image": {"url": cover} if cover else None,
             "contributions": [
                 {
@@ -286,3 +289,66 @@ def test_backfill_author_images_fills_and_marks_the_rest(clean_db):
         # nothing left to look up: no second request
         assert backfill_author_images(clean_db, client) == 0
     assert route.call_count == 1
+
+
+@respx.mock
+def test_sync_stores_hardcover_slugs(clean_db, user):
+    """hardcover.app routes on slugs, so sync records the book's and its
+    series' — both ride along on the query we already make."""
+    respx.post(API_URL).mock(
+        return_value=me_response([
+            entry(
+                book_id=1000,
+                title="The Way of Kings",
+                slug="the-way-of-kings",
+                book_series=[{
+                    "position": 1,
+                    "featured": True,
+                    "series": {"id": 300, "name": "The Stormlight Archive",
+                               "slug": "the-stormlight-archive"},
+                }],
+            )
+        ])
+    )
+
+    with HardcoverClient("token") as client:
+        sync_from_hardcover(clean_db, client, user)
+
+    book = clean_db.query(Book).filter_by(hardcover_id=1000).one()
+    assert book.hardcover_slug == "the-way-of-kings"
+    assert book.series.hardcover_slug == "the-stormlight-archive"
+
+
+@respx.mock
+def test_backfill_hardcover_slugs_fills_books_and_series(clean_db):
+    """Rows stored before we asked Hardcover for slugs get filled in once; a
+    row Hardcover has no slug for is marked so we stop asking."""
+    author = Author(hardcover_id=500, name="Brandon Sanderson")
+    series = Series(hardcover_id=300, name="The Stormlight Archive")
+    known = Book(hardcover_id=1000, title="The Way of Kings", author=author, series=series)
+    unknown = Book(hardcover_id=1001, title="Obscure Book", author=author)
+    clean_db.add_all([known, unknown])
+    clean_db.commit()
+
+    respx.post(API_URL).mock(
+        side_effect=[
+            httpx.Response(200, json={"data": {"books": [
+                {"id": 1000, "slug": "the-way-of-kings"},
+                {"id": 1001, "slug": None},
+            ]}}),
+            httpx.Response(200, json={"data": {"series": [
+                {"id": 300, "slug": "the-stormlight-archive"},
+            ]}}),
+        ]
+    )
+
+    with HardcoverClient("token") as client:
+        assert backfill_hardcover_slugs(clean_db, client) == 2
+
+        clean_db.expire_all()
+        assert known.hardcover_slug == "the-way-of-kings"
+        assert unknown.hardcover_slug == ""
+        assert series.hardcover_slug == "the-stormlight-archive"
+
+        # nothing left to look up: no further requests
+        assert backfill_hardcover_slugs(clean_db, client) == 0

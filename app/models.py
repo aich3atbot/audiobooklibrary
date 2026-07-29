@@ -125,6 +125,9 @@ class Series(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     hardcover_id: Mapped[int | None] = mapped_column(Integer, unique=True)
     name: Mapped[str] = mapped_column(String(500))
+    # hardcover.app/series/<slug>. NULL = never looked up, "" = looked up and
+    # there is none — same three states as Author.image_url.
+    hardcover_slug: Mapped[str | None] = mapped_column(Text)
 
     books: Mapped[list["Book"]] = relationship(back_populates="series")
 
@@ -139,6 +142,8 @@ class Book(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     hardcover_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    # hardcover.app/books/<slug>; see Series.hardcover_slug for the states
+    hardcover_slug: Mapped[str | None] = mapped_column(Text)
     title: Mapped[str] = mapped_column(String(1000))
     author_id: Mapped[int] = mapped_column(ForeignKey("author.id"))
     series_id: Mapped[int | None] = mapped_column(ForeignKey("series.id"))

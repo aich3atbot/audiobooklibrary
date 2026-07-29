@@ -101,6 +101,7 @@ def upsert_book_metadata(session: Session, book_data: dict[str, Any], caches: Ca
             series_map[series_data["id"]] = series
         else:
             series.name = series_data["name"]
+        series.hardcover_slug = series_data.get("slug") or ""
 
     cached_image = book_data.get("cached_image") or {}
 
@@ -111,6 +112,8 @@ def upsert_book_metadata(session: Session, book_data: dict[str, Any], caches: Ca
         books[book_data["id"]] = book
 
     book.title = book_data["title"]
+    # "" records "Hardcover has no slug", so the backfill stops asking.
+    book.hardcover_slug = book_data.get("slug") or ""
     book.author = author
     book.series = series
     book.series_index = series_index
@@ -349,9 +352,39 @@ def backfill_author_images(session: Session, client: HardcoverClient) -> int:
     return filled
 
 
-def run_author_image_backfill() -> int:
-    """Once-per-sync-pass top-up, run with the first available token (author
-    photos are shared metadata, so any user's token will do)."""
+SLUG_BATCH = 50
+
+
+def backfill_hardcover_slugs(session: Session, client: HardcoverClient) -> int:
+    """Fill in hardcover.app slugs for books and series stored before we asked
+    Hardcover for them. Only NULL rows are fetched — once looked up, a row
+    Hardcover has no slug for holds "" and is never asked about again."""
+    books = session.scalars(
+        select(Book).where(Book.hardcover_slug.is_(None)).order_by(Book.id)
+    ).all()
+    series_rows = session.scalars(
+        select(Series)
+        .where(Series.hardcover_id.is_not(None), Series.hardcover_slug.is_(None))
+        .order_by(Series.id)
+    ).all()
+    filled = 0
+    for rows, fetch in ((books, client.fetch_book_slugs),
+                        (series_rows, client.fetch_series_slugs)):
+        for start in range(0, len(rows), SLUG_BATCH):
+            batch = rows[start : start + SLUG_BATCH]
+            slugs = fetch([r.hardcover_id for r in batch])
+            for row in batch:
+                row.hardcover_slug = slugs.get(row.hardcover_id, "")
+                if row.hardcover_slug:
+                    filled += 1
+    if books or series_rows:
+        session.commit()
+    return filled
+
+
+def _run_with_first_token(work) -> int:
+    """Run a shared-metadata backfill with the first available token — book,
+    series and author metadata is shared, so any user's token will do."""
     with get_sessionmaker()() as session:
         user = session.scalars(
             select(User)
@@ -361,7 +394,17 @@ def run_author_image_backfill() -> int:
         if user is None:
             return 0
         with HardcoverClient(user.hardcover_token) as client:
-            return backfill_author_images(session, client)
+            return work(session, client)
+
+
+def run_author_image_backfill() -> int:
+    """Once-per-sync-pass top-up of author photos."""
+    return _run_with_first_token(backfill_author_images)
+
+
+def run_hardcover_slug_backfill() -> int:
+    """Once-per-sync-pass top-up of hardcover.app slugs."""
+    return _run_with_first_token(backfill_hardcover_slugs)
 
 
 def run_sync_all() -> dict[str, int]:
@@ -395,6 +438,12 @@ def run_sync_all() -> dict[str, int]:
     except Exception:
         # Cosmetic metadata; never fail a sync pass over it.
         logger.exception("Author image backfill failed")
+    try:
+        filled = run_hardcover_slug_backfill()
+        if filled:
+            logger.info("Hardcover slugs: filled in %d", filled)
+    except Exception:
+        logger.exception("Hardcover slug backfill failed")
     return totals
 
 

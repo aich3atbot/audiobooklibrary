@@ -1,3 +1,4 @@
+{% from "_hardcover_badge.html" import hardcover_badge %}
 <tr id="row-{{ m.entry.row_id }}">
     <td>
         <input type="checkbox" name="sel" value="{{ m.entry.rel }}"
@@ -14,13 +15,19 @@
     <td>{{ m.entry.size | human_size }}</td>
     <td class="match-cell">
         {% if m.match %}
-        <strong>{{ m.match.title }}</strong>{% if m.match.author %} — {{ m.match.author }}{% endif %}
+        <strong>{{ m.match.title }}{% if m.match.author %} — {{ m.match.author }}{% endif %}</strong>
         {% if m.match.series_name %}<br><small>{{ m.match.series_name }}{% if m.match.series_position is not none %} #{{ m.match.series_position | int if m.match.series_position == m.match.series_position | int else m.match.series_position }}{% endif %}</small>{% endif %}
-        {% if m.confidence == "high" %}<span class="badge badge-ok">match {{ (m.match.score * 100) | int }}%</span>
-        {% elif m.confidence == "low" %}<span class="badge badge-pending">low match {{ (m.match.score * 100) | int }}%</span>
-        {% elif m.confidence == "manual" %}<span class="badge">manual</span>{% endif %}
+        <p class="match-badges">
+            {% if m.confidence == "high" %}<span class="badge badge-ok">match {{ (m.match.score * 100) | int }}%</span>
+            {% elif m.confidence == "low" %}<span class="badge badge-pending">low match {{ (m.match.score * 100) | int }}%</span>
+            {% elif m.confidence == "manual" %}<span class="badge">manual</span>{% endif %}
+            {% if m.book and book_status(m.book) == "available" %}
+            <span class="badge badge-dl-available" title="Already in the shared audiobook store">available</span>
+            {% endif %}
+            {% if m.match.slug %}{{ hardcover_badge("books", m.match.slug, "Hardcover") }}{% endif %}
+            {% if m.match.series_slug %}{{ hardcover_badge("series", m.match.series_slug, "Series") }}{% endif %}
+        </p>
         {% if m.book and book_status(m.book) == "available" %}
-        <span class="badge badge-dl-available" title="Already in the shared audiobook store">available</span>
         <input type="text" name="edlabel__{{ m.entry.rel }}" aria-label="Edition label"
                {% if m.label_suggestions %}list="edlabels-{{ m.entry.row_id }}"{% endif %}
                placeholder="Edition label (e.g. Stephen Fry)"
