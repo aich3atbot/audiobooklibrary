@@ -155,14 +155,15 @@ def test_get_status_maps_torrents(qbit):
 
 
 @respx.mock
-def test_name_comes_from_content_path_not_display_name(qbit):
+def test_name_comes_from_root_path_not_display_name(qbit):
     # A magnet's dn sticks as the display name even after metadata arrives, so
-    # ``name`` may not match the folder on disk — content_path's basename does.
+    # ``name`` may not match the folder on disk — root_path's basename does.
     login_ok()
     respx.get(f"{API}/torrents/info").respond(
         200,
         json=[
             {"hash": HASH, "name": "Chamber of Secrets (Full Cast) - J.K. Rowling",
+             "root_path": "/downloads/Chamber of Secrets (Full-Cast Edition) MP3",
              "content_path": "/downloads/Chamber of Secrets (Full-Cast Edition) MP3",
              "progress": 1.0, "state": "stoppedUP", "save_path": "/downloads",
              "total_size": 100},
@@ -172,6 +173,50 @@ def test_name_comes_from_content_path_not_display_name(qbit):
     status = qbit.get_status([HASH])[HASH]
 
     assert status.name == "Chamber of Secrets (Full-Cast Edition) MP3"
+
+
+@respx.mock
+def test_single_file_torrent_reports_its_folder_not_the_file(qbit):
+    # A torrent holding exactly one file gets a content_path pointing at the
+    # *file*, even though the file sits inside a root folder — and it is the
+    # folder that appears in the download directory. root_path has it right.
+    login_ok()
+    respx.get(f"{API}/torrents/info").respond(
+        200,
+        json=[
+            {"hash": HASH, "name": "Threads of Fate (Ascend Online Book 5) - Luke Chmilenko",
+             "root_path": "/downloads/Luke Chmilenko - Ascend Online Book 5 - Threads of Fate",
+             "content_path": "/downloads/Luke Chmilenko - Ascend Online Book 5 - Threads of"
+                             " Fate/Threads of Fate꞉ Ascend Online, Book 5.m4b",
+             "progress": 1.0, "state": "stoppedUP", "save_path": "/downloads",
+             "total_size": 1128856418},
+        ],
+    )
+
+    status = qbit.get_status([HASH])[HASH]
+
+    assert status.name == "Luke Chmilenko - Ascend Online Book 5 - Threads of Fate"
+
+
+@respx.mock
+def test_torrent_without_a_root_folder_falls_back_to_content_path(qbit):
+    # root_path is empty when the torrent has no root folder; then the lone
+    # file *is* the entry in the download directory.
+    login_ok()
+    respx.get(f"{API}/torrents/info").respond(
+        200,
+        json=[
+            {"hash": HASH, "name": "Project Hail Mary - Andy Weir",
+             "root_path": "",
+             "content_path": "/downloads/Project Hail Mary.m4b",
+             "progress": 1.0, "state": "stoppedUP", "save_path": "/downloads",
+             "total_size": 100},
+        ],
+    )
+
+    status = qbit.get_status([HASH])[HASH]
+
+    assert status.name == "Project Hail Mary.m4b"
 
 
 @respx.mock

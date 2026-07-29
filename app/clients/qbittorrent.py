@@ -13,8 +13,11 @@ Verified against qBittorrent 5.2.3 / Web API 2.15.1:
   ``progress >= 1.0`` is. ``total_size`` is -1 before metadata arrives.
 - ``torrents/delete`` answers 200 even for hashes it doesn't have.
 - ``name`` is the *display* name: a magnet's ``dn`` sticks even after metadata
-  arrives, so it can differ from the folder on disk. ``content_path`` holds the
-  real content location; we report its basename as the torrent's name.
+  arrives, so it can differ from the folder on disk. ``root_path`` holds the
+  torrent's root folder, which is what lands in the download directory; we
+  report its basename as the torrent's name. ``content_path`` is *not* a
+  substitute: for a torrent holding exactly one file it points at the file
+  itself, even when that file sits inside a root folder.
 """
 
 import logging
@@ -30,6 +33,11 @@ from app.clients.download_client import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _basename(path: str) -> str:
+    """Last component of a slash-separated path, ignoring a trailing slash."""
+    return path.rstrip("/").rsplit("/", 1)[-1]
 
 
 class QBittorrentClient:
@@ -122,12 +130,18 @@ class QBittorrentClient:
             progress = float(torrent.get("progress") or 0.0)
             # ``name`` is the display name — for a magnet add it stays the
             # magnet's dn and never updates to the metadata name, so it may not
-            # match anything on disk. ``content_path`` points at the actual
-            # root folder/file; its basename is the on-disk name.
+            # match anything on disk. ``root_path`` is the torrent's root
+            # folder, i.e. the entry that appears in the download directory; it
+            # is empty for a torrent with no root folder, where ``content_path``
+            # (the lone file) is the entry. Preferring content_path outright
+            # would break single-file-inside-a-folder torrents: qBittorrent
+            # points content_path at the file, not the folder holding it.
+            root_path = (torrent.get("root_path") or "").replace("\\", "/")
             content_path = (torrent.get("content_path") or "").replace("\\", "/")
             statuses[info_hash] = TorrentStatus(
                 info_hash=info_hash,
-                name=content_path.rstrip("/").rsplit("/", 1)[-1]
+                name=_basename(root_path)
+                or _basename(content_path)
                 or torrent.get("name")
                 or "",
                 progress=progress * 100,

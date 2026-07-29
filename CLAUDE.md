@@ -157,7 +157,11 @@ with the current policy.
   metadata-less torrent — completion is `progress >= 1.0`, never `amount_left == 0`**;
   `total_size` is -1 before metadata arrives. `name` is the *display* name — a magnet's
   `dn` sticks even after metadata arrives, so it can differ from the on-disk folder;
-  use `content_path`'s basename to locate the download.
+  use **`root_path`**'s basename to locate the download, falling back to `content_path`
+  only when `root_path` is empty (a torrent with no root folder). `content_path` is a
+  trap: for a torrent holding exactly one file it points at the *file* even when that
+  file lives inside a root folder, so its basename is the .m4b rather than the folder
+  the importer has to find.
 
 ## Conventions
 
