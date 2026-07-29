@@ -398,8 +398,19 @@ library. Complements (does not change) the automatic /downloads pipeline.
   automatically — a successful batch kicks a background all-user sync; everyone else sees
   it as *available* in search. Destination-exists and other failures are reported per
   row; nothing is guessed.
+- **Choosing the edition**: every matched row carries an edition-label input plus an
+  "Edition…" disclosure that lazily loads the *same* picker the download flow uses
+  (`edition_sections`: sibling-series labels and Hardcover's audiobook editions), with
+  its fields namespaced by the entry's rel path because the Import selected/all buttons
+  post the whole table in one request. Picking prefills the label input, which stays
+  editable — clearing it imports to the plain unsuffixed folder while still recording the
+  Hardcover edition id and narrator on the `edition` row. The picker is lazy because it
+  costs a Hardcover fetch plus a header read of every audio file: opening it badges the
+  edition whose `audio_seconds` is within 5% of the files' total runtime, and any edition
+  whose narrator is named in the folder path. **Hints are advisory badges only — nothing
+  is ever preselected**, so a wrong guess can't silently mislabel an import.
 - **Additional editions**: an entry matched to an already-available book imports as
-  another edition — the row shows an edition-label input. Guardrails mirror the download
+  another edition — the label is required there. Guardrails mirror the download
   flow: an unlabelled import into an available book refuses ("give these files an
   edition label"), as does a labelled import while the existing files are unlabelled
   (rename them on the book detail page first).

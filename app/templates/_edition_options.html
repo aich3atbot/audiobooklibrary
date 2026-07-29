@@ -7,17 +7,24 @@
    In the release picker the sibling-series options lead and the Hardcover
    list folds away behind them, so a book in a labelled series opens with its
    siblings' labels already visible (`collapse_new`, on by default there;
-   the rename dialog passes it off — its Hardcover list is the point). #}
+   the rename dialog passes it off — its Hardcover list is the point).
+   The Imports page renders one picker per row inside a single form, so it
+   passes `field_ns` (namespaces every field name), `options_id` (ids must
+   stay unique), `omit_label` (the row owns the label input) and
+   `label_target` (the id that input has, so a pick prefills it). #}
 {% set collapse_new = collapse_new if collapse_new is defined else (existing_options and not buttons) %}
 {% set new_heading = new_heading if new_heading is defined else "Or download a new edition" %}
+{% set sfx = "__" ~ field_ns if field_ns is defined and field_ns else "" %}
 {% macro option_body(e) %}
             <strong>{{ e.default_label or "Unnamed edition" }}</strong>
             <small>{{ e.narrator or e.title }}
                 {%- if e.format %} · {{ e.format }}{% endif %}
                 {%- if e.audio_seconds %} · {{ (e.audio_seconds // 3600) }}h {{ ((e.audio_seconds % 3600) // 60) }}m{% endif %}
                 {%- if e.publisher %} · {{ e.publisher }}{% endif %}</small>
+            {%- if e.hint_duration %} <span class="badge badge-ok" title="This edition's runtime matches the files you are importing">≈ your files</span>{% endif %}
+            {%- if e.hint_narrator %} <span class="badge" title="This narrator's name appears in the folder path">narrator in path</span>{% endif %}
 {% endmacro %}
-<fieldset id="edition-options">
+<fieldset id="{{ options_id if options_id is defined else "edition-options" }}">
     {% include "_edition_existing.html" %}
     {% if collapse_new %}
     <details class="new-edition">
@@ -26,25 +33,29 @@
     {% if warning %}<p><small>{{ warning }}</small></p>{% endif %}
     {% for e in hc_editions %}
     {% if buttons %}
-    <button type="submit" name="hc_edition" value="{{ e.id }}" class="secondary edition-option">
+    <button type="submit" name="hc_edition{{ sfx }}" value="{{ e.id }}" class="secondary edition-option">
         {{ option_body(e) }}
     </button>
     {% else %}
     <label class="edition-option">
-        <input type="radio" name="hc_edition" value="{{ e.id }}">
+        <input type="radio" name="hc_edition{{ sfx }}" value="{{ e.id }}"
+               {% if label_target is defined and label_target %}data-label="{{ e.default_label }}"
+               onchange="var t=document.getElementById('{{ label_target }}'); if (t) t.value = this.dataset.label;"{% endif %}>
         <span>{{ option_body(e) }}</span>
     </label>
     {% endif %}
-    <input type="hidden" name="hclabel_{{ e.id }}" value="{{ e.default_label }}">
-    <input type="hidden" name="hcnarr_{{ e.id }}" value="{{ e.narrator }}">
+    <input type="hidden" name="hclabel_{{ e.id }}{{ sfx }}" value="{{ e.default_label }}">
+    <input type="hidden" name="hcnarr_{{ e.id }}{{ sfx }}" value="{{ e.narrator }}">
     {% endfor %}
-    <input type="text" name="edition_label" list="label-suggestions"
+    {% if not (omit_label is defined and omit_label) %}
+    <input type="text" name="edition_label{{ sfx }}" list="label-suggestions"
            placeholder="Label (e.g. Stephen Fry){% if hc_editions and not buttons %} — overrides the selection above{% endif %}"
            aria-label="Edition label">
     {% if suggestions %}
     <datalist id="label-suggestions">
         {% for s in suggestions %}<option value="{{ s }}">{% endfor %}
     </datalist>
+    {% endif %}
     {% endif %}
     {% if collapse_new %}</details>{% endif %}
 </fieldset>

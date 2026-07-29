@@ -20,6 +20,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+import mutagen
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
@@ -43,6 +44,9 @@ HIGH_CONFIDENCE = 0.75
 MIN_CONFIDENCE = 0.5
 MATCH_CACHE_PREFIX = "imports_match:"
 SEARCH_RESULTS = 5
+# How far an entry's total runtime may sit from a Hardcover edition's
+# audio_seconds and still be flagged as "these are probably those files".
+DURATION_TOLERANCE = 0.05
 
 
 @dataclass
@@ -62,6 +66,61 @@ def _direct_audio(path: Path) -> list[Path]:
     return [
         p for p in path.iterdir() if p.is_file() and p.suffix.lower() in AUDIO_EXTS
     ]
+
+
+def entry_audio_files(entry: ImportEntry) -> list[Path]:
+    if entry.path.is_file():
+        return [entry.path]
+    return sorted(
+        p for p in entry.path.rglob("*") if p.is_file() and p.suffix.lower() in AUDIO_EXTS
+    )
+
+
+def entry_duration(entry: ImportEntry) -> float | None:
+    """Total runtime of an entry's audio, in seconds, for matching it against
+    a Hardcover edition's audio_seconds. None when nothing could be read.
+    mutagen only parses headers here, but it still touches every file — call
+    this off the request thread, and only when a picker is opened."""
+    total = 0.0
+    read = False
+    for path in entry_audio_files(entry):
+        try:
+            parsed = mutagen.File(path)
+            # a tag-less file is dict-like and falsy, so compare against None
+            length = getattr(parsed.info, "length", None) if parsed is not None else None
+        except Exception:
+            length = None
+        if length:
+            total += float(length)
+            read = True
+    return total if read else None
+
+
+def annotate_edition_hints(
+    editions: list[dict], entry: ImportEntry, seconds: float | None
+) -> None:
+    """Flag the editions that look like this entry's files, in place. At most
+    one duration hint (the closest edition within DURATION_TOLERANCE); any
+    number of narrator hints. These are advisory badges only — the user still
+    picks, so a wrong guess costs nothing."""
+    path_tokens = set(normalize(entry.rel.replace("/", " ")).split())
+    for e in editions:
+        narrators = e.get("narrators") or ([e["narrator"]] if e.get("narrator") else [])
+        e["hint_narrator"] = any(
+            (tokens := set(normalize(n).split())) and tokens <= path_tokens for n in narrators
+        )
+        e["hint_duration"] = False
+    if not seconds:
+        return
+    closest, best = None, None
+    for e in editions:
+        if not e.get("audio_seconds"):
+            continue
+        diff = abs(e["audio_seconds"] - seconds)
+        if diff <= seconds * DURATION_TOLERANCE and (best is None or diff < best):
+            closest, best = e, diff
+    if closest is not None:
+        closest["hint_duration"] = True
 
 
 def _make_entry(root: Path, path: Path) -> ImportEntry:

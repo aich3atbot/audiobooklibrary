@@ -9,10 +9,11 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_db
-from app.clients.hardcover import HardcoverClient
 from app.models import Book, Edition, User, book_status, display_status
 from app.services.downloads import grab_release, search_releases
 from app.services.editions import (
+    edition_choice,
+    edition_sections,
     get_or_create_edition,
     relabel_edition,
     series_edition_candidates,
@@ -71,79 +72,6 @@ def _edition_blocked(edition: Edition) -> str | None:
     if edition.library_path:
         return "This edition is already available in the library."
     return None
-
-
-HC_EDITIONS_SHOWN = 10  # books can carry dozens of junk/foreign editions
-
-
-def _fetch_hc_editions(user: User, book: Book) -> tuple[list[dict], str | None]:
-    """The book's Hardcover audiobook editions, or a warning when the fetch
-    fails/finds nothing — the picker then degrades to a free-form label."""
-    if not user.hardcover_token:
-        return [], "No Hardcover token set — enter a label instead."
-    try:
-        with HardcoverClient(user.hardcover_token) as client:
-            editions = client.fetch_editions(book.hardcover_id)
-    except Exception:
-        logger.exception("Hardcover editions fetch failed for %s", book.title)
-        return [], "Could not fetch Hardcover's editions — enter a label instead."
-    if not editions:
-        return [], "Hardcover lists no audiobook editions — enter a label instead."
-    # Hide editions the book already has (matched by Hardcover id or label) —
-    # they'd only offer a duplicate download. An empty default_label never
-    # matches, or every no-narrator option would vanish behind the unlabelled
-    # edition.
-    have_ids = {e.hardcover_edition_id for e in book.editions if e.hardcover_edition_id}
-    have_labels = {e.label for e in book.editions if e.label}
-    editions = [
-        e
-        for e in editions
-        if e["id"] not in have_ids and (e["default_label"] or None) not in have_labels
-    ]
-    if not editions:
-        return [], "All of Hardcover's audiobook editions are already downloaded — enter a label instead."
-    return editions, None
-
-
-def _edition_sections(
-    db: Session, user: User, book: Book
-) -> tuple[list[dict], list[dict], str | None]:
-    """The picker's sections: sibling-series labels this book lacks (matched
-    to the book's Hardcover editions by default label when possible) and the
-    remaining Hardcover editions. Sibling labels survive a failed Hardcover
-    fetch — they then offer the label with the sibling's narrator."""
-    editions, warning = _fetch_hc_editions(user, book)
-    by_label: dict[str, dict] = {}
-    for e in editions:
-        # first occurrence wins = highest users_count (Hardcover's fetch order)
-        if e["default_label"] and e["default_label"] not in by_label:
-            by_label[e["default_label"]] = e
-    existing_options: list[dict] = []
-    used: set[int] = set()
-    for cand in series_edition_candidates(db, book):
-        hc = by_label.get(cand["label"])
-        if hc is not None:
-            used.add(hc["id"])
-            existing_options.append({"label": cand["label"], "narrator": hc["narrator"], "hc": hc})
-        else:
-            existing_options.append({"label": cand["label"], "narrator": cand["narrator"], "hc": None})
-    rest = [e for e in editions if e["id"] not in used][:HC_EDITIONS_SHOWN]
-    return existing_options, rest, warning
-
-
-async def _edition_choice(request: Request) -> tuple[str, int | None, str]:
-    """(label, hardcover_edition_id, narrator) from a submitted edition
-    picker. A typed label overrides the picked edition's default label."""
-    form = await request.form()
-    label = str(form.get("edition_label") or "").strip()
-    raw = str(form.get("hc_edition") or "")
-    hc_id = int(raw) if raw.isdigit() else None
-    narrator = str(form.get(f"hcnarr_{raw}") or "").strip() if raw else ""
-    if not narrator:
-        narrator = str(form.get("narrator") or "").strip()
-    if not label and raw:
-        label = str(form.get(f"hclabel_{raw}") or "").strip()
-    return label, hc_id, narrator
 
 
 def _bitrate(path: Path) -> int | None:
@@ -210,7 +138,7 @@ def _rename_context(
     """Context for the rename overlay — the download flows' picker sections
     pointed at an edition that already exists."""
     book = edition.book
-    existing_options, hc_editions, warning = _edition_sections(db, user, book)
+    existing_options, hc_editions, warning = edition_sections(db, user, book.hardcover_id, book)
     return {
         "book": book,
         "edition": edition,
@@ -264,7 +192,7 @@ def rename_dialog(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """The rename overlay. `_edition_sections` hides labels and Hardcover
+    """The rename overlay. `edition_sections` hides labels and Hardcover
     editions the book already holds, so the picker only ever offers a name the
     edition doesn't have."""
     edition = _get_edition(db, edition_id)
@@ -288,7 +216,7 @@ async def relabel(
     keeps the dialog open with the reason."""
     edition = _get_edition(db, edition_id)
     book = edition.book
-    label, hc_id, narrator = await _edition_choice(request)
+    label, hc_id, narrator = edition_choice(await request.form())
 
     def dialog_error(message: str):
         return templates.TemplateResponse(
@@ -322,7 +250,7 @@ def edition_options(
     """The edition picker fields (Hardcover editions + free label), loaded as
     its own fragment so a slow Hardcover call never blocks the release list."""
     book = _get_book(db, book_id)
-    existing_options, hc_editions, warning = _edition_sections(db, user, book)
+    existing_options, hc_editions, warning = edition_sections(db, user, book.hardcover_id, book)
     return templates.TemplateResponse(
         request,
         "_edition_options.html",
@@ -346,7 +274,7 @@ def new_edition_dialog(
 ):
     """Dialog for downloading another edition of an available book."""
     book = _get_book(db, book_id)
-    existing_options, hc_editions, warning = _edition_sections(db, user, book)
+    existing_options, hc_editions, warning = edition_sections(db, user, book.hardcover_id, book)
     unlabelled = next((e for e in book.editions if e.label == ""), None)
     return templates.TemplateResponse(
         request,
@@ -377,13 +305,13 @@ async def new_edition_submit(
     release picker carrying the choice."""
     book = _get_book(db, book_id)
     form = await request.form()
-    label, hc_id, narrator = await _edition_choice(request)
+    label, hc_id, narrator = edition_choice(await request.form())
     existing_label = str(form.get("existing_label") or "").strip()
     from_detail = bool(form.get("detail"))
     unlabelled = next((e for e in book.editions if e.label == ""), None)
 
     def dialog_error(message: str):
-        existing_options, hc_editions, warning = _edition_sections(db, user, book)
+        existing_options, hc_editions, warning = edition_sections(db, user, book.hardcover_id, book)
         return templates.TemplateResponse(
             request,
             "_edition_new.html",
@@ -512,7 +440,7 @@ async def grab(
     book = _get_book(db, book_id)
     if not get_settings().downloads_enabled:
         raise HTTPException(status_code=409, detail=DISABLED_ERROR)
-    label, hc_id, narrator = await _edition_choice(request)
+    label, hc_id, narrator = edition_choice(await request.form())
     target = _replace_target(book, edition_id) if replace else None
     replacing = target is not None
     if replacing:

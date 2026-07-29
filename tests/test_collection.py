@@ -8,14 +8,35 @@ import respx
 from app.clients.hardcover import API_URL, HardcoverClient
 from app.models import AppState, Author, Book, DownloadState, Edition, Release, Series, UserBook
 from app.services.collection import (
+    annotate_edition_hints,
+    cache_match,
+    entry_duration,
     entry_for,
     hardcover_query,
     identify_entry,
     import_entry,
+    match_from_book,
     scan_imports,
     score_result,
 )
+from app.services.editions import edition_choice
 from app.services.importer import ImportFailure
+from tests.test_audio_meta import FRAME_SECONDS, write_mp3
+
+# One Hardcover audiobook edition row, as the editions query returns it.
+HC_EDITION = {
+    "id": 11,
+    "title": "The Mayor of Noobtown",
+    "subtitle": None,
+    "edition_format": "Audiobook",
+    "asin": None,
+    "isbn_13": None,
+    "audio_seconds": 35000,
+    "release_date": "2019-11-20",
+    "users_count": 5,
+    "publisher": {"name": "Podium"},
+    "contributions": [{"contribution": "Narrator", "author": {"id": 1, "name": "Stephen Fry"}}],
+}
 
 
 @pytest.fixture
@@ -643,7 +664,7 @@ def test_import_route_as_second_edition(client, clean_db, dirs, book, no_backgro
             "mode": "one",
             "rel": "The Mayor of Noobtown",
             "hc__The Mayor of Noobtown": str(book.hardcover_id),
-            "edlabel__The Mayor of Noobtown": "Stephen Fry",
+            "edition_label__The Mayor of Noobtown": "Stephen Fry",
         },
     )
 
@@ -666,3 +687,162 @@ def test_available_books_are_matchable(client, clean_db, dirs, book):
     response = client.get("/imports/search", params={"rel": "Something", "q": "mayor"})
 
     assert "The Mayor of Noobtown" in response.text
+
+
+# --- choosing an edition at import time -------------------------------------
+
+
+def test_entry_duration_sums_every_audio_file(dirs):
+    put(dirs, "Timed", files=())
+    expected = sum(write_mp3(dirs.imports_dir / "Timed" / f, frames=n)
+                   for f, n in (("part1.mp3", 100), ("part2.mp3", 50)))
+    # a stray non-audio file must not upset the total
+    (dirs.imports_dir / "Timed" / "cover.jpg").write_bytes(b"not audio")
+
+    # mutagen estimates length from the bitrate, so allow a little slack
+    assert entry_duration(entry_for("Timed")) == pytest.approx(expected, rel=0.01)
+
+
+def test_entry_duration_is_none_when_nothing_parses(dirs):
+    put(dirs, "Junk")  # 10 bytes of "x" per file
+
+    assert entry_duration(entry_for("Junk")) is None
+
+
+def test_annotate_edition_hints_flags_closest_duration_and_narrator(dirs):
+    put(dirs, "Ryan Rimmel/Noobtown/Stephen Fry - The Mayor of Noobtown")
+    entry = entry_for("Ryan Rimmel/Noobtown/Stephen Fry - The Mayor of Noobtown")
+    editions = [
+        {"id": 1, "narrators": ["Jim Dale"], "audio_seconds": 36000},
+        {"id": 2, "narrators": ["Stephen Fry"], "audio_seconds": 35500},
+        {"id": 3, "narrators": ["Rufus Beck"], "audio_seconds": 35200},
+        {"id": 4, "narrators": ["Ann Saunders"], "audio_seconds": None},
+    ]
+
+    annotate_edition_hints(editions, entry, 35000)
+
+    # closest within tolerance wins, and only it — 36000 is outside 5%
+    assert [e["hint_duration"] for e in editions] == [False, False, True, False]
+    # the narrator named in the folder path is flagged wherever it lands
+    assert [e["hint_narrator"] for e in editions] == [False, True, False, False]
+
+
+def test_annotate_edition_hints_without_duration_still_matches_narrator(dirs):
+    put(dirs, "The Mayor of Noobtown")
+    entry = entry_for("The Mayor of Noobtown")
+    editions = [{"id": 1, "narrators": ["Stephen Fry"], "audio_seconds": 35000}]
+
+    annotate_edition_hints(editions, entry, None)
+
+    assert editions[0]["hint_duration"] is False
+    assert editions[0]["hint_narrator"] is False
+
+
+def test_edition_choice_reads_only_its_own_rows_fields():
+    form = {
+        "hc_edition__a/one": "11",
+        "hclabel_11__a/one": "Stephen Fry",
+        "hcnarr_11__a/one": "Stephen Fry",
+        "hc_edition__b/two": "22",
+        "hclabel_22__b/two": "Jim Dale",
+        "hcnarr_22__b/two": "Jim Dale",
+        "edition_label__b/two": "Typed Override",
+    }
+
+    assert edition_choice(form, ns="a/one") == ("Stephen Fry", 11, "Stephen Fry")
+    # a typed label beats the picked edition's default, per row
+    assert edition_choice(form, ns="b/two") == ("Typed Override", 22, "Jim Dale")
+    # an untouched row picks up nothing at all
+    assert edition_choice(form, ns="c/three") == ("", None, "")
+
+
+@respx.mock
+def test_edition_picker_namespaces_fields_and_badges_the_match(client, clean_db, dirs, book):
+    put(dirs, "Mayor", files=())
+    write_mp3(dirs.imports_dir / "Mayor" / "book.mp3", frames=1000)
+    seconds = 1000 * FRAME_SECONDS
+    cache_match(clean_db, "Mayor", match_from_book(book))
+    respx.post(API_URL).mock(return_value=httpx.Response(200, json={"data": {"editions": [
+        HC_EDITION | {"id": 11, "audio_seconds": int(seconds)},
+        HC_EDITION | {"id": 22, "audio_seconds": int(seconds) * 3, "contributions": [
+            {"contribution": "Narrator", "author": {"id": 2, "name": "Jim Dale"}}]},
+    ]}}))
+
+    response = client.get("/imports/editions", params={"rel": "Mayor"})
+
+    assert response.status_code == 200
+    # fields carry the entry's rel so sibling rows in the table can't collide
+    assert 'name="hc_edition__Mayor"' in response.text
+    assert 'value="Stephen Fry"' in response.text
+    # the picker doesn't render its own label box; it prefills the row's
+    assert 'name="edition_label__Mayor"' not in response.text
+    assert "edlabel-" in response.text
+    # only the runtime-matching edition is badged, and nothing is preselected
+    assert response.text.count("≈ your files") == 1
+    assert "checked" not in response.text
+
+
+def test_edition_picker_without_a_match_asks_for_one_first(client, dirs):
+    put(dirs, "Unknown")
+
+    response = client.get("/imports/editions", params={"rel": "Unknown"})
+
+    assert response.status_code == 200
+    assert "Match this entry to a book first." in response.text
+
+
+def test_edition_picker_404s_for_a_vanished_entry(client, dirs):
+    assert client.get("/imports/editions", params={"rel": "Gone"}).status_code == 404
+
+
+@respx.mock
+def test_import_records_the_picked_hardcover_edition(client, clean_db, dirs, book):
+    put(dirs, "Mayor")
+
+    response = client.post(
+        "/imports/import",
+        data={
+            "mode": "one",
+            "rel": "Mayor",
+            "hc__Mayor": str(book.hardcover_id),
+            "hc_edition__Mayor": "11",
+            "hclabel_11__Mayor": "Stephen Fry",
+            "hcnarr_11__Mayor": "Stephen Fry",
+        },
+    )
+
+    assert response.status_code == 200
+    clean_db.expire_all()
+    edition = book.editions[0]
+    assert edition.label == "Stephen Fry"
+    assert edition.hardcover_edition_id == 11
+    assert edition.narrator == "Stephen Fry"
+    assert "Noobtown {Stephen Fry}" in edition.library_path
+
+
+@respx.mock
+def test_import_keeps_the_plain_folder_when_the_label_is_cleared(client, clean_db, dirs, book):
+    put(dirs, "Mayor")
+
+    response = client.post(
+        "/imports/import",
+        data={
+            "mode": "one",
+            "rel": "Mayor",
+            "hc__Mayor": str(book.hardcover_id),
+            "hc_edition__Mayor": "11",
+            "hclabel_11__Mayor": "Stephen Fry",
+            "hcnarr_11__Mayor": "Stephen Fry",
+            "edition_label__Mayor": "",
+        },
+    )
+
+    assert response.status_code == 200
+    clean_db.expire_all()
+    edition = book.editions[0]
+    # clearing the prefilled label keeps the unsuffixed folder, but the
+    # recording is still identified
+    assert edition.label == ""
+    assert "{" not in edition.library_path
+    assert edition.hardcover_edition_id == 11
+    assert edition.narrator == "Stephen Fry"

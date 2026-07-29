@@ -10,10 +10,13 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.clients.hardcover import HardcoverClient
 from app.config import get_settings
-from app.models import Book, Edition
+from app.models import Book, Edition, User
 
 logger = logging.getLogger(__name__)
+
+HC_EDITIONS_SHOWN = 10  # books can carry dozens of junk/foreign editions
 
 
 def get_or_create_edition(
@@ -117,6 +120,99 @@ def series_edition_candidates(session: Session, book: Book) -> list[dict[str, st
         if label not in candidates or (not candidates[label] and narrator):
             candidates[label] = narrator or ""
     return [{"label": label, "narrator": narrator} for label, narrator in candidates.items()]
+
+
+def fetch_hc_editions(
+    user: User, hardcover_id: int, book: Book | None = None
+) -> tuple[list[dict], str | None]:
+    """The Hardcover book's audiobook editions, or a warning when the fetch
+    fails/finds nothing — the picker then degrades to a free-form label.
+    `book` is the local row when one exists (collection imports may be picking
+    an edition for a book nobody tracks yet)."""
+    if not user.hardcover_token:
+        return [], "No Hardcover token set — enter a label instead."
+    try:
+        with HardcoverClient(user.hardcover_token) as client:
+            editions = client.fetch_editions(hardcover_id)
+    except Exception:
+        logger.exception("Hardcover editions fetch failed for book %s", hardcover_id)
+        return [], "Could not fetch Hardcover's editions — enter a label instead."
+    if not editions:
+        return [], "Hardcover lists no audiobook editions — enter a label instead."
+    if book is None:
+        return editions, None
+    # Hide editions the book already has (matched by Hardcover id or label) —
+    # they'd only offer a duplicate download. An empty default_label never
+    # matches, or every no-narrator option would vanish behind the unlabelled
+    # edition.
+    have_ids = {e.hardcover_edition_id for e in book.editions if e.hardcover_edition_id}
+    have_labels = {e.label for e in book.editions if e.label}
+    editions = [
+        e
+        for e in editions
+        if e["id"] not in have_ids and (e["default_label"] or None) not in have_labels
+    ]
+    if not editions:
+        return [], "All of Hardcover's audiobook editions are already downloaded — enter a label instead."
+    return editions, None
+
+
+def edition_sections(
+    session: Session, user: User, hardcover_id: int, book: Book | None = None
+) -> tuple[list[dict], list[dict], str | None]:
+    """The picker's sections: sibling-series labels this book lacks (matched
+    to the book's Hardcover editions by default label when possible) and the
+    remaining Hardcover editions. Sibling labels survive a failed Hardcover
+    fetch — they then offer the label with the sibling's narrator. A book that
+    exists only on Hardcover has no siblings to offer."""
+    editions, warning = fetch_hc_editions(user, hardcover_id, book)
+    by_label: dict[str, dict] = {}
+    for e in editions:
+        # first occurrence wins = highest users_count (Hardcover's fetch order)
+        if e["default_label"] and e["default_label"] not in by_label:
+            by_label[e["default_label"]] = e
+    existing_options: list[dict] = []
+    used: set[int] = set()
+    for cand in series_edition_candidates(session, book) if book is not None else []:
+        hc = by_label.get(cand["label"])
+        if hc is not None:
+            used.add(hc["id"])
+            existing_options.append({"label": cand["label"], "narrator": hc["narrator"], "hc": hc})
+        else:
+            existing_options.append({"label": cand["label"], "narrator": cand["narrator"], "hc": None})
+    rest = [e for e in editions if e["id"] not in used][:HC_EDITIONS_SHOWN]
+    return existing_options, rest, warning
+
+
+def ns_field(base: str, ns: str = "") -> str:
+    """A picker field's form name. The Imports page posts every row's fields in
+    one request, so each row namespaces its picker with the entry's rel path;
+    the single-book pickers pass no namespace and keep the plain names."""
+    return f"{base}__{ns}" if ns else base
+
+
+def edition_choice(
+    form, ns: str = "", pick_sets_label: bool = True
+) -> tuple[str, int | None, str]:
+    """(label, hardcover_edition_id, narrator) from a submitted edition
+    picker. A typed label overrides the picked edition's default label.
+
+    `pick_sets_label` is what an *empty* label box means. In the download
+    pickers the box is a bare override, so an empty one falls back to the
+    picked edition's default label. The Imports row instead prefills the box
+    from the pick and leaves it editable, so an empty box there is the user
+    clearing it — deliberately asking for the plain unsuffixed folder."""
+    label = str(form.get(ns_field("edition_label", ns)) or "").strip()
+    raw = str(form.get(ns_field("hc_edition", ns)) or "")
+    # sibling-series options that Hardcover didn't match carry a "sib_N" value:
+    # they name a label but no Hardcover edition.
+    hc_id = int(raw) if raw.isdigit() else None
+    narrator = str(form.get(ns_field(f"hcnarr_{raw}", ns)) or "").strip() if raw else ""
+    if not narrator:
+        narrator = str(form.get(ns_field("narrator", ns)) or "").strip()
+    if not label and raw and pick_sets_label:
+        label = str(form.get(ns_field(f"hclabel_{raw}", ns)) or "").strip()
+    return label, hc_id, narrator
 
 
 def suggest_labels(session: Session, book: Book) -> list[str]:

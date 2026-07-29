@@ -14,10 +14,12 @@ from app.db import get_db
 from app.models import Book, User
 from app.services.collection import (
     HIGH_CONFIDENCE,
+    annotate_edition_hints,
     cache_match,
     cached_match,
     clear_cached_match,
     ensure_book,
+    entry_duration,
     entry_for,
     fill_slugs_from_book,
     find_local_matches,
@@ -28,7 +30,12 @@ from app.services.collection import (
     match_from_result,
     scan_imports,
 )
-from app.services.editions import suggest_labels
+from app.services.editions import (
+    edition_choice,
+    edition_sections,
+    ns_field,
+    suggest_labels,
+)
 from app.services.importer import ImportFailure
 from app.services.sync import run_sync_all
 from app.templating import templates
@@ -153,6 +160,63 @@ def match_hardcover(
     )
 
 
+@router.get("/imports/editions", response_class=HTMLResponse)
+async def edition_picker(
+    request: Request,
+    rel: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """The edition picker for one import row, loaded when its disclosure is
+    opened — it costs a Hardcover editions fetch plus a header read of every
+    audio file, far too much to do for every row on page load. Fields are
+    namespaced by `rel` because the Import selected/all buttons post the whole
+    table in one request."""
+    entry = entry_for(rel)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="import entry no longer exists")
+    match = cached_match(db, entry)
+
+    def build() -> dict:
+        if match is None:
+            return {"existing_options": [], "hc_editions": [], "suggestions": [],
+                    "warning": "Match this entry to a book first."}
+        book = db.scalar(select(Book).where(Book.hardcover_id == match["hardcover_id"]))
+        existing_options, hc_editions, warning = edition_sections(
+            db, user, match["hardcover_id"], book
+        )
+        annotate_edition_hints(
+            hc_editions + [o["hc"] for o in existing_options if o["hc"]],
+            entry,
+            entry_duration(entry),
+        )
+        return {
+            "existing_options": existing_options,
+            "hc_editions": hc_editions,
+            "warning": warning,
+            "suggestions": suggest_labels(db, book) if book is not None else [],
+        }
+
+    context = await run_in_threadpool(build)
+    return templates.TemplateResponse(
+        request,
+        "_edition_options.html",
+        {
+            **context,
+            "field_ns": rel,
+            "options_id": f"edition-options-{entry.row_id}",
+            "label_target": f"edlabel-{entry.row_id}",
+            # nothing is being downloaded here — the headings name what the
+            # files already are
+            "existing_heading": "Editions used elsewhere in this series",
+            "new_heading": "Hardcover's audiobook editions",
+            # the row owns the label input, so the picker only offers choices
+            "omit_label": True,
+            "collapse_new": False,
+        },
+    )
+
+
 @router.post("/imports/set-match", response_class=HTMLResponse)
 def set_match(
     request: Request, rel: str = Form(...), book_id: int = Form(...),
@@ -259,8 +323,23 @@ async def run_import(
             try:
                 with HardcoverClient(user.hardcover_token) as client:
                     book = ensure_book(db, client, hardcover_id)
-                label = str(form.get(f"edlabel__{rel}") or "")
-                import_entry(db, book, entry, label=label)
+                # The row's edition picker, if it was opened: a chosen edition
+                # stamps its Hardcover id and narrator onto the edition row.
+                # The row always submits its label box (prefilled from the
+                # pick, but editable), so an empty one there means the user
+                # cleared it — asking for the plain unsuffixed folder. Only a
+                # form that omits the field falls back to the pick's label.
+                label, hc_edition_id, narrator = edition_choice(
+                    form, ns=rel, pick_sets_label=ns_field("edition_label", rel) not in form
+                )
+                import_entry(
+                    db,
+                    book,
+                    entry,
+                    label=label,
+                    hardcover_edition_id=hc_edition_id,
+                    narrator=narrator,
+                )
                 clear_cached_match(db, rel)
                 imported += 1
             except ImportFailure as exc:

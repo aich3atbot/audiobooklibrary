@@ -7,6 +7,7 @@
    rides along with each release's Grab form). `existing_heading` renames the
    section for dialogs where nothing is being added (the rename picker). #}
 {% set existing_heading = existing_heading if existing_heading is defined else "Add existing edition" %}
+{% set sfx = "__" ~ field_ns if field_ns is defined and field_ns else "" %}
 {% macro option_body(opt) %}
         <strong>{{ opt.label }}</strong>
         {% if opt.hc %}
@@ -14,6 +15,8 @@
             {%- if opt.hc.format %} · {{ opt.hc.format }}{% endif %}
             {%- if opt.hc.audio_seconds %} · {{ (opt.hc.audio_seconds // 3600) }}h {{ ((opt.hc.audio_seconds % 3600) // 60) }}m{% endif %}
             {%- if opt.hc.publisher %} · {{ opt.hc.publisher }}{% endif %}</small>
+        {%- if opt.hc.hint_duration %} <span class="badge badge-ok" title="This edition's runtime matches the files you are importing">≈ your files</span>{% endif %}
+        {%- if opt.hc.hint_narrator %} <span class="badge" title="This narrator's name appears in the folder path">narrator in path</span>{% endif %}
         {% else %}
         <small>{% if opt.narrator %}{{ opt.narrator }} — {% endif %}used by other books in this series</small>
         {% endif %}
@@ -24,16 +27,18 @@
 {% for opt in existing_options %}
 {% set val = opt.hc.id if opt.hc else "sib_" ~ loop.index0 %}
 {% if buttons %}
-<button type="submit" name="hc_edition" value="{{ val }}" class="secondary edition-option">
+<button type="submit" name="hc_edition{{ sfx }}" value="{{ val }}" class="secondary edition-option">
     {{ option_body(opt) }}
 </button>
 {% else %}
 <label class="edition-option">
-    <input type="radio" name="hc_edition" value="{{ val }}">
+    <input type="radio" name="hc_edition{{ sfx }}" value="{{ val }}"
+           {% if label_target is defined and label_target %}data-label="{{ opt.label }}"
+           onchange="var t=document.getElementById('{{ label_target }}'); if (t) t.value = this.dataset.label;"{% endif %}>
     <span>{{ option_body(opt) }}</span>
 </label>
 {% endif %}
-<input type="hidden" name="hclabel_{{ val }}" value="{{ opt.label }}">
-<input type="hidden" name="hcnarr_{{ val }}" value="{{ opt.hc.narrator if opt.hc else opt.narrator }}">
+<input type="hidden" name="hclabel_{{ val }}{{ sfx }}" value="{{ opt.label }}">
+<input type="hidden" name="hcnarr_{{ val }}{{ sfx }}" value="{{ opt.hc.narrator if opt.hc else opt.narrator }}">
 {% endfor %}
 {% endif %}
