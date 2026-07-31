@@ -1,5 +1,6 @@
 import json
 import shutil
+from pathlib import Path
 
 import httpx
 import pytest
@@ -532,7 +533,8 @@ def test_set_match_renders_manual_row(client, clean_db, dirs, book):
     assert "The Mayor of Noobtown" in response.text
 
 
-def test_available_book_row_suggests_series_labels(client, clean_db, dirs, book):
+@respx.mock
+def test_picker_suggests_series_labels_but_not_imported_ones(client, clean_db, dirs, book):
     book.editions.append(Edition(label="Jim Dale", download_state=DownloadState.IMPORTED,
                                  library_path="/audiobooks/somewhere"))
     sibling = Book(hardcover_id=646490, title="Noobtown Two", author=book.author,
@@ -541,16 +543,16 @@ def test_available_book_row_suggests_series_labels(client, clean_db, dirs, book)
     clean_db.add(sibling)
     clean_db.commit()
     put(dirs, "The Mayor of Noobtown")
+    cache_match(clean_db, "The Mayor of Noobtown", match_from_book(book))
+    respx.post(API_URL).mock(return_value=httpx.Response(200, json={"data": {"editions": []}}))
 
-    response = client.post(
-        "/imports/set-match",
-        data={"rel": "The Mayor of Noobtown", "book_id": str(book.id)},
-    )
+    response = client.get("/imports/editions", params={"rel": "The Mayor of Noobtown"})
 
     assert response.status_code == 200
     assert "datalist" in response.text
     assert 'value="Stephen Fry"' in response.text  # the series-mate's label
-    assert 'value="Jim Dale"' not in response.text  # already imported here
+    # already imported here, so it can only be reached through "replace"
+    assert '<option value="Jim Dale">' not in response.text
 
 
 def test_set_hardcover_match_caches_choice(client, clean_db, dirs):
@@ -689,6 +691,26 @@ def test_available_books_are_matchable(client, clean_db, dirs, book):
     assert "The Mayor of Noobtown" in response.text
 
 
+def test_local_match_options_name_the_series_position(client, clean_db, dirs, book):
+    put(dirs, "Something")
+
+    response = client.get("/imports/search", params={"rel": "Something", "q": "mayor"})
+
+    # the position is what tells two books of one series apart in this list
+    assert "(Noobtown #1)" in response.text
+
+
+@respx.mock
+def test_hardcover_match_options_name_the_series_position(client, clean_db, dirs):
+    put(dirs, "Something")
+    hardcover_dispatch([MAYOR_DOC])
+
+    response = client.get("/imports/hardcover", params={"rel": "Something", "q": "mayor"})
+
+    assert "The Mayor of Noobtown — Ryan Rimmel" in response.text
+    assert "(Noobtown #1)" in response.text
+
+
 # --- choosing an edition at import time -------------------------------------
 
 
@@ -774,12 +796,14 @@ def test_edition_picker_namespaces_fields_and_badges_the_match(client, clean_db,
     # fields carry the entry's rel so sibling rows in the table can't collide
     assert 'name="hc_edition__Mayor"' in response.text
     assert 'value="Stephen Fry"' in response.text
-    # the picker doesn't render its own label box; it prefills the row's
-    assert 'name="edition_label__Mayor"' not in response.text
-    assert "edlabel-" in response.text
+    # the label box is the picker's own first option, not a row-level field
+    assert 'name="edition_label__Mayor"' in response.text
+    assert 'value="custom"' in response.text
     # only the runtime-matching edition is badged, and nothing is preselected
     assert response.text.count("≈ your files") == 1
-    assert "checked" not in response.text
+    # no radio carries a checked attribute (the custom option's oninput script
+    # mentions .checked, hence the leading space)
+    assert " checked" not in response.text
 
 
 def test_edition_picker_without_a_match_asks_for_one_first(client, dirs):
@@ -821,7 +845,30 @@ def test_import_records_the_picked_hardcover_edition(client, clean_db, dirs, boo
 
 
 @respx.mock
-def test_import_keeps_the_plain_folder_when_the_label_is_cleared(client, clean_db, dirs, book):
+def test_import_with_an_empty_own_label_keeps_the_plain_folder(client, clean_db, dirs, book):
+    put(dirs, "Mayor")
+
+    response = client.post(
+        "/imports/import",
+        data={
+            "mode": "one",
+            "rel": "Mayor",
+            "hc__Mayor": str(book.hardcover_id),
+            # the "my own label" option, left empty
+            "hc_edition__Mayor": "custom",
+            "edition_label__Mayor": "",
+        },
+    )
+
+    assert response.status_code == 200
+    clean_db.expire_all()
+    edition = book.editions[0]
+    assert edition.label == ""
+    assert "{" not in edition.library_path
+
+
+@respx.mock
+def test_a_selected_edition_beats_text_left_in_the_label_box(client, clean_db, dirs, book):
     put(dirs, "Mayor")
 
     response = client.post(
@@ -833,16 +880,93 @@ def test_import_keeps_the_plain_folder_when_the_label_is_cleared(client, clean_d
             "hc_edition__Mayor": "11",
             "hclabel_11__Mayor": "Stephen Fry",
             "hcnarr_11__Mayor": "Stephen Fry",
-            "edition_label__Mayor": "",
+            # typed first, then a Hardcover edition was picked instead: the
+            # radio decides, unlike the download pickers' override box
+            "edition_label__Mayor": "Changed My Mind",
         },
     )
 
     assert response.status_code == 200
     clean_db.expire_all()
+    assert book.editions[0].label == "Stephen Fry"
+
+
+@respx.mock
+def test_import_replaces_an_existing_editions_files(client, clean_db, dirs, book):
+    old_dir = dirs.library_dir / "Ryan Rimmel" / "Noobtown {Jim Dale}" / "1 - The Mayor of Noobtown"
+    old_dir.mkdir(parents=True)
+    (old_dir / "old.mp3").write_bytes(b"stale")
+    existing = Edition(label="Jim Dale", download_state=DownloadState.IMPORTED,
+                       library_path=str(old_dir))
+    book.editions.append(existing)
+    clean_db.commit()
+    edition_id = existing.id
+    put(dirs, "Mayor", files=("new.mp3",))
+
+    response = client.post(
+        "/imports/import",
+        data={
+            "mode": "one",
+            "rel": "Mayor",
+            "hc__Mayor": str(book.hardcover_id),
+            "hc_edition__Mayor": f"rep_{edition_id}",
+            "hclabel_rep_{}__Mayor".format(edition_id): "Jim Dale",
+        },
+    )
+
+    assert response.status_code == 200
+    clean_db.expire_all()
+    assert len(book.editions) == 1  # replaced in place, not added alongside
     edition = book.editions[0]
-    # clearing the prefilled label keeps the unsuffixed folder, but the
-    # recording is still identified
-    assert edition.label == ""
-    assert "{" not in edition.library_path
-    assert edition.hardcover_edition_id == 11
-    assert edition.narrator == "Stephen Fry"
+    assert edition.id == edition_id
+    assert edition.label == "Jim Dale"
+    assert Path(edition.library_path) == old_dir
+    # the stale files are gone and the imported ones took their place
+    assert not (old_dir / "old.mp3").exists()
+    assert (old_dir / "new.mp3").exists()
+    assert not (dirs.imports_dir / "Mayor").exists()
+
+
+@respx.mock
+def test_import_refuses_to_replace_a_vanished_edition(client, clean_db, dirs, book):
+    book.editions.append(Edition(label="Jim Dale", download_state=DownloadState.IMPORTED,
+                                 library_path="/audiobooks/gone"))
+    clean_db.commit()
+    put(dirs, "Mayor")
+
+    response = client.post(
+        "/imports/import",
+        data={
+            "mode": "one",
+            "rel": "Mayor",
+            "hc__Mayor": str(book.hardcover_id),
+            "hc_edition__Mayor": "rep_9999",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "no longer exists" in response.text
+    assert (dirs.imports_dir / "Mayor").exists()  # nothing moved
+
+
+@respx.mock
+def test_edition_picker_offers_this_books_editions_as_replacements(
+    client, clean_db, dirs, book
+):
+    book.editions.append(Edition(label="Jim Dale", narrator="Jim Dale",
+                                 download_state=DownloadState.IMPORTED,
+                                 library_path="/audiobooks/somewhere"))
+    clean_db.commit()
+    edition_id = book.editions[0].id
+    put(dirs, "Mayor")
+    cache_match(clean_db, "Mayor", match_from_book(book))
+    respx.post(API_URL).mock(return_value=httpx.Response(
+        200, json={"data": {"editions": [HC_EDITION]}}))
+
+    response = client.get("/imports/editions", params={"rel": "Mayor"})
+
+    assert response.status_code == 200
+    assert f'value="rep_{edition_id}"' in response.text
+    assert "(replace)" in response.text
+    # picking one confirms before anything can be deleted
+    assert "abEditionReplace" in response.text

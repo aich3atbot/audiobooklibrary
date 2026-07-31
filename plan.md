@@ -398,22 +398,32 @@ library. Complements (does not change) the automatic /downloads pipeline.
   automatically — a successful batch kicks a background all-user sync; everyone else sees
   it as *available* in search. Destination-exists and other failures are reported per
   row; nothing is guessed.
-- **Choosing the edition**: every matched row carries an edition-label input plus an
-  "Edition…" disclosure that lazily loads the *same* picker the download flow uses
-  (`edition_sections`: sibling-series labels and Hardcover's audiobook editions), with
-  its fields namespaced by the entry's rel path because the Import selected/all buttons
-  post the whole table in one request. Picking prefills the label input, which stays
-  editable — clearing it imports to the plain unsuffixed folder while still recording the
-  Hardcover edition id and narrator on the `edition` row. The picker is lazy because it
-  costs a Hardcover fetch plus a header read of every audio file: opening it badges the
-  edition whose `audio_seconds` is within 5% of the files' total runtime, and any edition
-  whose narrator is named in the folder path. **Hints are advisory badges only — nothing
-  is ever preselected**, so a wrong guess can't silently mislabel an import.
+- **Choosing the edition**: each matched row folds its whole edition choice into one
+  "Edition…" disclosure, which lazily loads a picker of radio options in the same order
+  as the add-edition dialog — *my own label* (a free-text box that is itself the option),
+  labels the series uses elsewhere, this book's own editions (**replace**), then the rest
+  of Hardcover's audiobook editions. The selected option decides the label
+  (`edition_choice(pick_wins=True)`: unlike the download pickers' override box, text left
+  behind after a change of mind is ignored) and stamps its Hardcover edition id and
+  narrator onto the `edition` row. Choosing nothing, or an empty own label, imports to
+  the plain unsuffixed folder. Collapsed, the summary reads "Edition: <choice>".
+  Fields are namespaced by the entry's rel path because the Import selected/all buttons
+  post the whole table in one request. The picker is lazy because it costs a Hardcover
+  fetch plus a header read of every audio file: opening it badges the edition whose
+  `audio_seconds` is within 5% of the files' total runtime, and any edition whose
+  narrator is named in the folder path. **Hints are advisory badges only — nothing is
+  ever preselected**, so a wrong guess can't silently mislabel an import.
+- **Replacing**: picking one of the book's own editions deletes that edition's library
+  files and puts these there instead, under the same label (`import_entry`'s
+  `replace_edition_id`; deletion is committed before the move, so a failed move leaves
+  the edition file-less rather than lying about its path). The browser confirms at
+  *selection* time, naming the edition and folder — a bulk import must not fire a
+  confirm per row, and nothing is deleted until Import runs.
 - **Additional editions**: an entry matched to an already-available book imports as
-  another edition — the label is required there. Guardrails mirror the download
-  flow: an unlabelled import into an available book refuses ("give these files an
-  edition label"), as does a labelled import while the existing files are unlabelled
-  (rename them on the book detail page first).
+  another edition — it needs its own label, or an edition to replace. Guardrails mirror
+  the download flow: an unlabelled import into an available book refuses ("give these
+  files an edition label"), as does a labelled import while the existing files are
+  unlabelled (rename them on the book detail page first).
 - **Safety**: import paths are validated to stay inside IMPORTS_DIR; an edition whose
   label already has files can't be the target of an import.
 

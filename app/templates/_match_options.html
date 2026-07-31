@@ -4,7 +4,9 @@
         <input type="hidden" name="rel" value="{{ rel }}">
         <input type="hidden" name="book_id" value="{{ b.id }}">
         <button type="submit" class="secondary outline">
-            {{ b.title }} — {{ b.author.name }}{% if b.series %} ({{ b.series.name }}){% endif %}
+            {{ b.title }} — {{ b.author.name }}
+            {%- if b.series %} ({{ b.series.name }}
+                {%- if b.series_index is not none %} #{{ b.series_index | series_index }}{% endif %}){% endif %}
         </button>
     </form>
     {% endfor %}

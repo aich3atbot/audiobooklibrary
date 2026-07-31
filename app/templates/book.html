@@ -8,7 +8,7 @@
     <div>
         <h2>{{ book.title }}</h2>
         <p>{{ book.author.name }}</p>
-        {% if book.series %}<p><small>{% if book.series.hardcover_id %}<a href="/series/{{ book.series.hardcover_id }}">{{ book.series.name }}</a>{% else %}{{ book.series.name }}{% endif %}{% if book.series_index is not none %} #{{ book.series_index | int if book.series_index == book.series_index | int else book.series_index }}{% endif %}</small></p>{% endif %}
+        {% if book.series %}<p><small>{% if book.series.hardcover_id %}<a href="/series/{{ book.series.hardcover_id }}">{{ book.series.name }}</a>{% else %}{{ book.series.name }}{% endif %}{% if book.series_index is not none %} #{{ book.series_index | series_index }}{% endif %}</small></p>{% endif %}
         {% if book.hardcover_slug or (book.series and book.series.hardcover_slug) %}
         <p class="hardcover-links">
             {% if book.hardcover_slug %}{{ hardcover_badge("books", book.hardcover_slug, "Hardcover") }}{% endif %}

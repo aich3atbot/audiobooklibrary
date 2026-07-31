@@ -33,7 +33,7 @@ from app.services.collection import (
 from app.services.editions import (
     edition_choice,
     edition_sections,
-    ns_field,
+    replace_choice,
     suggest_labels,
 )
 from app.services.importer import ImportFailure
@@ -56,18 +56,21 @@ def _row(db: Session, entry, match, error=None) -> dict:
         confidence = "low"
     # a Book that already exists locally for this match (may be "available")
     book = None
-    label_suggestions: list[str] = []
     if match is not None:
         book = db.scalar(select(Book).where(Book.hardcover_id == match["hardcover_id"]))
         fill_slugs_from_book(match, book)
-    if book is not None:
-        # series-mates' labels for the edition-label input; a label this book
-        # already has imported would be refused, so don't suggest it
-        taken = {e.label for e in book.editions if e.library_path}
-        label_suggestions = [s for s in suggest_labels(db, book) if s not in taken]
     return {"entry": entry, "match": match, "book": book,
-            "label_suggestions": label_suggestions,
             "confidence": confidence, "error": error}
+
+
+def _label_suggestions(db: Session, book: Book | None) -> list[str]:
+    """Series-mates' labels for the picker's own-label datalist. A label this
+    book already has imported would be refused by import_entry, so it isn't
+    suggested — the picker's replace section is how you target those."""
+    if book is None:
+        return []
+    taken = {e.label for e in book.editions if e.library_path}
+    return [s for s in suggest_labels(db, book) if s not in taken]
 
 
 def _identify(db: Session, user: User, entry) -> tuple[dict | None, str | None]:
@@ -180,7 +183,7 @@ async def edition_picker(
     def build() -> dict:
         if match is None:
             return {"existing_options": [], "hc_editions": [], "suggestions": [],
-                    "warning": "Match this entry to a book first."}
+                    "replaceable": [], "warning": "Match this entry to a book first."}
         book = db.scalar(select(Book).where(Book.hardcover_id == match["hardcover_id"]))
         existing_options, hc_editions, warning = edition_sections(
             db, user, match["hardcover_id"], book
@@ -194,25 +197,23 @@ async def edition_picker(
             "existing_options": existing_options,
             "hc_editions": hc_editions,
             "warning": warning,
-            "suggestions": suggest_labels(db, book) if book is not None else [],
+            "suggestions": _label_suggestions(db, book),
+            # the book's own imported editions, offered as replace targets;
+            # edition_sections has already dropped their Hardcover twins
+            "replaceable": [e for e in book.editions if e.library_path] if book else [],
         }
 
     context = await run_in_threadpool(build)
     return templates.TemplateResponse(
         request,
-        "_edition_options.html",
+        "_import_editions.html",
         {
             **context,
             "field_ns": rel,
-            "options_id": f"edition-options-{entry.row_id}",
-            "label_target": f"edlabel-{entry.row_id}",
-            # nothing is being downloaded here — the headings name what the
+            "row_id": entry.row_id,
+            # nothing is being downloaded here — the heading names what the
             # files already are
             "existing_heading": "Editions used elsewhere in this series",
-            "new_heading": "Hardcover's audiobook editions",
-            # the row owns the label input, so the picker only offers choices
-            "omit_label": True,
-            "collapse_new": False,
         },
     )
 
@@ -323,15 +324,12 @@ async def run_import(
             try:
                 with HardcoverClient(user.hardcover_token) as client:
                     book = ensure_book(db, client, hardcover_id)
-                # The row's edition picker, if it was opened: a chosen edition
-                # stamps its Hardcover id and narrator onto the edition row.
-                # The row always submits its label box (prefilled from the
-                # pick, but editable), so an empty one there means the user
-                # cleared it — asking for the plain unsuffixed folder. Only a
-                # form that omits the field falls back to the pick's label.
-                label, hc_edition_id, narrator = edition_choice(
-                    form, ns=rel, pick_sets_label=ns_field("edition_label", rel) not in form
-                )
+                # The row's edition picker, if it was opened: the selected
+                # option decides the label (pick_wins) and stamps its Hardcover
+                # id and narrator onto the edition row. Picking one of the
+                # book's own editions replaces its files, which the picker
+                # confirmed at selection time.
+                label, hc_edition_id, narrator = edition_choice(form, ns=rel, pick_wins=True)
                 import_entry(
                     db,
                     book,
@@ -339,6 +337,7 @@ async def run_import(
                     label=label,
                     hardcover_edition_id=hc_edition_id,
                     narrator=narrator,
+                    replace_edition_id=replace_choice(form, ns=rel),
                 )
                 clear_cached_match(db, rel)
                 imported += 1

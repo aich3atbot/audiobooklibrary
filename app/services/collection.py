@@ -34,6 +34,7 @@ from app.services.importer import (
     cleanup_empty_parents,
     edition_dir_for,
     normalize,
+    remove_library_files,
 )
 from app.services.sync import _load_caches, delete_state, get_state, set_state, upsert_book_metadata
 
@@ -351,27 +352,47 @@ def import_entry(
     label: str = "",
     hardcover_edition_id: int | None = None,
     narrator: str = "",
+    replace_edition_id: int | None = None,
 ) -> Path:
     """Move an entry into the library, as the book's `label` edition (the
-    unlabelled edition by default); raises ImportFailure on any problem."""
+    unlabelled edition by default); raises ImportFailure on any problem.
+
+    `replace_edition_id` swaps out one of the book's existing editions: its
+    current library files are **deleted** and these take their place under the
+    same label. As in the download replace flow the deletion happens first, so
+    a move that then fails leaves the edition with no files — the picker
+    confirms before selecting it."""
     label = label.strip()
     by_label = {e.label: e for e in book.editions}
-    if not label and any(e.library_path for e in book.editions):
+    replacing = None
+    if replace_edition_id is not None:
+        replacing = next((e for e in book.editions if e.id == replace_edition_id), None)
+        if replacing is None:
+            raise ImportFailure("the edition being replaced no longer exists")
+        label = replacing.label  # the replaced edition's label is authoritative
+    elif not label and any(e.library_path for e in book.editions):
         raise ImportFailure(
             f"{book.title} is already in the library — give these files an "
             "edition label to import them as another edition"
         )
-    target = by_label.get(label)
-    if target is not None and target.library_path:
-        raise ImportFailure(f'{book.title} already has its "{label}" edition in the library')
-    if label:
-        unlabelled = by_label.get("")
-        if unlabelled is not None and unlabelled.library_path:
-            raise ImportFailure(
-                f"{book.title}'s existing files need a label first (Rename them "
-                "on the book's detail page) so both editions get named folders"
-            )
+    else:
+        target = by_label.get(label)
+        if target is not None and target.library_path:
+            raise ImportFailure(f'{book.title} already has its "{label}" edition in the library')
+        if label:
+            unlabelled = by_label.get("")
+            if unlabelled is not None and unlabelled.library_path:
+                raise ImportFailure(
+                    f"{book.title}'s existing files need a label first (Rename them "
+                    "on the book's detail page) so both editions get named folders"
+                )
     edition = get_or_create_edition(session, book, label, hardcover_edition_id, narrator)
+    if replacing is not None:
+        # committed straight away: if the move below fails, the DB must not
+        # still claim files that have just been deleted
+        remove_library_files(replacing)
+        session.commit()
+        logger.info("Collection import replaces %s of %s", label or "the edition", book.title)
     dest = edition_dir_for(edition)
     if dest.exists() and any(dest.iterdir()):
         session.rollback()  # discard a just-created edition row

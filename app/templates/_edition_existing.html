@@ -5,18 +5,15 @@
    one-click submit buttons (the add-edition dialog, styled like its replace
    entries); otherwise radios (the release picker's fieldset, where the choice
    rides along with each release's Grab form). `existing_heading` renames the
-   section for dialogs where nothing is being added (the rename picker). #}
+   section for dialogs where nothing is being added (the rename picker).
+   The Imports row passes `field_ns` (its fields share one form with every
+   other row) and `row_id` (its radios keep the row's summary line current). #}
+{% import "_edition_macros.html" as ed %}
 {% set existing_heading = existing_heading if existing_heading is defined else "Add existing edition" %}
 {% set sfx = "__" ~ field_ns if field_ns is defined and field_ns else "" %}
 {% macro option_body(opt) %}
         <strong>{{ opt.label }}</strong>
-        {% if opt.hc %}
-        <small>{{ opt.hc.narrator or opt.hc.title }}
-            {%- if opt.hc.format %} · {{ opt.hc.format }}{% endif %}
-            {%- if opt.hc.audio_seconds %} · {{ (opt.hc.audio_seconds // 3600) }}h {{ ((opt.hc.audio_seconds % 3600) // 60) }}m{% endif %}
-            {%- if opt.hc.publisher %} · {{ opt.hc.publisher }}{% endif %}</small>
-        {%- if opt.hc.hint_duration %} <span class="badge badge-ok" title="This edition's runtime matches the files you are importing">≈ your files</span>{% endif %}
-        {%- if opt.hc.hint_narrator %} <span class="badge" title="This narrator's name appears in the folder path">narrator in path</span>{% endif %}
+        {% if opt.hc %}{{ ed.edition_detail(opt.hc) }}
         {% else %}
         <small>{% if opt.narrator %}{{ opt.narrator }} — {% endif %}used by other books in this series</small>
         {% endif %}
@@ -33,8 +30,8 @@
 {% else %}
 <label class="edition-option">
     <input type="radio" name="hc_edition{{ sfx }}" value="{{ val }}"
-           {% if label_target is defined and label_target %}data-label="{{ opt.label }}"
-           onchange="var t=document.getElementById('{{ label_target }}'); if (t) t.value = this.dataset.label;"{% endif %}>
+           {# single-quoted: tojson escapes for single-quoted attributes #}
+           {% if row_id is defined and row_id %}onchange='abEditionPicked("{{ row_id }}", {{ opt.label | tojson }})'{% endif %}>
     <span>{{ option_body(opt) }}</span>
 </label>
 {% endif %}

@@ -1,0 +1,16 @@
+{# One edition option's body, shared by the download pickers and the Imports
+   row so both describe an edition the same way: the label it will get, then
+   the recording's details, then any "looks like your files" hints (Imports
+   only — nothing else annotates editions). #}
+{% macro edition_body(e) %}
+        <strong>{{ e.default_label or "Unnamed edition" }}</strong>
+        {{ edition_detail(e) }}
+{% endmacro %}
+{% macro edition_detail(e) %}
+        <small>{{ e.narrator or e.title }}
+            {%- if e.format %} · {{ e.format }}{% endif %}
+            {%- if e.audio_seconds %} · {{ (e.audio_seconds // 3600) }}h {{ ((e.audio_seconds % 3600) // 60) }}m{% endif %}
+            {%- if e.publisher %} · {{ e.publisher }}{% endif %}</small>
+        {%- if e.hint_duration %} <span class="badge badge-ok" title="This edition's runtime matches the files you are importing">≈ your files</span>{% endif %}
+        {%- if e.hint_narrator %} <span class="badge" title="This narrator's name appears in the folder path">narrator in path</span>{% endif %}
+{% endmacro %}

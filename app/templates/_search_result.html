@@ -2,7 +2,7 @@
     {% if r.cover_url %}<img src="{{ r.cover_url }}" alt="Cover of {{ r.title }}" loading="lazy">{% endif %}
     <h4>{{ r.title }}</h4>
     <p>{{ r.authors | join(", ") }}{% if r.release_year %} <small>({{ r.release_year }})</small>{% endif %}</p>
-    {% if r.series_name %}<p><small>{% if r.series_id %}<a href="/series/{{ r.series_id }}">{{ r.series_name }}</a>{% else %}{{ r.series_name }}{% endif %}{% if r.series_position is not none %} #{{ r.series_position | int if r.series_position == r.series_position | int else r.series_position }}{% endif %}</small></p>{% endif %}
+    {% if r.series_name %}<p><small>{% if r.series_id %}<a href="/series/{{ r.series_id }}">{{ r.series_name }}</a>{% else %}{{ r.series_name }}{% endif %}{% if r.series_position is not none %} #{{ r.series_position | series_index }}{% endif %}</small></p>{% endif %}
     {% set dl = book_status(existing) if existing else 'not_present' %}
     <p>
         {% if r.has_audiobook %}<span class="badge">audiobook</span>{% endif %}

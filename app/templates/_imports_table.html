@@ -1,5 +1,24 @@
 <div id="imports-table">
 {% if rows %}
+<script>
+    // Defined with the table so every row's lazily loaded picker can call it;
+    // re-running this after a swap just redefines the same functions.
+    function abEditionPicked(row, name) {
+        var summary = document.getElementById("edsum-" + row);
+        if (summary) summary.textContent = name ? "Edition: " + name : "Edition…";
+    }
+    // Replacing deletes the edition's current files, and a bulk import runs
+    // without asking again — so confirm at the moment it is chosen.
+    function abEditionReplace(radio, row, name, path) {
+        if (!confirm("Replace the \"" + name + "\" edition?\n\nImporting will delete "
+                     + path + " and put these files there instead.")) {
+            radio.checked = false;
+            abEditionPicked(row, "");
+            return;
+        }
+        abEditionPicked(row, name + " (replace)");
+    }
+</script>
 <div class="imports-actions">
     <button hx-post="/imports/import" hx-vals='{"mode": "selected"}'
             hx-include="#imports-table" hx-target="#imports-table" hx-swap="outerHTML">

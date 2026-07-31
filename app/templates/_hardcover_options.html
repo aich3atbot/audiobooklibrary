@@ -12,7 +12,10 @@
     <input type="hidden" name="series_position" value="{{ r.series_position }}">
     {% endif %}
     <button type="submit" class="secondary">
-        Match: {{ r.title }} — {{ r.authors | join(", ") }}{% if r.release_year %} ({{ r.release_year }}){% endif %}
+        Match: {{ r.title }} — {{ r.authors | join(", ") }}
+        {%- if r.series_name %} ({{ r.series_name }}
+            {%- if r.series_position is not none %} #{{ r.series_position | series_index }}{% endif %}){% endif %}
+        {%- if r.release_year %} ({{ r.release_year }}){% endif %}
     </button>
 </form>
 {% else %}

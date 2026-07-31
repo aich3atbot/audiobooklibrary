@@ -285,12 +285,50 @@ a.badge { color: white; text-decoration: none; }
 
 /* the picker's folded-away "Or download a new edition" tail, shown when the
    series' own labels lead */
-#edition-options .new-edition {
+.edition-options .new-edition {
     margin: 0.5rem 0 0;
 }
 
-#edition-options .new-edition summary {
+.edition-options .new-edition summary {
     font-weight: bold;
+}
+
+/* the Imports picker's first option: a radio whose value is whatever is
+   typed beside it */
+.custom-option {
+    display: block;
+}
+
+.custom-option > label {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 0.75rem;
+    align-items: baseline;
+    margin: 0;
+}
+
+.custom-option > input[type="text"] {
+    margin: 0.25rem 0 0 1.7rem;
+    width: calc(100% - 1.7rem);
+}
+
+/* the picker sits inside a table row, so it inherits the row's tighter type */
+.match-cell .edition-options {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+}
+
+.match-cell .edition-options h5 {
+    font-size: 0.85rem;
+    margin: 0.75rem 0 0.15rem;
+}
+
+.match-cell .edition-options p {
+    margin: 0 0 0.25rem;
+}
+
+.match-cell .edition-option {
+    margin: 0.35rem 0;
 }
 
 .edition-option {

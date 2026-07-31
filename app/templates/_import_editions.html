@@ -1,0 +1,68 @@
+{# The Imports row's edition picker, loaded into the row's "Edition…"
+   disclosure. Unlike the download pickers everything lives inside the fold —
+   including the free-form label, which is this picker's first *option* rather
+   than an override of the others (see edition_choice's pick_wins).
+   Order, mirroring the add-edition dialog: own label, then labels the series
+   uses elsewhere, then this book's own editions (replacing their files), then
+   the rest of Hardcover's audiobook editions.
+   Every field name carries the entry's rel path: the Import selected/all
+   buttons post the whole table at once, so unprefixed names would put all the
+   rows' radios in one group. #}
+{% import "_edition_macros.html" as ed %}
+<fieldset id="edition-options-{{ row_id }}" class="edition-options">
+    <div class="edition-option custom-option">
+        <label>
+            {# these handlers are single-quoted: the labels below go through
+               tojson, which escapes for single-quoted attributes, not double #}
+            <input type="radio" name="hc_edition__{{ field_ns }}" value="custom"
+                   id="edcustom-{{ row_id }}"
+                   onchange='abEditionPicked("{{ row_id }}", document.getElementById("edlabel-{{ row_id }}").value)'>
+            <span><strong>My own label</strong></span>
+        </label>
+        <input type="text" name="edition_label__{{ field_ns }}" id="edlabel-{{ row_id }}"
+               {% if suggestions %}list="edlabels-{{ row_id }}"{% endif %}
+               placeholder="e.g. Stephen Fry — empty imports to the plain folder"
+               aria-label="Edition label"
+               oninput='document.getElementById("edcustom-{{ row_id }}").checked = true;
+                        abEditionPicked("{{ row_id }}", this.value)'>
+        {% if suggestions %}
+        <datalist id="edlabels-{{ row_id }}">
+            {% for s in suggestions %}<option value="{{ s }}">{% endfor %}
+        </datalist>
+        {% endif %}
+    </div>
+
+    {% include "_edition_existing.html" %}
+
+    {% if replaceable %}
+    <h5>Replace an edition of this book</h5>
+    <p><small>These files take the edition's place; its current files are deleted.</small></p>
+    {% for e in replaceable %}
+    {% set shown = e.label or "Unlabelled edition" %}
+    <label class="edition-option">
+        <input type="radio" name="hc_edition__{{ field_ns }}" value="rep_{{ e.id }}"
+               onchange='abEditionReplace(this, "{{ row_id }}", {{ shown | tojson }}, {{ e.library_path | tojson }})'>
+        <span>
+            <strong>{{ shown }} <em>(replace)</em></strong>
+            <small>{% if e.narrator %}{{ e.narrator }} — {% endif %}already in the library</small>
+        </span>
+    </label>
+    <input type="hidden" name="hclabel_rep_{{ e.id }}__{{ field_ns }}" value="{{ e.label }}">
+    <input type="hidden" name="hcnarr_rep_{{ e.id }}__{{ field_ns }}" value="{{ e.narrator }}">
+    {% endfor %}
+    {% endif %}
+
+    {% if hc_editions or warning %}
+    <h5>Hardcover's audiobook editions</h5>
+    {% endif %}
+    {% if warning %}<p><small>{{ warning }}</small></p>{% endif %}
+    {% for e in hc_editions %}
+    <label class="edition-option">
+        <input type="radio" name="hc_edition__{{ field_ns }}" value="{{ e.id }}"
+               onchange='abEditionPicked("{{ row_id }}", {{ (e.default_label or "Unnamed edition") | tojson }})'>
+        <span>{{ ed.edition_body(e) }}</span>
+    </label>
+    <input type="hidden" name="hclabel_{{ e.id }}__{{ field_ns }}" value="{{ e.default_label }}">
+    <input type="hidden" name="hcnarr_{{ e.id }}__{{ field_ns }}" value="{{ e.narrator }}">
+    {% endfor %}
+</fieldset>

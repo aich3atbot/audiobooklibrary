@@ -92,13 +92,15 @@ page, and `POST /api/items/batch/get`.
   applies to the download pipeline only. A successful batch kicks a background all-user
   sync. An entry matched to an already-available book imports as an additional edition;
   unlabelled imports into available books refuse with guidance. Every matched row can
-  **choose the edition** — the download flow's own picker (`edition_sections` in
-  `app/services/editions.py`), loaded lazily per row and namespaced by the entry's rel
-  path (`ns_field`): the bulk Import buttons post the whole table, so unprefixed field
-  names would cross-wire the rows. A pick prefills the row's label box but doesn't own
-  it — an empty box means the plain unsuffixed folder, which is why the imports call site
-  turns `pick_sets_label` off. Duration/narrator matches are advisory badges; **never
-  preselect an edition**.
+  **choose the edition** in one lazily loaded fold (`_import_editions.html`, fed by
+  `edition_sections`): own label, series labels, this book's editions (replace), then
+  Hardcover's. Fields are namespaced by the entry's rel path (`ns_field`) — the bulk
+  Import buttons post the whole table, so unprefixed names would cross-wire the rows.
+  The selected radio decides the label (`edition_choice(pick_wins=True)`; the download
+  pickers keep the opposite, override-box, semantics). Picking a "replace" option
+  **deletes** that edition's files (`import_entry(replace_edition_id=...)`) and confirms
+  at selection time, not at import time, because a bulk import must not fire one confirm
+  per row. Duration/narrator matches are advisory badges; **never preselect an edition**.
 - **Read state**: per user (`user_book` rows over shared `book` metadata), two-way sync with
   each user's own Hardcover token, but **Hardcover is the source of truth** — push local
   changes first, then pull; Hardcover wins conflicts. Book identity is anchored on the

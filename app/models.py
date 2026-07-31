@@ -46,6 +46,15 @@ DISPLAY_DOWNLOADING = {
 }
 
 
+def format_series_index(index: float | int | None) -> str:
+    """A series position for display: whole numbers lose the meaningless ".0"
+    (2.0 -> "2") while half-numbered entries keep it (2.5 -> "2.5"). Empty for
+    a book with no position, so templates can concatenate it freely."""
+    if index is None:
+        return ""
+    return str(int(index)) if float(index) == int(index) else str(index)
+
+
 def display_status(state: DownloadState) -> str:
     """Collapse one edition's pipeline state to the three UI statuses."""
     if state == DownloadState.IMPORTED:

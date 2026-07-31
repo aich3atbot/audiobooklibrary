@@ -191,28 +191,44 @@ def ns_field(base: str, ns: str = "") -> str:
     return f"{base}__{ns}" if ns else base
 
 
-def edition_choice(
-    form, ns: str = "", pick_sets_label: bool = True
-) -> tuple[str, int | None, str]:
-    """(label, hardcover_edition_id, narrator) from a submitted edition
-    picker. A typed label overrides the picked edition's default label.
+CUSTOM_OPTION = "custom"  # the Imports picker's "my own label" radio
 
-    `pick_sets_label` is what an *empty* label box means. In the download
-    pickers the box is a bare override, so an empty one falls back to the
-    picked edition's default label. The Imports row instead prefills the box
-    from the pick and leaves it editable, so an empty box there is the user
-    clearing it — deliberately asking for the plain unsuffixed folder."""
+
+def edition_choice(form, ns: str = "", pick_wins: bool = False) -> tuple[str, int | None, str]:
+    """(label, hardcover_edition_id, narrator) from a submitted edition picker.
+
+    `pick_wins` is how the label box and the picked option interact, which
+    differs by picker:
+    - False (the download pickers): the box is a bare *override* sitting below
+      the options, so a typed label beats the pick and an empty one falls back
+      to the picked edition's default label.
+    - True (the Imports row): the box belongs to the picker's own CUSTOM_OPTION
+      radio, so whichever radio is selected decides. Text left in the box from
+      a change of mind is ignored unless that radio is the one selected."""
     label = str(form.get(ns_field("edition_label", ns)) or "").strip()
     raw = str(form.get(ns_field("hc_edition", ns)) or "")
-    # sibling-series options that Hardcover didn't match carry a "sib_N" value:
-    # they name a label but no Hardcover edition.
+    # options that aren't a Hardcover edition carry a prefixed value: "sib_N"
+    # for an unmatched sibling-series label, "rep_N" for one of the book's own
+    # editions. Both name a label but no Hardcover edition.
     hc_id = int(raw) if raw.isdigit() else None
     narrator = str(form.get(ns_field(f"hcnarr_{raw}", ns)) or "").strip() if raw else ""
     if not narrator:
         narrator = str(form.get(ns_field("narrator", ns)) or "").strip()
-    if not label and raw and pick_sets_label:
-        label = str(form.get(ns_field(f"hclabel_{raw}", ns)) or "").strip()
+    picked_label = str(form.get(ns_field(f"hclabel_{raw}", ns)) or "").strip() if raw else ""
+    if pick_wins:
+        if raw and raw != CUSTOM_OPTION:
+            label = picked_label
+    elif not label and raw:
+        label = picked_label
     return label, hc_id, narrator
+
+
+def replace_choice(form, ns: str = "") -> int | None:
+    """The id of the edition an Imports row is replacing, when its picker's
+    selection is one of the book's own editions ("rep_<edition id>")."""
+    raw = str(form.get(ns_field("hc_edition", ns)) or "")
+    rest = raw[len("rep_"):] if raw.startswith("rep_") else ""
+    return int(rest) if rest.isdigit() else None
 
 
 def suggest_labels(session: Session, book: Book) -> list[str]:

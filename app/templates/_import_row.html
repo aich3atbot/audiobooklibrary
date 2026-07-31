@@ -16,7 +16,7 @@
     <td class="match-cell">
         {% if m.match %}
         <strong>{{ m.match.title }}{% if m.match.author %} — {{ m.match.author }}{% endif %}</strong>
-        {% if m.match.series_name %}<br><small>{{ m.match.series_name }}{% if m.match.series_position is not none %} #{{ m.match.series_position | int if m.match.series_position == m.match.series_position | int else m.match.series_position }}{% endif %}</small>{% endif %}
+        {% if m.match.series_name %}<br><small>{{ m.match.series_name }}{% if m.match.series_position is not none %} #{{ m.match.series_position | series_index }}{% endif %}</small>{% endif %}
         <p class="match-badges">
             {% if m.confidence == "high" %}<span class="badge badge-ok">match {{ (m.match.score * 100) | int }}%</span>
             {% elif m.confidence == "low" %}<span class="badge badge-pending">low match {{ (m.match.score * 100) | int }}%</span>
@@ -27,24 +27,17 @@
             {% if m.match.slug %}{{ hardcover_badge("books", m.match.slug, "Hardcover") }}{% endif %}
             {% if m.match.series_slug %}{{ hardcover_badge("series", m.match.series_slug, "Series") }}{% endif %}
         </p>
-        {# The label always rides with the row; picking an edition below just
-           prefills it, and it stays editable (clear it for the plain
-           unsuffixed folder). An available book *needs* one — import_entry
-           refuses an unlabelled import into a book that already has files. #}
-        <input type="text" name="edition_label__{{ m.entry.rel }}" aria-label="Edition label"
-               id="edlabel-{{ m.entry.row_id }}"
-               {% if m.label_suggestions %}list="edlabels-{{ m.entry.row_id }}"{% endif %}
-               placeholder="Edition label{% if m.book and book_status(m.book) == 'available' %} (required){% else %} (optional){% endif %}"
-               title="{% if m.book and book_status(m.book) == 'available' %}The book is already in the library; these files import as an additional edition under this label{% else %}Names this edition's library folder; leave empty for the plain folder{% endif %}">
-        {% if m.label_suggestions %}
-        <datalist id="edlabels-{{ m.entry.row_id }}">
-            {% for s in m.label_suggestions %}<option value="{{ s }}">{% endfor %}
-        </datalist>
-        {% endif %}
+        {# Everything about the edition — including the label — lives inside
+           this fold, so an untouched row stays one line. The summary carries
+           the choice once one is made. An available book *needs* a label:
+           import_entry refuses an unlabelled import into a book with files. #}
         <details>
-            <summary>Edition…</summary>
-            <small>Which recording are these files? Picking one fills in the
-                   label above and records its narrator.</small>
+            <summary><span id="edsum-{{ m.entry.row_id }}">Edition…</span></summary>
+            <small>Which recording are these files?
+                {%- if m.book and book_status(m.book) == "available" %}
+                This book is already in the library, so these files need their own
+                label — or pick the edition they replace.
+                {%- endif %}</small>
             <div hx-get="/imports/editions" hx-trigger="toggle once from:closest details"
                  hx-vals='{"rel": {{ m.entry.rel | tojson }}}' hx-swap="innerHTML">
                 <p aria-busy="true">Loading editions…</p>
