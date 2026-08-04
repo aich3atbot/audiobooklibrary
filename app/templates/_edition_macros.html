@@ -6,6 +6,16 @@
         <strong>{{ e.default_label or "Unnamed edition" }}</strong>
         {{ edition_detail(e) }}
 {% endmacro %}
+{# One badge per edition — its label, or the bare state when the edition is
+   unlabelled. Shared by the book cards and the book detail page so a book
+   describes its recordings the same way wherever it is shown. #}
+{% macro edition_badges(book) %}
+        {%- for e in book.editions %}
+        {#- a literal space keeps adjacent badges from touching #}
+        {%- if e.library_path %} <span class="badge badge-dl-available" title="Downloaded files"><svg class="badge-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.5l4 4 7-9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{ e.label or 'available' }}</span>
+        {%- elif display_status(e.download_state) == 'downloading' %} <a class="badge badge-dl-downloading" href="/activity" title="Downloading — see Activity"><svg class="badge-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v8M4.5 6L8 9.5 11.5 6M2.5 13.5h11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{ e.label or 'downloading' }}</a>{% endif %}
+        {%- endfor %}
+{% endmacro %}
 {% macro edition_detail(e) %}
         <small>{{ e.narrator or e.title }}
             {%- if e.format %} · {{ e.format }}{% endif %}

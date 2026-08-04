@@ -1,3 +1,4 @@
+{% from "_edition_macros.html" import edition_badges %}
 <article id="book-{{ book.id }}"{% if oob is defined and oob %} hx-swap-oob="outerHTML"{% endif %}>
     {% if book.cover_url %}<a class="cover-link" href="/books/{{ book.id }}"><img src="{{ book.cover_url }}" alt="Cover of {{ book.title }}" loading="lazy"></a>{% endif %}
     <h4><a class="title-link" href="/books/{{ book.id }}">{{ book.title }}</a></h4>
@@ -13,10 +14,7 @@
     {% set dl = book_status(book) %}
     <p>
         {% if ub.read_at %}<span class="badge">read {{ ub.read_at }}</span>{% endif %}
-        {% for e in book.editions %}
-        {% if e.library_path %}<span class="badge badge-dl-available" title="Downloaded files"><svg class="badge-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.5l4 4 7-9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{ e.label or 'available' }}</span>
-        {% elif display_status(e.download_state) == 'downloading' %}<a class="badge badge-dl-downloading" href="/activity" title="Downloading — see Activity"><svg class="badge-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v8M4.5 6L8 9.5 11.5 6M2.5 13.5h11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{ e.label or 'downloading' }}</a>{% endif %}
-        {% endfor %}
+        {{ edition_badges(book) }}
         {% if book_failed(book) %}<span class="badge badge-dl-failed" title="Last download failed — see Activity">failed</span>{% endif %}
         {% if ub.pending_push %}<span class="badge badge-pending" title="Change not yet confirmed by Hardcover">sync pending</span>{% endif %}
     </p>

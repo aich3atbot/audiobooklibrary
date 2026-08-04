@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_hardcover_badge.html" import hardcover_badge %}
+{% from "_edition_macros.html" import edition_badges %}
 {% block title %}{{ book.title }} — Audiobook Library{% endblock %}
 
 {% block content %}
@@ -17,7 +18,8 @@
         {% endif %}
         {% set dl = book_status(book) %}
         <p>
-            <span class="badge badge-dl-{{ dl }}">{{ dl.replace('_', ' ') }}</span>
+            {% if dl == 'not_present' %}<span class="badge badge-dl-not_present">not present</span>
+            {% else %}{{ edition_badges(book) }}{% endif %}
             {% if book_failed(book) %}<span class="badge badge-dl-failed" title="Last download failed — see Activity">failed</span>{% endif %}
         </p>
     </div>

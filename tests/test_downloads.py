@@ -382,6 +382,34 @@ def test_detail_page_shows_downloading_edition(client, clean_db, book):
     assert "btn-download" not in response.text  # no grab entry while it downloads
 
 
+def test_detail_page_badges_each_edition(client, clean_db, book):
+    """The detail page describes a book the way the cards do — one badge per
+    edition carrying its label, not a single aggregate "available"."""
+    make_edition(clean_db, book, label="Full Cast", download_state=DownloadState.IMPORTED,
+                 library_path="/audiobooks/full-cast")
+    make_edition(clean_db, book, label="Stephen Fry", download_state=DownloadState.IMPORTED,
+                 library_path="/audiobooks/fry")
+
+    response = client.get(f"/books/{book.id}")
+
+    assert "> Full Cast</span>" in response.text
+    assert "> Stephen Fry</span>" in response.text
+    assert "> available</span>" not in response.text
+
+
+def test_detail_page_badges_unlabelled_edition_as_available(client, imported_book):
+    response = client.get(f"/books/{imported_book.id}")
+
+    assert imported_book.editions[0].label == ""
+    assert "> available</span>" in response.text
+
+
+def test_detail_page_badges_not_present(client, book):
+    response = client.get(f"/books/{book.id}")
+
+    assert ">not present</span>" in response.text
+
+
 def test_detail_page_unknown_book(client, clean_db):
     assert client.get("/books/99999").status_code == 404
 
