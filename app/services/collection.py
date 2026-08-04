@@ -14,26 +14,28 @@ import hashlib
 import json
 import logging
 import re
-import shutil
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-import mutagen
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.clients.hardcover import HardcoverClient
 from app.config import get_settings
 from app.models import Book, DownloadState, Edition
+from app.services.audio_format import identify
 from app.services.editions import get_or_create_edition
 from app.services.importer import (
     AUDIO_EXTS,
     ImportFailure,
+    _place,
     cleanup_empty_parents,
+    collect_files,
     edition_dir_for,
     normalize,
+    prune_empty_dirs,
     remove_library_files,
 )
 from app.services.sync import _load_caches, delete_state, get_state, set_state, upsert_book_metadata
@@ -80,15 +82,17 @@ def entry_audio_files(entry: ImportEntry) -> list[Path]:
 def entry_duration(entry: ImportEntry) -> float | None:
     """Total runtime of an entry's audio, in seconds, for matching it against
     a Hardcover edition's audio_seconds. None when nothing could be read.
-    mutagen only parses headers here, but it still touches every file — call
-    this off the request thread, and only when a picker is opened."""
+    Only headers are parsed here, but every file is touched — call this off
+    the request thread, and only when a picker is opened."""
     total = 0.0
     read = False
     for path in entry_audio_files(entry):
         try:
-            parsed = mutagen.File(path)
-            # a tag-less file is dict-like and falsy, so compare against None
-            length = getattr(parsed.info, "length", None) if parsed is not None else None
+            # identify(), not mutagen.File(): a file whose extension lies about
+            # its contents must still contribute its runtime, or the duration
+            # hint silently stops matching for the whole entry.
+            fmt = identify(path)
+            length = fmt.duration if fmt is not None else None
         except Exception:
             length = None
         if length:
@@ -386,6 +390,13 @@ def import_entry(
                     f"{book.title}'s existing files need a label first (Rename them "
                     "on the book's detail page) so both editions get named folders"
                 )
+    # Work out what moves before anything destructive happens: a replace
+    # deletes the old edition's files, and an entry holding no usable audio
+    # must not get that far.
+    files = collect_files(entry.path, keep_unknown=True)
+    if not any(dest.suffix.lower() in AUDIO_EXTS for _, dest in files):
+        raise ImportFailure(f"no audio files found in {entry.name}")
+
     edition = get_or_create_edition(session, book, label, hardcover_edition_id, narrator)
     if replacing is not None:
         # committed straight away: if the move below fails, the DB must not
@@ -397,15 +408,18 @@ def import_entry(
     if dest.exists() and any(dest.iterdir()):
         session.rollback()  # discard a just-created edition row
         raise ImportFailure(f"destination already exists: {dest}")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if entry.path.is_file():
-        dest.mkdir(exist_ok=True)
-        shutil.move(str(entry.path), str(dest / entry.path.name))
-    else:
-        if dest.exists():
-            dest.rmdir()  # empty leftover; shutil.move must create it
-        shutil.move(str(entry.path), str(dest))
-    cleanup_empty_parents(entry.path.parent, get_settings().imports_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    for src, rel in files:
+        _place(src, dest / rel, "move")
+    # Whatever identification rejected (a video sample) is deliberately left
+    # behind rather than deleted — a collection import moves, so dropping a
+    # file here would destroy the user's own copy. The leftover keeps its
+    # folder out of the cleanup below, which is the visible signal that this
+    # entry did not drain completely.
+    if entry.path.is_dir():
+        prune_empty_dirs(entry.path)
+    drained = entry.path if entry.path.is_dir() else entry.path.parent
+    cleanup_empty_parents(drained, get_settings().imports_dir)
 
     edition.download_state = DownloadState.IMPORTED
     edition.library_path = str(dest)

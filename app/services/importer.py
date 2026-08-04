@@ -34,12 +34,18 @@ from app.clients.download_client import TorrentStatus, get_download_client
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.models import Book, DownloadState, Edition, Release
+from app.services.audio_format import (
+    AMBIGUOUS_EXTS,
+    corrected_name,
+    has_video_track,
+    identify,
+)
 from app.services.downloads import drop_from_client
 from app.services.sync import delete_state, get_state
 
 logger = logging.getLogger(__name__)
 
-AUDIO_EXTS = {".m4b", ".m4a", ".mp3", ".flac", ".ogg", ".opus", ".aac", ".wma"}
+AUDIO_EXTS = {".m4b", ".m4a", ".mp4", ".mp3", ".flac", ".ogg", ".opus", ".aac", ".wma"}
 COMPANION_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".pdf", ".nfo", ".cue", ".txt"}
 INCOMPLETE_SUFFIXES = (".part", ".!qb", ".crdownload", ".tmp", ".lftp-pget-status")
 
@@ -69,6 +75,22 @@ def cleanup_empty_parents(path: Path, root: Path) -> None:
     while current != root and current.is_dir() and not any(current.iterdir()):
         current.rmdir()
         current = current.parent
+
+
+def prune_empty_dirs(root: Path) -> None:
+    """Remove empty directories *under* root, deepest first. Moving an entry
+    file by file empties its disc folders (CD1, CD2, ...) but leaves them
+    standing, and a single surviving empty child would stop
+    cleanup_empty_parents from draining the entry at all."""
+    if not root.is_dir():
+        return
+    for directory in sorted(
+        (p for p in root.rglob("*") if p.is_dir()),
+        key=lambda p: len(p.parts),
+        reverse=True,
+    ):
+        if not any(directory.iterdir()):
+            directory.rmdir()
 
 
 def edition_dir_for(edition: Edition) -> Path:
@@ -120,14 +142,73 @@ def newest_mtime(path: Path) -> float:
     return newest
 
 
-def collect_files(source: Path) -> list[tuple[Path, Path]]:
-    """(absolute source, relative destination) pairs worth importing."""
-    if source.is_file():
-        return [(source, Path(source.name))]
-    files = []
-    for p in sorted(source.rglob("*")):
-        if p.is_file() and p.suffix.lower() in AUDIO_EXTS | COMPANION_EXTS:
-            files.append((p, p.relative_to(source)))
+def _audio_dest(path: Path, rel: Path) -> Path | None:
+    """Where an audio candidate should land, or None to drop it.
+
+    Releases lie about extensions, so we look at the contents — but only to
+    *rule things out*, never to gatekeep a file that would otherwise import.
+    A file mutagen cannot parse is still imported under its own name: an
+    unreadable header costs metadata, not the audiobook.
+
+    Two things do get dropped: a positively-identified video track, and an
+    extension that names a video container (.mp4) which we cannot confirm
+    holds audio. Header-only, so this costs nothing on a gigabyte audiobook."""
+    if has_video_track(path):
+        logger.info("Skipping %s: it is video, not audio", path)
+        return None
+    fmt = identify(path)
+    if fmt is None:
+        if path.suffix.lower() in AMBIGUOUS_EXTS:
+            logger.info("Skipping %s: cannot confirm it holds audio", path)
+            return None
+        return rel
+    name = corrected_name(path, fmt)
+    if name != path.name:
+        logger.info("Importing %s as %s (contents are %s)", path.name, name, fmt.family)
+    return rel.with_name(name)
+
+
+def collect_files(source: Path, keep_unknown: bool = False) -> list[tuple[Path, Path]]:
+    """(absolute source, relative destination) pairs worth importing.
+
+    A download is filtered down to audio plus known companions — the rest of a
+    torrent is junk we have no reason to carry into the library. A collection
+    import passes `keep_unknown`: /imports holds folders the user curated by
+    hand, so anything they filed alongside the audio comes along. Either way
+    the audio itself goes through the same identification (see _audio_dest)."""
+    candidates = (
+        [source]
+        if source.is_file()
+        else [
+            p
+            for p in sorted(source.rglob("*"))
+            if p.is_file()
+            and (keep_unknown or p.suffix.lower() in AUDIO_EXTS | COMPANION_EXTS)
+        ]
+    )
+
+    def rel_of(p: Path) -> Path:
+        return Path(p.name) if source.is_file() else p.relative_to(source)
+
+    files: list[tuple[Path, Path]] = []
+    # Every name the untouched files claim, so a rename can never collide with
+    # one regardless of the order we walk them in.
+    taken: set[Path] = {rel_of(p) for p in candidates}
+    for p in candidates:
+        rel = rel_of(p)
+        if p.suffix.lower() in AUDIO_EXTS:
+            dest = _audio_dest(p, rel)
+            if dest is None:
+                continue
+            if dest != rel and dest in taken:
+                # A rename must never clobber a sibling that already owns the
+                # corrected name; keeping the original is the safe loss.
+                logger.info("Not renaming %s: %s is taken", p.name, dest.name)
+                dest = rel
+            files.append((p, dest))
+            taken.add(dest)
+        else:
+            files.append((p, rel))
     return files
 
 
@@ -166,7 +247,7 @@ def import_release(session: Session, release: Release, source: Path) -> bool:
     edition = release.edition
     try:
         files = collect_files(source)
-        if not any(src.suffix.lower() in AUDIO_EXTS for src, _ in files):
+        if not any(dest.suffix.lower() in AUDIO_EXTS for _, dest in files):
             raise ImportFailure(f"no audio files found in {source.name}")
         if get_state(session, replace_key(release)) is not None:
             # This release replaces the edition's files: clear the OLD path (it

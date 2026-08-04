@@ -7,12 +7,12 @@ import logging
 import re
 from pathlib import Path
 
-import mutagen
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_sessionmaker
 from app.models import AppState, AudioFile, Edition
+from app.services.audio_format import MIME_TYPES, identify
 from app.services.importer import AUDIO_EXTS
 from app.services.mp4_chapters import read_mp4_chapters
 
@@ -23,17 +23,6 @@ MP4_EXTS = (".m4b", ".m4a", ".mp4")
 # older build (see rescan_for_chapters).
 CHAPTER_SCAN_VERSION = "2"
 CHAPTER_SCAN_KEY = "audio_chapter_scan_version"
-
-MIME_TYPES = {
-    ".m4b": "audio/mp4",
-    ".m4a": "audio/mp4",
-    ".mp3": "audio/mpeg",
-    ".flac": "audio/flac",
-    ".ogg": "audio/ogg",
-    ".opus": "audio/ogg",
-    ".aac": "audio/aac",
-    ".wma": "audio/x-ms-wma",
-}
 
 
 def _natural_key(path: Path):
@@ -91,10 +80,16 @@ def scan_edition_audio(session: Session, edition: Edition) -> int:
         duration = None
         chapters = None
         parsed = None
+        # Identify by contents, not extension: the importer renames what it
+        # can, but a file placed by an older build (or by hand) may still be
+        # mislabelled, and mutagen's own sniffing scores on the filename.
+        mime = MIME_TYPES.get(path.suffix.lower(), "audio/mpeg")
         try:
-            parsed = mutagen.File(path)
-            if parsed is not None and parsed.info is not None:
-                duration = float(parsed.info.length)
+            fmt = identify(path)
+            if fmt is not None:
+                parsed = fmt.parsed
+                duration = fmt.duration
+                mime = fmt.mime
         except Exception:
             logger.exception("Audio scan: failed to parse %s", path)
         # Chapters are read from the container, so a tag-parse failure must
@@ -116,7 +111,7 @@ def scan_edition_audio(session: Session, edition: Edition) -> int:
                 size=stat.st_size,
                 mtime_ms=int(stat.st_mtime * 1000),
                 duration=duration,
-                mime_type=MIME_TYPES.get(path.suffix.lower(), "audio/mpeg"),
+                mime_type=mime,
                 chapters_json=json.dumps(chapters) if chapters else None,
             )
         )

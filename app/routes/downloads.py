@@ -1,7 +1,6 @@
 import logging
 from pathlib import Path
 
-import mutagen
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -10,6 +9,7 @@ from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_db
 from app.models import Book, Edition, User, book_status, display_status
+from app.services.audio_format import identify
 from app.services.downloads import grab_release, search_releases
 from app.services.editions import (
     edition_choice,
@@ -78,9 +78,11 @@ def _bitrate(path: Path) -> int | None:
     if path.suffix.lower() not in AUDIO_EXTS:
         return None
     try:
-        parsed = mutagen.File(path)
+        # identify(), not mutagen.File(), so a mislabelled file still reports
+        # a bitrate — mutagen's sniffing scores on the filename.
+        fmt = identify(path)
         # a tag-less file is dict-like and falsy, so compare against None
-        return getattr(parsed.info, "bitrate", None) if parsed is not None else None
+        return getattr(fmt.parsed.info, "bitrate", None) if fmt is not None else None
     except Exception:
         return None
 

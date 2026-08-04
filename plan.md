@@ -204,10 +204,19 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
    behavior — match `/downloads` entries by release name and wait for the download to be
    complete/stable (nothing changed for `DOWNLOAD_QUIET_SECONDS`, no `.part`/incomplete
    markers). A download client that is down costs progress reporting, never an import.
-   Importer then places audio files (m4b/m4a/mp3/flac/ogg + cover/nfo) into the
-   release's edition folder — `/audiobooks/Author/Series/{index} - Title/`, with the
+   Importer then places audio files (m4b/m4a/mp4/mp3/flac/ogg/opus/aac/wma + cover/nfo)
+   into the release's edition folder — `/audiobooks/Author/Series/{index} - Title/`, with the
    edition label suffixed per "Multi-edition support" — sanitizing filesystem-unsafe
-   characters → the edition's `download_state = imported`, `library_path` set. With `DOWNLOAD_REMOVE_IMMEDIATELY=true`
+   characters → the edition's `download_state = imported`, `library_path` set.
+   Releases lie about extensions, so each audio candidate is identified by its *contents*
+   (`app/services/audio_format.py`, header-only — ~35ms on a 1.2GB file). Identification
+   only ever **rules a file out**; it never gatekeeps one that would otherwise import, so
+   a file mutagen cannot parse is still placed under its own name (an unreadable header
+   costs metadata, not the audiobook). Two things are dropped: a positively-identified
+   video track, and a `.mp4` we cannot confirm holds audio — `.mp4` names a video
+   container as readily as an audio one. A file whose contents contradict its extension
+   is **renamed** to the format it really is; extensions are grouped into families
+   (`.m4b`/`.m4a`/`.mp4` are all MP4) so a rename only fires on a genuine mismatch. With `DOWNLOAD_REMOVE_IMMEDIATELY=true`
    the torrent (and its data) is then removed from the client — otherwise it keeps seeding
    per the client's settings; a failed removal never un-imports, it is noted on the
    release's Activity row. Failures flag the book for manual
@@ -393,8 +402,17 @@ library. Complements (does not change) the automatic /downloads pipeline.
   created from Hardcover metadata if nobody tracks it yet (**ownerless** — no user_book),
   files go to the standard edition path (`Author/Series/{index} - Title/`, label-suffixed
   for labelled editions), the source folder is removed from /imports, and now-empty
-  parent folders are cleaned up. The target edition becomes `download_state=imported`
-  with `library_path` set. Users who have the book in their Hardcover library pick it up
+  parent folders are cleaned up. Files move **one at a time** through the same
+  `collect_files` the download pipeline uses (`keep_unknown=True`, since these folders are
+  the user's own curation rather than a torrent's junk — anything filed alongside the audio
+  comes along), so audio gets the same content identification and mislabelled extensions
+  are corrected. Disc subfolders are preserved and then pruned once emptied, so the entry
+  still drains. A rejected file (a video sample) is **left in /imports, never deleted** —
+  this import moves, so dropping it would destroy the user's only copy, and the leftover
+  keeps its folder out of the cleanup as the visible signal that the entry did not fully
+  drain. An entry with no usable audio fails *before* anything destructive runs (notably
+  before a replace deletes the old edition's files). The target edition becomes
+  `download_state=imported` with `library_path` set. Users who have the book in their Hardcover library pick it up
   automatically — a successful batch kicks a background all-user sync; everyone else sees
   it as *available* in search. Destination-exists and other failures are reported per
   row; nothing is guessed.

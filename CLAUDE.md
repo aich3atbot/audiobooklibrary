@@ -79,6 +79,16 @@ page, and `POST /api/items/batch/get`.
   editions all of them are labelled. Relabelling moves the folder immediately
   (`relabel_edition` — filesystem first, DB second). See plan.md "Multi-edition
   support"; do not revisit the layout silently.
+- **Audio is identified by contents, not extension** (`app/services/audio_format.py`,
+  `identify`/`has_video_track`/`corrected_name`). mutagen alone is not enough: its sniffing
+  scores on the *filename*, so `mutagen.File()` returns None for a mislabelled raw AAC
+  stream, and `MP4Info.load` falls back to the `mvhd` duration when a container has no
+  `soun` track — a video-only MP4 parses as if it were audio. So the MP4 track handlers are
+  read from the container directly (reusing the `mp4_chapters` box reader). Identification
+  **only rules files out** — a file mutagen cannot parse still imports under its own name;
+  only positive video, or an unconfirmable `.mp4`, is dropped. Contradicted extensions are
+  renamed by *family* (`.m4b`/`.m4a`/`.mp4` are one family), so `.m4b` is never rewritten
+  to `.m4a`. Parse audio through `identify`, not bare `mutagen.File`.
 - **Import mode**: default is hardlink-or-copy (seeding torrents keep their files);
   `IMPORT_MODE=move` opts into relocating. Do not change the default back to move.
   Seeding also survives import by default: `DOWNLOAD_REMOVE_IMMEDIATELY=true` opts into
@@ -89,7 +99,11 @@ page, and `POST /api/items/batch/get`.
   Hardcover** (folder-name heuristics; cached in app_state per entry), never by shelving —
   imported books are **ownerless** until each user's own sync attaches their shelf entry.
   Always MOVES files (draining /imports is the point) regardless of IMPORT_MODE, which
-  applies to the download pipeline only. A successful batch kicks a background all-user
+  applies to the download pipeline only. It moves file-by-file through the shared
+  `collect_files(keep_unknown=True)`, so audio gets the same content identification as a
+  download; a rejected file is **left in /imports, never deleted** (a move would destroy
+  the user's only copy) and its surviving folder is the signal that the entry did not
+  drain. Emptied disc subfolders are pruned so the entry still cleans up. A successful batch kicks a background all-user
   sync. An entry matched to an already-available book imports as an additional edition;
   unlabelled imports into available books refuse with guidance. Every matched row can
   **choose the edition** in one lazily loaded fold (`_import_editions.html`, fed by
@@ -152,6 +166,8 @@ with the current policy.
   `<br>`, so parse element *text*, not raw HTML; some mirrors base64-encode posts
   (`div.post.re-ab`). No seeder counts exist — don't invent a "best match" ranking. Mirrors
   rotate domains and some have expired TLS certs, so `INDEX_URL` may be plain `http://`.
+  **Releases lie about file extensions** — one shipped a 22-hour audiobook named `.mp4`
+  whose bytes are a raw ADTS AAC stream. Never trust a suffix; see `audio_format.identify`.
 - **Deluge** (web UI JSON-RPC at `{DOWNLOAD_URL}/json`, verified against 2.2.0): auth is
   `auth.login([password])`, password-only — an **empty password is valid**, so never gate a
   connection check on it. **`is_finished` is the completion signal, never the `state`

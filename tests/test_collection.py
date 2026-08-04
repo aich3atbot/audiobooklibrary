@@ -22,6 +22,7 @@ from app.services.collection import (
 )
 from app.services.editions import edition_choice
 from app.services.importer import ImportFailure
+from tests.test_audio_format import write_adts, write_mp4
 from tests.test_audio_meta import FRAME_SECONDS, write_mp3
 
 # One Hardcover audiobook edition row, as the editions query returns it.
@@ -970,3 +971,67 @@ def test_edition_picker_offers_this_books_editions_as_replacements(
     assert "(replace)" in response.text
     # picking one confirms before anything can be deleted
     assert "abEditionReplace" in response.text
+
+
+# --- identification, shared with the download importer ----------------------
+
+
+def test_import_renames_a_file_whose_extension_lies(clean_db, dirs, book):
+    """A collection import puts audio through the same content identification
+    as a download: this .mp4 is really a raw AAC stream."""
+    folder = put(dirs, "Ryan Rimmel/Noobtown/01 - The Mayor of Noobtown", files=())
+    write_adts(folder / "The Mayor of Noobtown.mp4")
+
+    dest = import_entry(clean_db, book, entry_for("Ryan Rimmel/Noobtown/01 - The Mayor of Noobtown"))
+
+    assert [p.name for p in dest.iterdir()] == ["The Mayor of Noobtown.aac"]
+    assert not (dirs.imports_dir / "Ryan Rimmel").exists()
+
+
+def test_import_leaves_a_video_sample_behind_rather_than_deleting_it(clean_db, dirs, book):
+    """A collection import MOVES, so dropping a rejected file would destroy the
+    user's only copy. It stays in /imports, which also keeps its folder out of
+    the cleanup — the visible signal that the entry did not fully drain."""
+    folder = put(dirs, "Noobtown", files=("part1.mp3",))
+    write_mp4(folder / "trailer.mp4", handler=b"vide")
+
+    dest = import_entry(clean_db, book, entry_for("Noobtown"))
+
+    assert [p.name for p in dest.iterdir()] == ["part1.mp3"]
+    assert (folder / "trailer.mp4").exists()
+    assert folder.exists()
+
+
+def test_import_of_a_video_only_entry_fails(clean_db, dirs, book):
+    folder = put(dirs, "Noobtown", files=())
+    write_mp4(folder / "movie.mp4", handler=b"vide")
+
+    with pytest.raises(ImportFailure, match="no audio files found"):
+        import_entry(clean_db, book, entry_for("Noobtown"))
+
+    assert (folder / "movie.mp4").exists()
+    assert not book.editions
+
+
+def test_import_preserves_disc_folders_and_curated_extras(clean_db, dirs, book):
+    """Moving file by file must not flatten the structure, and unlike a
+    torrent, whatever the user filed alongside the audio comes along."""
+    put(dirs, "Noobtown/CD1", files=("track1.mp3",))
+    put(dirs, "Noobtown/CD2", files=("track1.mp3",))
+    (dirs.imports_dir / "Noobtown" / "notes.oddball").write_bytes(b"kept")
+
+    dest = import_entry(clean_db, book, entry_for("Noobtown"))
+
+    assert sorted(str(p.relative_to(dest)) for p in dest.rglob("*") if p.is_file()) == [
+        "CD1/track1.mp3",
+        "CD2/track1.mp3",
+        "notes.oddball",
+    ]
+    assert not (dirs.imports_dir / "Noobtown").exists()
+
+
+def test_entry_duration_counts_a_mislabelled_file(dirs):
+    folder = put(dirs, "Timed", files=())
+    expected = write_adts(folder / "book.mp4")
+
+    assert entry_duration(entry_for("Timed")) == pytest.approx(expected, rel=0.02)
