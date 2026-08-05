@@ -143,9 +143,7 @@ def test_file_wrong_book_404(client, token, library):
     assert get(client, token, f"/api/items/{other_item}/file/{ino}").status_code == 404
 
 
-def test_session_sync_updates_progress(client, token, library, tokenless_user):
-    # tokenless: syncing progress now also moves read state, and this test is
-    # only about the progress row (see the read-state tests below)
+def test_session_sync_updates_progress(client, token, library):
     db = library["db"]
     session_id = play(client, token, f"li_{library['mayor'].id}").json()["id"]
 
@@ -186,7 +184,7 @@ def test_session_sync_finish_marks_hardcover_read(client, token, library, user):
     assert b"update_user_book" in route.calls[0].request.content
 
 
-def test_session_close_final_sync_and_cleanup(client, token, library, tokenless_user):
+def test_session_close_final_sync_and_cleanup(client, token, library):
     db = library["db"]
     session_id = play(client, token, f"li_{library['mayor'].id}").json()["id"]
 
@@ -205,7 +203,7 @@ def test_sync_unknown_session_404(client, token, library):
                 json={"currentTime": 1}).status_code == 404
 
 
-def test_local_session_sync(client, token, library, tokenless_user):
+def test_local_session_sync(client, token, library):
     db = library["db"]
     response = post(client, token, "/api/session/local",
                     json={"libraryItemId": f"li_{library['hail'].id}",
@@ -217,7 +215,7 @@ def test_local_session_sync(client, token, library, tokenless_user):
     assert progress.current_time == 12.0
 
 
-def test_local_all_sessions(client, token, library, tokenless_user):
+def test_local_all_sessions(client, token, library):
     response = post(client, token, "/api/session/local-all",
                     json={"sessions": [
                         {"id": "s1", "libraryItemId": f"li_{library['hail'].id}",
@@ -270,16 +268,20 @@ def sync(client, tok, session_id, current_time, duration):
                 json={"currentTime": current_time, "timeListened": 15, "duration": duration})
 
 
-def test_start_position_thresholds():
-    assert start_position(36000) == 300.0  # 10h book: the flat 5 minutes
-    assert start_position(3600) == 180.0  # 1h book: 5% comes first
-    assert start_position(0) == 300.0  # duration unknown yet
+def test_start_position_follows_the_setting(test_settings, monkeypatch):
+    assert start_position() == 60.0  # the 1-minute default
+    monkeypatch.setattr(test_settings, "mark_reading_after_minutes", 0)
+    assert start_position() == 0.0
+    monkeypatch.setattr(test_settings, "mark_reading_after_minutes", 5)
+    assert start_position() == 300.0
 
 
-def test_near_finish_position_thresholds():
-    assert near_finish_position(36000) == 34200.0  # 10h book: 95% comes first
-    assert near_finish_position(3600) == 3300.0  # 1h book: all but the last 5 min
-    assert near_finish_position(240) == 228.0  # shorter than the tail: fraction alone
+def test_near_finish_position_follows_the_setting(test_settings, monkeypatch):
+    assert near_finish_position(36000) == 34200.0  # the 30-minute default tail
+    # the tail never eats more than half the book
+    assert near_finish_position(1200) == 600.0
+    monkeypatch.setattr(test_settings, "mark_read_tail_minutes", 0)
+    assert near_finish_position(36000) == 36000.0  # only a complete listen counts
 
 
 @respx.mock
@@ -313,7 +315,7 @@ def test_listening_below_the_start_threshold_changes_nothing(client, token, libr
                            read_state=ReadState.WANT_TO_READ, hardcover_user_book_id=42)
     session_id = play(client, token, f"li_{edition.id}").json()["id"]
 
-    assert sync(client, token, session_id, 240.0, 36000.0).status_code == 200
+    assert sync(client, token, session_id, 45.0, 36000.0).status_code == 200
 
     db.expire_all()
     db.refresh(shelf)
@@ -323,8 +325,10 @@ def test_listening_below_the_start_threshold_changes_nothing(client, token, libr
 
 
 @respx.mock
-def test_short_book_starts_on_the_fraction(client, token, library, user):
-    """A 20-minute book counts as started after 60s (5%), not 5 minutes."""
+def test_zero_threshold_marks_reading_on_the_first_sync(
+    client, token, library, user, test_settings, monkeypatch
+):
+    monkeypatch.setattr(test_settings, "mark_reading_after_minutes", 0)
     route = hardcover_route()
     db = library["db"]
     edition = library["mayor"]
@@ -332,17 +336,38 @@ def test_short_book_starts_on_the_fraction(client, token, library, user):
                            read_state=ReadState.WANT_TO_READ, hardcover_user_book_id=42)
     session_id = play(client, token, f"li_{edition.id}").json()["id"]
 
-    sync(client, token, session_id, 45.0, 1200.0)
-    db.expire_all()
-    db.refresh(shelf)
-    assert shelf.read_state == ReadState.WANT_TO_READ
-    assert route.call_count == 0
+    sync(client, token, session_id, 0.0, 36000.0)
 
-    sync(client, token, session_id, 65.0, 1200.0)
     db.expire_all()
     db.refresh(shelf)
     assert shelf.read_state == ReadState.READING
     assert route.call_count == 1
+
+
+@respx.mock
+def test_zero_tail_requires_a_complete_listen(
+    client, token, library, user, test_settings, monkeypatch
+):
+    """With no tail forgiven, a book abandoned at 99% is not read."""
+    monkeypatch.setattr(test_settings, "mark_read_tail_minutes", 0)
+    route = hardcover_route()
+    db = library["db"]
+    mayor, hail = library["mayor"], library["hail"]
+    shelf = make_user_book(db, user, mayor.book,
+                           read_state=ReadState.READING, hardcover_user_book_id=42)
+    db.add(MediaProgress(user_id=user.id, edition_id=mayor.id,
+                         current_time=35640.0, duration=36000.0))  # 99%
+    db.commit()
+
+    post(client, token, "/api/session/local",
+         json={"libraryItemId": f"li_{hail.id}", "currentTime": 10.0, "duration": 3600.0})
+
+    db.expire_all()
+    progress = db.query(MediaProgress).filter_by(edition_id=mayor.id).one()
+    assert progress.is_finished is False
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.READING
+    assert route.call_count == 0
 
 
 @respx.mock

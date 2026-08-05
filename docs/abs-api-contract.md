@@ -257,17 +257,20 @@ Read state is driven by progress in three more places, all in `app/abs/progress.
 (ours, not ABS's — ABS has no notion of a shelf). Every progress route funnels through
 `apply_progress`, so they apply to session sync, local/offline sync and the PATCH alike:
 
-- **Started**: `currentTime >= min(5 minutes, 5% of duration)` and the row is not finished
-  → the book becomes *currently reading* on Hardcover, dated today. Fires once (the state
-  is no longer "not reading" afterwards); a book already marked *read* promotes too, since
-  playing it again is a re-listen.
+- **Started**: `currentTime >= MARK_READING_AFTER_MINUTES` (default 1) and the row is not
+  finished → the book becomes *currently reading* on Hardcover, dated today. Fires once
+  (the state is no longer "not reading" afterwards); a book already marked *read* promotes
+  too, since playing it again is a re-listen. At 0 the first sync after playback starts
+  promotes it — there is no hook on `POST /api/items/:id/play`.
 - **Near-finished sweep**: audiobooks are usually abandoned in the trailing credits, so a
-  book left past `min(duration - 5 minutes, 95%)` is marked finished *and* read the moment
-  progress arrives for a **different book** (other editions of the same book don't count).
-- **Re-listen**: a finished row resynced at a position at or past the started threshold but
-  before the near-finish mark is un-finished. This is the one case where a sync clears
-  `isFinished` on its own — a stray `currentTime: 0` or a rewind into the last chapter does
-  not.
+  book left within `MARK_READ_TAIL_MINUTES` of the end (default 30) is marked finished
+  *and* read the moment progress arrives for a **different book** (other editions of the
+  same book don't count). The tail is capped at half the duration so a book shorter than
+  it still has to be listened most of the way through; at 0 only a complete listen counts.
+- **Re-listen**: a finished row resynced at least 60s in but before the near-finish mark is
+  un-finished. This is the one case where a sync clears `isFinished` on its own — a stray
+  `currentTime: 0` or a rewind into the last chapter does not. That 60s floor is fixed, not
+  `MARK_READING_AFTER_MINUTES`, which may be 0.
 
 ## socket.io (minimal shim)
 

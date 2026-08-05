@@ -638,18 +638,23 @@ Built as an experiment (the user may not keep it), but first-class.
 Progress syncs from ABS clients (all of them funnel through `apply_progress` in
 `app/abs/progress.py`) maintain the user's Hardcover shelf:
 
-- **Started** — past `min(5 minutes, 5% of duration)` the book becomes *currently reading*,
-  `started_at` = today, pushed as `first_started_reading_date`. Once per book; a book
-  already marked *read* promotes too (playing it again is a re-listen).
+- **Started** — past `MARK_READING_AFTER_MINUTES` (default 1) the book becomes *currently
+  reading*, `started_at` = today, pushed as `first_started_reading_date`. Once per book; a
+  book already marked *read* promotes too (playing it again is a re-listen). 0 promotes on
+  the first progress sync after playback starts.
 - **Finished** — the ABS rule (remaining <= 10s, or the client says so) marks it *read*,
   `read_at` = today.
-- **Near-finished** — the trailing credits usually go unplayed, so a book left past
-  `min(duration - 5 minutes, 95%)` is marked finished and *read* as soon as progress
-  arrives for a **different book**. Other editions of the same book don't count as another
-  book.
-- **Re-listen** — a finished progress row resynced between the started and near-finish
-  marks is un-finished, which is what lets the started rule fire again. Nothing else
-  clears `is_finished` on its own.
+- **Near-finished** — the trailing credits usually go unplayed, so a book left within
+  `MARK_READ_TAIL_MINUTES` of the end (default 30) is marked finished and *read* as soon as
+  progress arrives for a **different book**. Other editions of the same book don't count as
+  another book. The tail is capped at half the duration (a 30-minute tail must not make a
+  20-minute book readable from its first second); 0 requires a complete listen.
+- **Re-listen** — a finished progress row resynced at least 60s in but before the
+  near-finish mark is un-finished, which is what lets the started rule fire again. Nothing
+  else clears `is_finished` on its own. The 60s floor is fixed rather than following
+  `MARK_READING_AFTER_MINUTES`, which may be 0.
+
+Both thresholds are plain durations — there is deliberately no percentage-of-book rule.
 - **Migration**: the editions rollout added one unlabelled edition per book with
   pipeline state, at a path byte-identical to the old book path — DB-only, no files
   moved. ABS item ids changed (`li_<book.id>` → `li_<edition.id>`); server-side progress

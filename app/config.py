@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     # files; "move" relocates them out of the download directory.
     import_mode: str = "copy"
 
+    # How listening moves a book's read state (see app/abs/progress.py).
+    # Listened this long and the book counts as started; 0 marks it "currently
+    # reading" on the first progress sync after playback begins.
+    mark_reading_after_minutes: float = 1.0
+    # How much trailing credits to forgive: a book left this close to the end
+    # is marked read once another book starts. 0 requires a complete listen.
+    mark_read_tail_minutes: float = 30.0
+
     @property
     def database_url(self) -> str:
         return f"sqlite:///{self.config_dir / 'audiobooklibrary.db'}"

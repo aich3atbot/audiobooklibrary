@@ -127,15 +127,20 @@ page, and `POST /api/items/batch/get`.
   offers "Download another edition" (per-edition guard). Read state stays book-level:
   listening to any edition moves the book.
 - **Listening drives read state** (`app/abs/progress.py`, every progress route funnels
-  through `apply_progress`): past `min(5 min, 5%)` the book becomes *currently reading*
-  dated today (`user_book.started_at`, pushed as Hardcover's
+  through `apply_progress`): past `MARK_READING_AFTER_MINUTES` (default 1) the book becomes
+  *currently reading* dated today (`user_book.started_at`, pushed as Hardcover's
   `first_started_reading_date`); finished marks it *read* dated today; and because the
-  trailing credits usually go unplayed, a book left past `min(duration - 5 min, 95%)` is
-  marked finished and read as soon as progress arrives for a **different** book (another
-  edition of the same book doesn't count). A finished row resynced between those two
-  marks is treated as a re-listen and un-finished — the only thing that clears
-  `is_finished` on its own, so keep the window narrow: a stray `currentTime: 0` or a
-  rewind into the last chapter must not trip it. The ABS progress handlers are
+  trailing credits usually go unplayed, a book left within `MARK_READ_TAIL_MINUTES`
+  (default 30) of the end is marked finished and read as soon as progress arrives for a
+  **different** book (another edition of the same book doesn't count). Both are plain
+  durations — **there is no percentage-of-book rule; do not reintroduce one.** The single
+  exception is the tail being capped at half the duration, so a 30-min tail can't make a
+  20-min book readable from its first second. Either setting may be 0 (mark reading the
+  moment playback starts / only a complete listen counts). A finished row resynced at
+  least `RELISTEN_MIN_POSITION` (60s, fixed — *not* the reading threshold, which may be 0)
+  in but before the near-finish mark is treated as a re-listen and un-finished — the only
+  thing that clears `is_finished` on its own, so keep the window narrow: a stray
+  `currentTime: 0` or a rewind into the last chapter must not trip it. The ABS progress handlers are
   `async def`, so every `apply_progress` call goes through `run_in_threadpool` — the
   Hardcover push it can trigger has a 30s timeout and would otherwise stall the event
   loop, and streaming rides that same loop. Keep it off the loop.

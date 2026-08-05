@@ -4,13 +4,13 @@ read-state hooks that hang off it.
 Progress is per edition; read state stays book-level, so listening to ANY
 edition moves the book on the user's Hardcover shelf:
 
-- past the *started* threshold (5 minutes or 5%, whichever is less) → the book
-  becomes *currently reading*, dated today, once;
+- past the *started* threshold (MARK_READING_AFTER_MINUTES) → the book becomes
+  *currently reading*, dated today, once;
 - finished (remaining <= 10s, ABS default, or the client says so) → *read*,
   dated today;
-- left in the trailing credits (past 95%, or all but the last 5 minutes,
-  whichever comes first) and then abandoned for another book → *read* too, the
-  moment progress arrives for a different book."""
+- left in the trailing credits (within MARK_READ_TAIL_MINUTES of the end) and
+  then abandoned for another book → *read* too, the moment progress arrives for
+  a different book."""
 
 import logging
 from datetime import date, datetime, timezone
@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import Edition, MediaProgress, ReadState, User
 from app.services.sync import get_user_book, update_read_state
 
@@ -26,34 +27,32 @@ logger = logging.getLogger(__name__)
 
 MARK_FINISHED_TIME_REMAINING = 10.0  # seconds, ABS library default
 
-# Listened this far in and the book counts as started.
-START_READING_SECONDS = 300.0
-START_READING_FRACTION = 0.05
-# Listened this far in and only the credits are left.
-NEAR_FINISH_SECONDS = 300.0
-NEAR_FINISH_FRACTION = 0.95
+# Lower bound for treating a sync as a re-listen rather than a stray report.
+# Deliberately not configurable and not tied to MARK_READING_AFTER_MINUTES:
+# that can be set to 0, and un-finishing a book on a spurious currentTime: 0
+# would drop it back into Continue Listening for no reason.
+RELISTEN_MIN_POSITION = 60.0
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def start_position(duration: float) -> float:
-    """Listened far enough to count as started: 5 minutes or 5%, whichever is
-    less. With no duration reported yet, fall back to the flat 5 minutes."""
-    if not duration:
-        return START_READING_SECONDS
-    return min(START_READING_SECONDS, START_READING_FRACTION * duration)
+def start_position() -> float:
+    """Listened this long and the book counts as started. 0 promotes on the
+    first progress sync after playback begins."""
+    return get_settings().mark_reading_after_minutes * 60.0
 
 
 def near_finish_position(duration: float) -> float:
-    """Close enough to the end that the rest is credits: whichever of "all but
-    the last 5 minutes" and "95% through" comes first. For a book shorter than
-    that 5-minute tail the time rule is meaningless, so the fraction stands
-    alone."""
-    if duration <= NEAR_FINISH_SECONDS:
-        return NEAR_FINISH_FRACTION * duration
-    return min(duration - NEAR_FINISH_SECONDS, NEAR_FINISH_FRACTION * duration)
+    """Close enough to the end that only the credits are left.
+
+    The tail never eats more than half the book: subtracting a 30-minute tail
+    from a 20-minute book would otherwise mark it read from the first second.
+    That clamp is the only place a proportion is involved, and only for books
+    shorter than the configured tail."""
+    tail = min(get_settings().mark_read_tail_minutes * 60.0, duration / 2)
+    return duration - tail
 
 
 def _set_read_state(db: Session, user: User, book, state: ReadState, **dates) -> None:
@@ -142,7 +141,7 @@ def apply_progress(
         restarted = (
             row.is_finished
             and bool(row.duration)
-            and start_position(row.duration) <= row.current_time < near_finish_position(row.duration)
+            and RELISTEN_MIN_POSITION <= row.current_time < near_finish_position(row.duration)
         )
         if restarted:
             row.is_finished = False
@@ -168,7 +167,7 @@ def apply_progress(
     if newly_finished:
         if user_book is None or user_book.read_state != ReadState.READ:
             _set_read_state(db, user, book, ReadState.READ, read_at=date.today())
-    elif not finished and row.current_time >= start_position(row.duration):
+    elif not finished and row.current_time >= start_position():
         # Started listening: promote the book once. A book already marked read
         # promotes too — playing it again is a re-listen.
         if user_book is None or user_book.read_state != ReadState.READING:
