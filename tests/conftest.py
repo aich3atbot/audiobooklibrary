@@ -63,6 +63,23 @@ def test_settings(tmp_path_factory):
     yield get_settings()
 
 
+@pytest.fixture(autouse=True)
+def no_real_http():
+    """No test reaches the real network. Everything outbound is mocked with
+    respx; this makes the *absence* of a mock an error instead of a live
+    request — a progress sync that pushes to Hardcover swallows the failure and
+    retries later, so an unmocked call would otherwise pass silently while
+    POSTing to api.hardcover.app for real.
+
+    Tests that mock with `@respx.mock` nest inside this router harmlessly, and
+    routes registered without the decorator get rolled back here on teardown.
+    The TestClient's ASGI transport is not intercepted."""
+    import respx
+
+    with respx.mock:
+        yield
+
+
 @pytest.fixture
 def db_session(test_settings):
     from app.db import get_sessionmaker

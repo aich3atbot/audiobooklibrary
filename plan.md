@@ -79,7 +79,8 @@ One FastAPI process running:
   Owns the on-disk files and the download pipeline state — see "Multi-edition support".
 - **user_book** — one user's shelf membership for a book (unique user_id+book_id):
   hardcover_user_book_id, pending_push, read_state (`want_to_read` | `reading` | `read` | `none`),
-  read_at (date, nullable), timestamps. Read state stays book-level.
+  read_at (date, nullable), started_at (date, nullable — Hardcover's
+  `first_started_reading_date`), timestamps. Read state stays book-level.
 - **release** — id, edition_id, user_id (who grabbed it, nullable), guid (the release's
   details-page URL), indexer, title, size, info_hash, magnet_uri, progress, grabbed_at, status
   (tracks what we handed the torrent client; `info_hash` is how we ask about it later.
@@ -630,7 +631,25 @@ Built as an experiment (the user may not keep it), but first-class.
 - **ABS**: one library item per imported edition (`li_<edition.id>`); per-edition
   progress and bookmarks; multi-edition items carry their label in the display title;
   narrators surface in metadata and filterdata. **Read state stays book-level**:
-  finishing any edition marks the book read on the user's Hardcover.
+  listening to any edition moves the book on the user's Hardcover shelf.
+
+### Listening drives read state
+
+Progress syncs from ABS clients (all of them funnel through `apply_progress` in
+`app/abs/progress.py`) maintain the user's Hardcover shelf:
+
+- **Started** — past `min(5 minutes, 5% of duration)` the book becomes *currently reading*,
+  `started_at` = today, pushed as `first_started_reading_date`. Once per book; a book
+  already marked *read* promotes too (playing it again is a re-listen).
+- **Finished** — the ABS rule (remaining <= 10s, or the client says so) marks it *read*,
+  `read_at` = today.
+- **Near-finished** — the trailing credits usually go unplayed, so a book left past
+  `min(duration - 5 minutes, 95%)` is marked finished and *read* as soon as progress
+  arrives for a **different book**. Other editions of the same book don't count as another
+  book.
+- **Re-listen** — a finished progress row resynced between the started and near-finish
+  marks is un-finished, which is what lets the started rule fire again. Nothing else
+  clears `is_finished` on its own.
 - **Migration**: the editions rollout added one unlabelled edition per book with
   pipeline state, at a path byte-identical to the old book path — DB-only, no files
   moved. ABS item ids changed (`li_<book.id>` → `li_<edition.id>`); server-side progress

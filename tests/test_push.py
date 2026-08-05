@@ -65,6 +65,22 @@ def test_push_updates_existing_user_book(clean_db, shelf):
 
 
 @respx.mock
+def test_push_sends_the_start_date(clean_db, shelf):
+    shelf.read_state = ReadState.READING
+    shelf.started_at = date(2024, 5, 1)
+    shelf.pending_push = True
+    route = respx.post(API_URL).mock(return_value=mutation_response("update_user_book"))
+
+    with HardcoverClient("token") as client:
+        push_book(clean_db, client, shelf)
+
+    assert sent_graphql(route)["variables"] == {
+        "id": 42,
+        "object": {"status_id": 2, "first_started_reading_date": "2024-05-01"},
+    }
+
+
+@respx.mock
 def test_push_inserts_when_not_on_shelf(clean_db, shelf):
     shelf.hardcover_user_book_id = None
     shelf.read_state = ReadState.READING

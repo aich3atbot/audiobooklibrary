@@ -1,8 +1,12 @@
+import json
+from datetime import date
+
 import httpx
 import pytest
 import respx
 
 from app.abs.playback_routes import open_sessions
+from app.abs.progress import near_finish_position, start_position
 from app.clients.hardcover import API_URL
 from app.models import MediaProgress, ReadState, UserBook
 from tests.conftest import make_user_book
@@ -139,7 +143,9 @@ def test_file_wrong_book_404(client, token, library):
     assert get(client, token, f"/api/items/{other_item}/file/{ino}").status_code == 404
 
 
-def test_session_sync_updates_progress(client, token, library):
+def test_session_sync_updates_progress(client, token, library, tokenless_user):
+    # tokenless: syncing progress now also moves read state, and this test is
+    # only about the progress row (see the read-state tests below)
     db = library["db"]
     session_id = play(client, token, f"li_{library['mayor'].id}").json()["id"]
 
@@ -180,7 +186,7 @@ def test_session_sync_finish_marks_hardcover_read(client, token, library, user):
     assert b"update_user_book" in route.calls[0].request.content
 
 
-def test_session_close_final_sync_and_cleanup(client, token, library):
+def test_session_close_final_sync_and_cleanup(client, token, library, tokenless_user):
     db = library["db"]
     session_id = play(client, token, f"li_{library['mayor'].id}").json()["id"]
 
@@ -199,7 +205,7 @@ def test_sync_unknown_session_404(client, token, library):
                 json={"currentTime": 1}).status_code == 404
 
 
-def test_local_session_sync(client, token, library):
+def test_local_session_sync(client, token, library, tokenless_user):
     db = library["db"]
     response = post(client, token, "/api/session/local",
                     json={"libraryItemId": f"li_{library['hail'].id}",
@@ -211,7 +217,7 @@ def test_local_session_sync(client, token, library):
     assert progress.current_time == 12.0
 
 
-def test_local_all_sessions(client, token, library):
+def test_local_all_sessions(client, token, library, tokenless_user):
     response = post(client, token, "/api/session/local-all",
                     json={"sessions": [
                         {"id": "s1", "libraryItemId": f"li_{library['hail'].id}",
@@ -244,6 +250,265 @@ def test_patch_progress_finished_and_unfinished(client, token, library, tokenles
     progress = db.query(MediaProgress).filter_by(edition_id=library["hail"].id).one()
     assert progress.is_finished is False
     assert progress.finished_at is None
+
+
+# --- listening drives read state -------------------------------------------
+
+
+def hardcover_route(field="update_user_book", id_=42):
+    return respx.post(API_URL).mock(
+        return_value=httpx.Response(200, json={"data": {field: {"id": id_, "error": None}}})
+    )
+
+
+def sent_object(route, call=0):
+    return json.loads(route.calls[call].request.content)["variables"]["object"]
+
+
+def sync(client, tok, session_id, current_time, duration):
+    return post(client, tok, f"/api/session/{session_id}/sync",
+                json={"currentTime": current_time, "timeListened": 15, "duration": duration})
+
+
+def test_start_position_thresholds():
+    assert start_position(36000) == 300.0  # 10h book: the flat 5 minutes
+    assert start_position(3600) == 180.0  # 1h book: 5% comes first
+    assert start_position(0) == 300.0  # duration unknown yet
+
+
+def test_near_finish_position_thresholds():
+    assert near_finish_position(36000) == 34200.0  # 10h book: 95% comes first
+    assert near_finish_position(3600) == 3300.0  # 1h book: all but the last 5 min
+    assert near_finish_position(240) == 228.0  # shorter than the tail: fraction alone
+
+
+@respx.mock
+def test_listening_past_the_start_threshold_marks_reading(client, token, library, user):
+    route = hardcover_route()
+    db = library["db"]
+    edition = library["mayor"]
+    shelf = make_user_book(db, user, edition.book,
+                           read_state=ReadState.WANT_TO_READ, hardcover_user_book_id=42)
+    session_id = play(client, token, f"li_{edition.id}").json()["id"]
+
+    assert sync(client, token, session_id, 305.0, 36000.0).status_code == 200
+
+    db.expire_all()
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.READING
+    assert shelf.started_at == date.today()
+    assert route.call_count == 1
+    obj = sent_object(route)
+    assert obj["status_id"] == 2
+    assert obj["first_started_reading_date"] == date.today().isoformat()
+    assert "last_read_date" not in obj
+
+
+@respx.mock
+def test_listening_below_the_start_threshold_changes_nothing(client, token, library, user):
+    route = hardcover_route()
+    db = library["db"]
+    edition = library["mayor"]
+    shelf = make_user_book(db, user, edition.book,
+                           read_state=ReadState.WANT_TO_READ, hardcover_user_book_id=42)
+    session_id = play(client, token, f"li_{edition.id}").json()["id"]
+
+    assert sync(client, token, session_id, 240.0, 36000.0).status_code == 200
+
+    db.expire_all()
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.WANT_TO_READ
+    assert shelf.started_at is None
+    assert route.call_count == 0
+
+
+@respx.mock
+def test_short_book_starts_on_the_fraction(client, token, library, user):
+    """A 20-minute book counts as started after 60s (5%), not 5 minutes."""
+    route = hardcover_route()
+    db = library["db"]
+    edition = library["mayor"]
+    shelf = make_user_book(db, user, edition.book,
+                           read_state=ReadState.WANT_TO_READ, hardcover_user_book_id=42)
+    session_id = play(client, token, f"li_{edition.id}").json()["id"]
+
+    sync(client, token, session_id, 45.0, 1200.0)
+    db.expire_all()
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.WANT_TO_READ
+    assert route.call_count == 0
+
+    sync(client, token, session_id, 65.0, 1200.0)
+    db.expire_all()
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.READING
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_already_reading_is_not_pushed_again(client, token, library, user):
+    route = hardcover_route()
+    db = library["db"]
+    edition = library["mayor"]
+    make_user_book(db, user, edition.book,
+                   read_state=ReadState.READING, hardcover_user_book_id=42)
+    session_id = play(client, token, f"li_{edition.id}").json()["id"]
+
+    sync(client, token, session_id, 305.0, 36000.0)
+    sync(client, token, session_id, 900.0, 36000.0)
+
+    assert route.call_count == 0
+
+
+@respx.mock
+def test_near_finished_book_is_read_once_another_book_starts(client, token, library, user):
+    """The trailing credits never play, so the book is only swept up when the
+    user moves on to something else."""
+    route = hardcover_route()
+    db = library["db"]
+    mayor, hail = library["mayor"], library["hail"]
+    shelf = make_user_book(db, user, mayor.book,
+                           read_state=ReadState.READING, hardcover_user_book_id=42)
+    db.add(MediaProgress(user_id=user.id, edition_id=mayor.id,
+                         current_time=34600.0, duration=36000.0))
+    db.commit()
+
+    # progress for a different book, still below its own start threshold
+    response = post(client, token, "/api/session/local",
+                    json={"libraryItemId": f"li_{hail.id}", "currentTime": 10.0,
+                          "duration": 3600.0})
+    assert response.status_code == 200
+
+    db.expire_all()
+    progress = db.query(MediaProgress).filter_by(edition_id=mayor.id).one()
+    assert progress.is_finished is True
+    assert progress.finished_at is not None
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.READ
+    assert shelf.read_at == date.today()
+    assert route.call_count == 1
+    assert sent_object(route)["status_id"] == 3
+
+
+@respx.mock
+def test_book_left_before_the_near_finish_mark_is_not_swept(client, token, library, user):
+    route = hardcover_route()
+    db = library["db"]
+    mayor, hail = library["mayor"], library["hail"]
+    shelf = make_user_book(db, user, mayor.book,
+                           read_state=ReadState.READING, hardcover_user_book_id=42)
+    db.add(MediaProgress(user_id=user.id, edition_id=mayor.id,
+                         current_time=32400.0, duration=36000.0))  # 90%
+    db.commit()
+
+    post(client, token, "/api/session/local",
+         json={"libraryItemId": f"li_{hail.id}", "currentTime": 10.0, "duration": 3600.0})
+
+    db.expire_all()
+    progress = db.query(MediaProgress).filter_by(edition_id=mayor.id).one()
+    assert progress.is_finished is False
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.READING
+    assert route.call_count == 0
+
+
+@respx.mock
+def test_another_edition_of_the_same_book_is_not_another_book(client, token, library, user):
+    """Switching recordings is still the same story, so it must not sweep."""
+    from app.models import DownloadState, Edition
+
+    route = hardcover_route()
+    db = library["db"]
+    mayor = library["mayor"]
+    alt = Edition(book=mayor.book, label="Alt", download_state=DownloadState.IMPORTED,
+                  library_path=mayor.library_path)
+    db.add(alt)
+    shelf = make_user_book(db, user, mayor.book,
+                           read_state=ReadState.READING, hardcover_user_book_id=42)
+    db.add(MediaProgress(user_id=user.id, edition_id=mayor.id,
+                         current_time=34600.0, duration=36000.0))
+    db.commit()
+
+    post(client, token, "/api/session/local",
+         json={"libraryItemId": f"li_{alt.id}", "currentTime": 10.0, "duration": 3600.0})
+
+    db.expire_all()
+    progress = db.query(MediaProgress).filter_by(edition_id=mayor.id).one()
+    assert progress.is_finished is False
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.READING
+    assert route.call_count == 0
+
+
+@respx.mock
+def test_relisten_reopens_a_finished_book_then_finishes_it_again(client, token, library, user):
+    route = hardcover_route()
+    db = library["db"]
+    edition = library["mayor"]
+    shelf = make_user_book(db, user, edition.book, read_state=ReadState.READ,
+                           read_at=date(2024, 3, 1), hardcover_user_book_id=42)
+    db.add(MediaProgress(user_id=user.id, edition_id=edition.id, current_time=36000.0,
+                         duration=36000.0, is_finished=True, finished_at=None))
+    db.commit()
+    session_id = play(client, token, f"li_{edition.id}").json()["id"]
+
+    sync(client, token, session_id, 400.0, 36000.0)
+
+    db.expire_all()
+    progress = db.query(MediaProgress).filter_by(edition_id=edition.id).one()
+    assert progress.is_finished is False
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.READING
+    assert shelf.started_at == date.today()
+    assert sent_object(route)["status_id"] == 2
+
+    sync(client, token, session_id, 35995.0, 36000.0)
+
+    db.expire_all()
+    progress = db.query(MediaProgress).filter_by(edition_id=edition.id).one()
+    assert progress.is_finished is True
+    db.refresh(shelf)
+    assert shelf.read_state == ReadState.READ
+    assert shelf.read_at == date.today()  # a re-listen re-stamps the read date
+    assert route.call_count == 2
+    assert sent_object(route, 1)["last_read_date"] == date.today().isoformat()
+
+
+@respx.mock
+def test_rewinding_into_the_credits_does_not_unfinish(client, token, library, user):
+    """Going back to hear the last chapter of a finished book is not a
+    re-listen."""
+    route = hardcover_route()
+    db = library["db"]
+    edition = library["mayor"]
+    make_user_book(db, user, edition.book, read_state=ReadState.READ,
+                   read_at=date(2024, 3, 1), hardcover_user_book_id=42)
+    db.add(MediaProgress(user_id=user.id, edition_id=edition.id, current_time=36000.0,
+                         duration=36000.0, is_finished=True))
+    db.commit()
+    session_id = play(client, token, f"li_{edition.id}").json()["id"]
+
+    sync(client, token, session_id, 35000.0, 36000.0)
+
+    db.expire_all()
+    progress = db.query(MediaProgress).filter_by(edition_id=edition.id).one()
+    assert progress.is_finished is True
+    assert route.call_count == 0
+
+
+def test_start_threshold_without_a_hardcover_token(client, token, library, tokenless_user):
+    db = library["db"]
+    edition = library["mayor"]
+    session_id = play(client, token, f"li_{edition.id}").json()["id"]
+
+    sync(client, token, session_id, 305.0, 36000.0)
+
+    db.expire_all()
+    shelf = db.query(UserBook).filter_by(
+        user_id=tokenless_user.id, book_id=edition.book.id).one()
+    assert shelf.read_state == ReadState.READING
+    assert shelf.started_at == date.today()
+    assert shelf.pending_push is True
 
 
 def test_get_progress(client, token, library, user):

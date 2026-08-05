@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.abs import catalogue, payloads
 from app.abs.deps import require_abs_user
@@ -150,8 +151,12 @@ async def sync_session(
 ):
     body = await request.json()
     edition = _session_edition(db, user, session_id)
-    apply_progress(
-        db, user, edition, current_time=body.get("currentTime"), duration=body.get("duration")
+    # Off the event loop: applying progress can push a read-state change to
+    # Hardcover, and that HTTP call must not stall streaming for everyone else.
+    await run_in_threadpool(
+        apply_progress,
+        db, user, edition,
+        current_time=body.get("currentTime"), duration=body.get("duration"),
     )
     return Response(status_code=200)
 
@@ -170,7 +175,8 @@ async def close_session(
     if session_id in open_sessions:
         if body.get("currentTime") is not None:
             edition = _session_edition(db, user, session_id)
-            apply_progress(
+            await run_in_threadpool(
+                apply_progress,
                 db,
                 user,
                 edition,
@@ -204,7 +210,7 @@ async def sync_local_session(
     user: User = Depends(require_abs_user),
 ):
     session = await request.json()
-    _apply_local_session(db, user, session)
+    await run_in_threadpool(_apply_local_session, db, user, session)
     return {}
 
 
@@ -215,11 +221,16 @@ async def sync_local_sessions(
     user: User = Depends(require_abs_user),
 ):
     body = await request.json()
-    results = []
-    for session in body.get("sessions") or []:
-        success = _apply_local_session(db, user, session)
-        results.append({"id": session.get("id"), "success": success})
-    return {"results": results}
+    sessions = body.get("sessions") or []
+
+    def apply_all() -> list[dict[str, Any]]:
+        return [
+            {"id": session.get("id"), "success": _apply_local_session(db, user, session)}
+            for session in sessions
+        ]
+
+    # one hop to the threadpool for the whole batch, not one per session
+    return {"results": await run_in_threadpool(apply_all)}
 
 
 @router.patch("/me/progress/{item_id}")
@@ -243,7 +254,8 @@ async def update_progress(
         )
         if effective_duration:
             current_time = float(body["progress"]) * effective_duration
-    apply_progress(
+    await run_in_threadpool(
+        apply_progress,
         db,
         user,
         edition,

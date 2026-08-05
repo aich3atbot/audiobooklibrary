@@ -53,6 +53,15 @@ def parse_read_at(entry: dict[str, Any]) -> date | None:
     return max(date.fromisoformat(d) for d in dates) if dates else None
 
 
+def parse_started_at(entry: dict[str, Any]) -> date | None:
+    """When the user first started reading: Hardcover's cached
+    first_started_reading_date, or the earliest started read entry."""
+    dates = [r["started_at"] for r in entry.get("user_book_reads", []) if r.get("started_at")]
+    if entry.get("first_started_reading_date"):
+        dates.append(entry["first_started_reading_date"])
+    return min(date.fromisoformat(d) for d in dates) if dates else None
+
+
 Caches = tuple[dict[int, Author], dict[int, Series], dict[int, Book]]
 
 
@@ -145,6 +154,7 @@ def _upsert_entry(
     if not ub.pending_push:
         ub.read_state = STATUS_TO_READ_STATE.get(entry["status_id"], ReadState.NONE)
         ub.read_at = parse_read_at(entry)
+        ub.started_at = parse_started_at(entry)
     return book, added
 
 
@@ -207,11 +217,14 @@ def push_book(session: Session, client: HardcoverClient, user_book: UserBook) ->
             if user_book.read_at and user_book.read_state == ReadState.READ
             else None
         )
+        started = user_book.started_at.isoformat() if user_book.started_at else None
         if user_book.hardcover_user_book_id:
-            client.update_user_book(user_book.hardcover_user_book_id, status_id, last_read)
+            client.update_user_book(
+                user_book.hardcover_user_book_id, status_id, last_read, started
+            )
         else:
             user_book.hardcover_user_book_id = client.insert_user_book(
-                user_book.book.hardcover_id, status_id, last_read
+                user_book.book.hardcover_id, status_id, last_read, started
             )
     user_book.pending_push = False
     session.commit()
@@ -237,10 +250,21 @@ def push_pending(session: Session, client: HardcoverClient, user: User) -> int:
     return pushed
 
 
-def update_read_state(session: Session, user: User, book: Book, new_state: ReadState) -> UserBook:
+def update_read_state(
+    session: Session,
+    user: User,
+    book: Book,
+    new_state: ReadState,
+    read_at: date | None = None,
+    started_at: date | None = None,
+) -> UserBook:
     """Apply a read-state change for one user locally, then try to push it to
     their Hardcover. Creates the shelf membership if the book wasn't in the
     user's library yet (the "available → add to my library" case).
+
+    ``read_at``/``started_at`` are explicit dates that win over what is already
+    stored — listening progress uses them to stamp today (a re-listen really
+    did start and finish today). Left unset, an existing read date is kept.
 
     On push failure the entry stays pending_push and the sync loop retries."""
     user_book = get_user_book(session, user, book)
@@ -250,9 +274,13 @@ def update_read_state(session: Session, user: User, book: Book, new_state: ReadS
 
     user_book.read_state = new_state
     if new_state == ReadState.READ:
-        user_book.read_at = user_book.read_at or date.today()
+        user_book.read_at = read_at or user_book.read_at or date.today()
     elif new_state == ReadState.NONE:
         user_book.read_at = None
+    if started_at:
+        user_book.started_at = started_at
+    if new_state == ReadState.NONE:
+        user_book.started_at = None
     user_book.pending_push = True
     session.commit()
 

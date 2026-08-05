@@ -15,6 +15,7 @@ USER_BOOK_FIELDS = """
       id
       status_id
       last_read_date
+      first_started_reading_date
       book {
         id
         title
@@ -29,7 +30,7 @@ USER_BOOK_FIELDS = """
           series { id name slug }
         }
       }
-      user_book_reads { finished_at }
+      user_book_reads { started_at finished_at }
 """
 
 USER_BOOKS_QUERY = f"""
@@ -250,12 +251,18 @@ class HardcoverClient:
         }
 
     def insert_user_book(
-        self, book_id: int, status_id: int, last_read_date: str | None = None
+        self,
+        book_id: int,
+        status_id: int,
+        last_read_date: str | None = None,
+        started_reading_date: str | None = None,
     ) -> int:
         """Add a book to the user's Hardcover shelf; returns the user_book id."""
         obj: dict[str, Any] = {"book_id": book_id, "status_id": status_id}
         if last_read_date:
             obj["last_read_date"] = last_read_date
+        if started_reading_date:
+            obj["first_started_reading_date"] = started_reading_date
         data = self.execute(INSERT_USER_BOOK, {"object": obj})
         result = data["insert_user_book"]
         if result.get("error"):
@@ -263,11 +270,17 @@ class HardcoverClient:
         return result["id"]
 
     def update_user_book(
-        self, user_book_id: int, status_id: int, last_read_date: str | None = None
+        self,
+        user_book_id: int,
+        status_id: int,
+        last_read_date: str | None = None,
+        started_reading_date: str | None = None,
     ) -> None:
         obj: dict[str, Any] = {"status_id": status_id}
         if last_read_date:
             obj["last_read_date"] = last_read_date
+        if started_reading_date:
+            obj["first_started_reading_date"] = started_reading_date
         data = self.execute(UPDATE_USER_BOOK, {"id": user_book_id, "object": obj})
         result = data["update_user_book"]
         if result.get("error"):

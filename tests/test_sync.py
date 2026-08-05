@@ -10,6 +10,7 @@ from app.services.sync import (
     backfill_author_images,
     backfill_hardcover_slugs,
     parse_read_at,
+    parse_started_at,
     pick_series,
     sync_from_hardcover,
 )
@@ -38,6 +39,7 @@ def entry(
     author_name="Test Author",
     book_series=None,
     last_read_date=None,
+    first_started_reading_date=None,
     reads=None,
     cover=None,
     author_image=None,
@@ -47,6 +49,7 @@ def entry(
         "id": ub_id,
         "status_id": status_id,
         "last_read_date": last_read_date,
+        "first_started_reading_date": first_started_reading_date,
         "book": {
             "id": book_id,
             "title": title,
@@ -106,6 +109,20 @@ def test_parse_read_at_none_when_no_dates():
     assert parse_read_at({"last_read_date": None, "user_book_reads": []}) is None
 
 
+def test_parse_started_at_takes_earliest_date():
+    result = parse_started_at(
+        {
+            "first_started_reading_date": "2024-02-01",
+            "user_book_reads": [{"started_at": "2024-01-05"}, {"started_at": None}],
+        }
+    )
+    assert result == date(2024, 1, 5)
+
+
+def test_parse_started_at_none_when_no_dates():
+    assert parse_started_at({"first_started_reading_date": None, "user_book_reads": []}) is None
+
+
 @respx.mock
 def test_sync_creates_books(clean_db, user):
     respx.post(API_URL).mock(
@@ -125,6 +142,7 @@ def test_sync_creates_books(clean_db, user):
                         }
                     ],
                     last_read_date="2024-03-01",
+                    first_started_reading_date="2024-02-10",
                     cover="https://assets.hardcover.app/cover.jpg",
                 ),
                 entry(status_id=2, ub_id=2, book_id=1001, title="Standalone", author_id=500,
@@ -147,6 +165,7 @@ def test_sync_creates_books(clean_db, user):
     ub = user_book_for(clean_db, user, 1000)
     assert ub.read_state == ReadState.READ
     assert ub.read_at == date(2024, 3, 1)
+    assert ub.started_at == date(2024, 2, 10)
     # one shared author row, standalone book has no series
     assert clean_db.query(Author).count() == 1
     assert book.author.image_url == "https://assets.hardcover.app/authors/500/bs.jpg"

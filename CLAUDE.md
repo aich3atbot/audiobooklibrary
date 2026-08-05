@@ -125,7 +125,20 @@ page, and `POST /api/items/batch/get`.
   cannot be grabbed again — search offers "add to my library", and the book detail page
   (`/books/{id}`, reached from a card's cover/title/available badge and from Activity)
   offers "Download another edition" (per-edition guard). Read state stays book-level:
-  finishing any edition marks the book read.
+  listening to any edition moves the book.
+- **Listening drives read state** (`app/abs/progress.py`, every progress route funnels
+  through `apply_progress`): past `min(5 min, 5%)` the book becomes *currently reading*
+  dated today (`user_book.started_at`, pushed as Hardcover's
+  `first_started_reading_date`); finished marks it *read* dated today; and because the
+  trailing credits usually go unplayed, a book left past `min(duration - 5 min, 95%)` is
+  marked finished and read as soon as progress arrives for a **different** book (another
+  edition of the same book doesn't count). A finished row resynced between those two
+  marks is treated as a re-listen and un-finished — the only thing that clears
+  `is_finished` on its own, so keep the window narrow: a stray `currentTime: 0` or a
+  rewind into the last chapter must not trip it. The ABS progress handlers are
+  `async def`, so every `apply_progress` call goes through `run_in_threadpool` — the
+  Hardcover push it can trigger has a 30s timeout and would otherwise stall the event
+  loop, and streaming rides that same loop. Keep it off the loop.
 - **Multi-user, mandatory auth**: there is no open mode. Users are DB rows (scrypt
   password hashes via `app/passwords.py`, per-user Hardcover tokens); the virtual `admin`
   account (password from `ADMIN_PASSWORD`, required at startup, reserved username) sees

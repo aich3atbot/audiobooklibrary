@@ -237,6 +237,10 @@ class UserBook(Base):
     pending_push: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     read_state: Mapped[ReadState] = _enum_column(ReadState, ReadState.NONE)
     read_at: Mapped[date | None] = mapped_column(Date)
+    # When the user started reading/listening (Hardcover's
+    # first_started_reading_date); set when playback crosses the "started"
+    # threshold, and pulled back from Hardcover.
+    started_at: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

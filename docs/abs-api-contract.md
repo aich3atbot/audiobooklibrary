@@ -250,7 +250,24 @@ minified shape leaves a book unplayable ("The book has no chapters").
   isFinished, hideFromContinueListening, finishedAt}` → upsert progress; 200.
 - Finished rule (server-side, applies to session sync too): finished when
   `duration - currentTime <= markAsFinishedTimeRemaining` (default 10s), or when the
-  client sends `isFinished: true`. **Finished → mark book read on Hardcover.**
+  client sends `isFinished: true`. **Finished → mark book read on Hardcover**, dated
+  today.
+
+Read state is driven by progress in three more places, all in `app/abs/progress.py`
+(ours, not ABS's — ABS has no notion of a shelf). Every progress route funnels through
+`apply_progress`, so they apply to session sync, local/offline sync and the PATCH alike:
+
+- **Started**: `currentTime >= min(5 minutes, 5% of duration)` and the row is not finished
+  → the book becomes *currently reading* on Hardcover, dated today. Fires once (the state
+  is no longer "not reading" afterwards); a book already marked *read* promotes too, since
+  playing it again is a re-listen.
+- **Near-finished sweep**: audiobooks are usually abandoned in the trailing credits, so a
+  book left past `min(duration - 5 minutes, 95%)` is marked finished *and* read the moment
+  progress arrives for a **different book** (other editions of the same book don't count).
+- **Re-listen**: a finished row resynced at a position at or past the started threshold but
+  before the near-finish mark is un-finished. This is the one case where a sync clears
+  `isFinished` on its own — a stray `currentTime: 0` or a rewind into the last chapter does
+  not.
 
 ## socket.io (minimal shim)
 
