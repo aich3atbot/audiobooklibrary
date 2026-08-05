@@ -50,7 +50,7 @@ which then retries forever.
 ```json
 {
   "user": {
-    "id": "<uuid>", "username": "...", "email": null, "type": "root",
+    "id": "<uuid>", "username": "...", "email": null, "type": "user",
     "token": "<legacy JWT (no exp)>", "isOldToken": false,
     "accessToken": "<JWT 1h>", "refreshToken": "<JWT 30d or null>",
     "mediaProgress": [ <oldMediaProgress...> ],
@@ -68,11 +68,38 @@ which then retries forever.
 }
 ```
 
+`type` is deliberately `"user"`, never `root`/`admin`: clients unlock a whole
+server-administration UI for those (users, backups, tasks, server settings, uploads, API
+keys, item/library editing) and we serve none of it, so advertising admin would only offer
+screens that 404. The `permissions` block is what gates playback and downloads, and there
+everything is granted.
+
 - `POST /auth/refresh` — refresh token from `x-refresh-token` header (mobile) or
   `refresh_token` cookie; 401 `{error}` if missing/invalid. Returns login payload with new
   `accessToken` (include new `refreshToken` only when the header form was used).
 - `POST /api/authorize` — bearer-authenticated; returns the login payload.
-- `POST /logout` — 200.
+- `POST /logout[?allDevices=1]` — revokes the session behind the presented refresh token
+  (`x-refresh-token` header or cookie), or all of that user's sessions with `allDevices=1`.
+  Answers JSON `{success: true}` to token-bearing clients and a 303 to `/login` for the UI
+  form, which posts the same route. Must stay reachable without a session cookie.
+- `GET /api/me/sessions?page=&itemsPerPage=` → `{total, numPages, page, itemsPerPage,
+  sessions: [{id: <uuid>, ipAddress, userAgent, deviceInfo, createdAt, updatedAt,
+  current}]}`. `current` is resolved from the refresh token on the request. `deviceInfo`
+  is upstream's *parsed* user agent; we don't parse UAs and leave it null — clients label
+  their own sessions from the raw `userAgent` prefix and fall back to "unknown device".
+- `DELETE /api/me/sessions/:id` — 400 on a non-uuid id (clients rely on this), 404 if it
+  isn't the caller's, else 200 and that device is signed out.
+
+**Sessions are what make revocation real.** Access tokens stay stateless, but each refresh
+token gets an `auth_session` row (SHA-256 of the token, never the token), and
+`/auth/refresh` requires one — otherwise a "sign out" on a lost phone would leave it
+working for the token's full 30 days. Two consequences to preserve: refresh tokens carry a
+random `jti` so that two logins in the same second can't mint the *same* token (the
+payload is otherwise just user + type + 1s-resolution expiry, and sessions are keyed on
+it); and rotation keeps the previous token usable for a 10-minute grace window, because
+clients fire concurrent refreshes and the loser must not be logged out. In the grace case
+we answer with a new access token and **no** refresh token — upstream returns the winning
+token, which we can't, holding only its hash.
 
 ## Discovery (public, no auth)
 
@@ -106,6 +133,12 @@ which then retries forever.
   series: [{id, name}], narrators: [], languages: [], publishers: [], publishedDecades: []}`
 - `GET /api/libraries/:id/series` / `/authors` → paged results like items (low priority;
   official app browse pages).
+- `GET /api/libraries/:id/series/:seriesId` and `GET /api/series/:seriesId` → the same
+  `Series.toOldJSON` = `{id, name, nameIgnorePrefix, description: null, addedAt, updatedAt,
+  libraryId}`, plus `totalDuration` (not upstream here, but it is on the series *list* and
+  clients show it). `?include=progress` adds `{libraryItemIds, libraryItemIdsFinished,
+  isFinished}`. 404 for an unknown series. This is the series page *header* only — clients
+  list the books through `/items?filter=series.<id>`.
 - `GET /api/authors/:id?include=items[,series]` → `Author.toOldJSON` =
   `{id, asin: null, name, description: null, imagePath: null, libraryId, addedAt,
   updatedAt}`; with `items` add `libraryItems: [<minified>]`, with `series` also
@@ -122,6 +155,15 @@ ebooks. We answer `series.<ser_id>`, `authors.<aut_id>`, `narrators.<name>` and
 `progress.<finished|in-progress|not-started|not-finished>` (per requesting user); any
 other group matches nothing, as upstream does with an empty column. `sort=sequence`
 applies **only** under a `series.` filter — ABS drops it otherwise.
+
+**A `series.` filter changes both the order and the item shape.** Upstream appends a
+sequence sort to whatever the client asked for, and an *unrecognised* sort key produces no
+ordering of its own (`getOrder` returns `[]`) — which is the only reason clients sending
+`sort=media.metadata.series.sequence` (Absorb does; it is not a real ABS sort key) get
+reading order instead of alphabetical. It also hangs the filtered series off each minified
+item as `media.metadata.series = {id, name, sequence}` (`LibraryItem.getByFilterAndSort`),
+and that is where clients read the per-book sequence badge — the minified metadata
+otherwise carries only the `seriesName` string.
 
 ## Library items
 
@@ -242,12 +284,28 @@ minified shape leaves a book unplayable ("The book has no chapters").
 {"id": "<uuid>", "userId": "<uuid>", "libraryItemId": "li_1", "episodeId": null,
  "mediaItemId": "<book uuid>", "mediaItemType": "book", "duration": <sec>,
  "progress": <0..1>, "currentTime": <sec>, "isFinished": false,
- "hideFromContinueListening": false, "ebookLocation": null, "ebookProgress": null,
+ "hideFromContinueListening": <bool>, "ebookLocation": null, "ebookProgress": null,
  "lastUpdate": <ms>, "startedAt": <ms>, "finishedAt": <ms|null>}
 ```
 - `GET /api/me` → old user JSON (includes `mediaProgress` array).
 - `PATCH /api/me/progress/:libraryItemId` — any of `{duration, currentTime, progress,
-  isFinished, hideFromContinueListening, finishedAt}` → upsert progress; 200.
+  isFinished, hideFromContinueListening, createdAt, finishedAt}` → upsert progress; 200.
+  `createdAt`/`finishedAt` are epoch ms and are how clients **edit a book's start/finish
+  dates**: ABS shows the start date as the progress row's `createdAt` (our
+  `media_progress.started_at`, reported back as `startedAt`), so a client re-sends the row
+  with a new one. Both mirror onto the book's shelf entry — that is what reaches Hardcover
+  — without moving its read state.
+- `DELETE /api/me/progress/:id` — `:id` is the **progress** id (`prog_<n>`), not an item
+  id, and only the caller's own row (someone else's is a 404, as upstream). Clears the
+  listening position only; read state is book-level and lives on Hardcover.
+- `GET /api/me/progress/:id/remove-from-continue-listening` (progress id) and
+  `GET /api/me/series/:id/remove-from-continue-listening` (series id) → set
+  `hideFromContinueListening`, return the old user JSON. Upstream's series form hides a
+  series from its *Continue Series* shelf, which we don't serve, so ours hides that
+  series' own books from Continue Listening. The flag clears itself as soon as
+  `currentTime` moves (`MediaProgress.applyProgressUpdate`), unless the same request sets
+  it explicitly — that is what makes a client's "reset progress" (sync 0, then PATCH with
+  the flag) stick.
 - Finished rule (server-side, applies to session sync too): finished when
   `duration - currentTime <= markAsFinishedTimeRemaining` (default 10s), or when the
   client sends `isFinished: true`. **Finished → mark book read on Hardcover**, dated

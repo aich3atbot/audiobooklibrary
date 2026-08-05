@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.abs import payloads
 from app.config import get_settings
-from app.models import Author, Book, Bookmark, Edition, MediaProgress, User
+from app.models import Author, Book, Bookmark, Edition, MediaProgress, Series, User
 
 COVER_NAMES = ("cover", "folder")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
@@ -75,6 +75,69 @@ def get_author_by_id(db: Session, author_id: str) -> Author | None:
         .limit(1)
     )
     return author if exposed else None
+
+
+def get_series_by_id(db: Session, series_id: str) -> Series | None:
+    """`ser_<series.id>` -> Series, restricted to series with an exposed
+    edition (same visibility rule as authors)."""
+    if not series_id.startswith("ser_"):
+        return None
+    try:
+        pk = int(series_id[4:])
+    except ValueError:
+        return None
+    series = db.get(Series, pk)
+    if series is None:
+        return None
+    exposed = db.scalar(
+        select(Edition.id)
+        .join(Edition.book)
+        .where(Book.series_id == pk, Edition.library_path.is_not(None))
+        .limit(1)
+    )
+    return series if exposed else None
+
+
+def series_editions(db: Session, series: Series) -> list[Edition]:
+    """A series' exposed editions in reading order. The filter argument is what
+    lets `sorted_editions` honour the sequence sort — it only applies inside a
+    series filter."""
+    editions = [e for e in eligible_editions(db) if e.book.series_id == series.id]
+    return sorted_editions(editions, "sequence", False, filter_by=f"series.ser_{series.id}")
+
+
+def series_json(
+    db: Session, series: Series, user: User | None = None, include: str = ""
+) -> dict[str, Any]:
+    """Series.toOldJSON — what GET /api/series/:id and
+    GET /api/libraries/:id/series/:seriesId return. `totalDuration` isn't part
+    of the upstream shape here, but it is on the series *list* endpoint and
+    clients show it on the series page, so we carry it along."""
+    editions = series_editions(db, series)
+    payload: dict[str, Any] = {
+        "id": f"ser_{series.id}",
+        "name": series.name,
+        "nameIgnorePrefix": title_prefix_at_end(series.name),
+        "description": None,
+        "addedAt": payloads.LIBRARY_CREATED_AT_MS,
+        "updatedAt": payloads.LIBRARY_CREATED_AT_MS,
+        "libraryId": payloads.LIBRARY_ID,
+        "totalDuration": sum(edition_duration(e) for e in editions),
+    }
+    if "progress" in include and user is not None:
+        progress = progress_map(db, user)
+        item_ids = [payloads.item_id(e.id) for e in editions]
+        finished = [
+            payloads.item_id(e.id)
+            for e in editions
+            if (p := progress.get(e.id)) is not None and p.is_finished
+        ]
+        payload["progress"] = {
+            "libraryItemIds": item_ids,
+            "libraryItemIdsFinished": finished,
+            "isFinished": len(finished) >= len(item_ids),
+        }
+    return payload
 
 
 def title_prefix_at_end(title: str) -> str:
@@ -442,10 +505,28 @@ SORT_KEYS = {
 
 def sorted_editions(editions: list[Edition], sort: str | None, desc: bool,
                     filter_by: str | None = None) -> list[Edition]:
-    if sort == "sequence" and not (filter_by or "").startswith("series."):
+    """Order a result page the way upstream does.
+
+    Under a `series.` filter ABS appends a sequence sort to whatever the client
+    asked for (libraryItemsBookFilters.getFilteredLibraryItems), and an
+    unrecognised sort key produces no ordering of its own — which is how a
+    client sending `sort=media.metadata.series.sequence` (Absorb does) still
+    gets its series in reading order. Outside a series filter we keep title as
+    the fallback."""
+    in_series = (filter_by or "").startswith("series.")
+    if sort == "sequence" and not in_series:
         sort = None  # ABS drops a sequence sort outside a series filter
-    key = SORT_KEYS.get(sort or "media.metadata.title", SORT_KEYS["media.metadata.title"])
-    return sorted(editions, key=key, reverse=desc)
+    primary = SORT_KEYS.get(sort) if sort else None
+    if primary is None and not in_series:
+        primary = SORT_KEYS["media.metadata.title"]
+
+    result = list(editions)
+    if in_series and sort != "sequence":
+        # Secondary sort: applied first so the stable primary sort keeps it.
+        result.sort(key=SORT_KEYS["sequence"])
+    if primary is not None:
+        result.sort(key=primary, reverse=desc)
+    return result
 
 
 # ABS filters are "<group>.<base64 value>" (or a bare group like "issues").
@@ -469,6 +550,27 @@ def parse_filter(filter_by: str | None) -> tuple[str, str] | None:
     except (ValueError, UnicodeDecodeError):
         value = ""
     return group, value
+
+
+def attach_filter_series(
+    items: list[dict[str, Any]], editions: list[Edition], filter_by: str | None
+) -> None:
+    """Under a `series.` filter, upstream hangs the filtered series off each
+    minified item as `media.metadata.series = {id, name, sequence}`
+    (LibraryItem.getByFilterAndSort). Clients read the sequence badge from
+    there — the minified shape has only the `seriesName` string otherwise."""
+    parsed = parse_filter(filter_by)
+    if parsed is None or parsed[0] != "series":
+        return
+    for item, edition in zip(items, editions):
+        book = edition.book
+        if book.series is None:
+            continue
+        item["media"]["metadata"]["series"] = {
+            "id": f"ser_{book.series_id}",
+            "name": book.series.name,
+            "sequence": _sequence(book),
+        }
 
 
 def _progress_matches(progress: MediaProgress | None, value: str) -> bool:
@@ -523,7 +625,7 @@ def progress_json(progress: MediaProgress, user: User) -> dict[str, Any]:
         "progress": (progress.current_time / duration) if duration else 0.0,
         "currentTime": progress.current_time,
         "isFinished": progress.is_finished,
-        "hideFromContinueListening": False,
+        "hideFromContinueListening": progress.hide_from_continue_listening,
         "ebookLocation": None,
         "ebookProgress": None,
         "lastUpdate": _ms(progress.updated_at),
@@ -676,7 +778,10 @@ def personalized_shelves(db: Session, user: User, limit: int = 10) -> list[dict[
 
     in_progress = [
         e for e in editions
-        if prog(e) and not prog(e).is_finished and prog(e).current_time > 0
+        if prog(e)
+        and not prog(e).is_finished
+        and prog(e).current_time > 0
+        and not prog(e).hide_from_continue_listening
     ]
     in_progress.sort(key=lambda e: prog(e).updated_at, reverse=True)
 

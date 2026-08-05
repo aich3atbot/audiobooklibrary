@@ -15,9 +15,10 @@ replaced Prowlarr), the **multi-user conversion** (mandatory accounts, virtual a
 per-user Hardcover sync and ABS progress over a shared /audiobooks store — see plan.md
 "Multi-user conversion"), and **multi-edition support** (a book can hold several
 recordings as `edition` rows — see plan.md "Multi-edition support") are built, tested,
-and committed. The Alembic history is a **single squashed revision**, `4279694b0300`
-(creates the whole current schema; no upgrade path from any earlier revision — the only
-live database, `data/config/`, was stamped at it by hand). Run `uv run pytest` (all external APIs are
+and committed. The Alembic history is rooted at a **squashed base revision**, `4279694b0300`
+(creates the whole schema as of that point; no upgrade path from any earlier revision —
+the only live database, `data/config/`, was stamped at it by hand), with a linear chain
+of ordinary revisions on top; `tests/test_migration.py` enforces both. Run `uv run pytest` (all external APIs are
 mocked with respx). Awaiting real-world verification: the ABS API with the official app
 (per user account; note item ids changed to `li_<edition.id>`), one real UI grab →
 download → import through the user's own Deluge, the admin/imports flows, and the new
@@ -48,10 +49,22 @@ files' chapters shifted by each file's start offset. Improving extraction means 
 `CHAPTER_SCAN_VERSION` in `app/services/audio_meta.py`, which triggers a one-time
 re-scan of already-scanned MP4s at startup (marker in `app_state`).
 
-Third-party clients (Lissen) are supported too, and they exercise paths the official app
-never touches: item detail **without** `expanded=1` (must return the full item, not the
-minified list shape), `?filter=<group>.<base64>` on the items list, the author landing
-page, and `POST /api/items/batch/get`.
+Third-party clients (Lissen, Absorb) are supported too, and they exercise paths the
+official app never touches: item detail **without** `expanded=1` (must return the full
+item, not the minified list shape), `?filter=<group>.<base64>` on the items list, the
+author landing page, `POST /api/items/batch/get`, the series endpoints, and the
+progress verbs (`DELETE /api/me/progress/:progressId`,
+`remove-from-continue-listening`, `createdAt`/`finishedAt` date edits), and the device
+list at `/api/me/sessions`. We report `user.type` as **`"user"`, never `root`** — clients
+unlock a server-administration UI on root/admin that we serve none of. Deliberate
+non-goals, all of which the clients treat as "server doesn't support it" (404) rather
+than an error: listening *history* (`/api/me/listening-sessions`,
+`/api/me/item/listening-sessions/:id`, `DELETE /api/sessions/:id` — we persist no
+playback-session records, only zeroed `/api/me/listening-stats`),
+`PATCH /api/me/password`, and every admin/podcast/ebook/email endpoint. `GET /api/me/progress` and
+`/api/me/bookmarks` (the 2.36 compact endpoints) are likewise absent **on purpose** —
+clients fall back to `/api/me`, which carries both — but that fallback is keyed on a
+**404**, so those paths must never start answering with an error status.
 
 ## Key decisions (do not silently revisit)
 
@@ -150,7 +163,14 @@ page, and `POST /api/items/batch/get`.
   only the user-administration UI at /admin/users. Disabling a user locks them out
   immediately — sessions and ABS tokens are re-checked against the DB per request. Auth
   lives in `app/auth.py` (middleware + deps) + `app/routes/auth.py`; admin routes in
-  `app/routes/admin.py`. The multi-user conversion is in progress — see plan.md
+  `app/routes/admin.py`. **Refresh tokens are session-backed** (`app/abs/sessions.py`,
+  `auth_session` rows keyed on the token's SHA-256): `/auth/refresh` requires a live row,
+  which is the only thing that makes `POST /logout` — and per-device revocation via
+  `/api/me/sessions` — actually revoke. Access tokens stay stateless and short-lived; do
+  not "simplify" the refresh path back to signature-only, or a sign-out on a lost device
+  becomes a no-op for 30 days. Rotation keeps the previous token alive for a 10-minute
+  grace window (clients fire concurrent refreshes; the loser must survive), and refresh
+  tokens carry a random `jti` so two logins in the same second can't collide. The multi-user conversion is in progress — see plan.md
   "Multi-user conversion" for design and remaining milestones.
 - **Config via env vars** only — see `.env.example` for the full list (auth, Hardcover,
   indexer, download client, paths, intervals, import mode). `DOWNLOAD_DIR` must be the

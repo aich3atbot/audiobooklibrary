@@ -23,7 +23,10 @@ SESSION_USER_ID = "user_id"
 SESSION_IS_ADMIN = "is_admin"
 ADMIN_USERNAME = "admin"
 # /status, /ping, /healthcheck: ABS client discovery must be public.
-OPEN_PATHS = {"/login", "/healthz", "/status", "/ping", "/healthcheck"}
+# /logout too: ABS clients post it with a bearer/refresh token and no cookie,
+# and a redirect to /login would hand them an HTML page instead of revoking.
+# It clears whatever session the request carries, so anonymous posts are inert.
+OPEN_PATHS = {"/login", "/logout", "/healthz", "/status", "/ping", "/healthcheck"}
 # /api/ and /auth/ are the ABS surface: bearer-token auth enforced per-route
 # (app/abs/deps.py), not by this cookie-redirect middleware. /public/ is the
 # ABS surface that carries no token at all (app/abs/public_routes.py) — a

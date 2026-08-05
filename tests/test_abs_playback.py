@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 
 import httpx
 import pytest
@@ -10,6 +10,7 @@ from app.abs.progress import near_finish_position, start_position
 from app.clients.hardcover import API_URL
 from app.models import MediaProgress, ReadState, UserBook
 from tests.conftest import make_user_book
+from tests.test_abs_browse import series_library  # noqa: F401
 from tests.test_abs_catalogue import clean_db, get, library, token  # noqa: F401
 
 
@@ -587,3 +588,107 @@ def test_progress_isolated_between_users(client, token, library, user, db_sessio
     response = post(client, other_token, f"/api/session/{session_id}/sync",
                     json={"currentTime": 50.0, "duration": 100.0})
     assert response.status_code == 404
+
+
+# --- continue listening + explicit progress edits ---------------------------
+
+
+def continue_listening(client, tok):
+    shelves = get(client, tok, "/api/libraries/lib_audiobooks/personalized").json()
+    shelf = next((s for s in shelves if s["id"] == "continue-listening"), None)
+    return [e["id"] for e in shelf["entities"]] if shelf else []
+
+
+def test_delete_progress(client, token, library, user):
+    db = library["db"]
+    item_id = f"li_{library['mayor'].id}"
+    db.add(MediaProgress(user_id=user.id, edition_id=library["mayor"].id,
+                         current_time=25.0, duration=100.0))
+    db.commit()
+    progress_id = get(client, token, f"/api/me/progress/{item_id}").json()["id"]
+
+    assert client.delete(f"/api/me/progress/{progress_id}",
+                         headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    db.expire_all()
+    assert db.query(MediaProgress).filter_by(edition_id=library["mayor"].id).count() == 0
+
+    # unknown id, and an item id in place of a progress id, are both 404
+    for bad in (progress_id, "prog_9999", item_id):
+        assert client.delete(f"/api/me/progress/{bad}",
+                             headers={"Authorization": f"Bearer {token}"}).status_code == 404
+
+
+def test_remove_item_from_continue_listening(client, token, library, tokenless_user):
+    db = library["db"]
+    item_id = f"li_{library['mayor'].id}"
+    db.add(MediaProgress(user_id=tokenless_user.id, edition_id=library["mayor"].id,
+                         current_time=25.0, duration=100.0))
+    db.commit()
+    assert continue_listening(client, token) == [item_id]
+
+    progress_id = get(client, token, f"/api/me/progress/{item_id}").json()["id"]
+    body = get(client, token,
+               f"/api/me/progress/{progress_id}/remove-from-continue-listening").json()
+    assert body["username"] == tokenless_user.username  # upstream returns the user
+    assert continue_listening(client, token) == []
+    assert get(client, token, f"/api/me/progress/{item_id}").json()[
+        "hideFromContinueListening"] is True
+
+    # listening again brings it back, as upstream does on any position change
+    client.patch(f"/api/me/progress/{item_id}", json={"currentTime": 30.0, "duration": 100.0},
+                 headers={"Authorization": f"Bearer {token}"})
+    assert continue_listening(client, token) == [item_id]
+
+
+def test_remove_item_from_continue_listening_unknown(client, token, library):
+    assert get(client, token,
+               "/api/me/progress/prog_9999/remove-from-continue-listening").status_code == 404
+
+
+def test_remove_series_from_continue_listening(client, token, series_library, tokenless_user):
+    db = series_library["db"]
+    for edition in (series_library["mayor"], series_library["ranger"]):
+        db.add(MediaProgress(user_id=tokenless_user.id, edition_id=edition.id,
+                             current_time=25.0, duration=100.0))
+    db.add(MediaProgress(user_id=tokenless_user.id, edition_id=series_library["hail"].id,
+                         current_time=25.0, duration=100.0))
+    db.commit()
+
+    series_id = f"ser_{series_library['mayor'].book.series_id}"
+    assert get(client, token,
+               f"/api/me/series/{series_id}/remove-from-continue-listening").status_code == 200
+
+    # the whole series goes, the standalone book stays
+    assert continue_listening(client, token) == [f"li_{series_library['hail'].id}"]
+    assert get(client, token,
+               "/api/me/series/ser_9999/remove-from-continue-listening").status_code == 404
+
+
+def test_patch_progress_honours_explicit_dates(client, token, library, tokenless_user):
+    """Clients edit a book's start/finish dates by re-sending the progress row
+    with `createdAt`/`finishedAt`; both reach the shelf entry, which is what is
+    pushed to Hardcover."""
+    db = library["db"]
+    item_id = f"li_{library['hail'].id}"
+    started = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+    finished = datetime(2026, 4, 2, 12, 0, tzinfo=timezone.utc)
+
+    response = client.patch(
+        f"/api/me/progress/{item_id}",
+        json={"currentTime": 100.0, "duration": 100.0, "isFinished": True,
+              "createdAt": int(started.timestamp() * 1000),
+              "finishedAt": int(finished.timestamp() * 1000)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+    db.expire_all()
+    progress = db.query(MediaProgress).filter_by(edition_id=library["hail"].id).one()
+    assert progress.started_at.date() == started.date()
+    assert progress.finished_at.date() == finished.date()
+
+    shelf = db.query(UserBook).filter_by(
+        user_id=tokenless_user.id, book_id=library["hail"].book.id).one()
+    assert shelf.read_state == ReadState.READ
+    assert shelf.started_at == started.date()
+    assert shelf.read_at == finished.date()

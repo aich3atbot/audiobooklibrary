@@ -113,6 +113,46 @@ class User(Base):
     bookmarks: Mapped[list["Bookmark"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    auth_sessions: Mapped[list["AuthSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class AuthSession(Base):
+    """One ABS client's long-lived login: the server side of a refresh token.
+
+    Refresh tokens are stateless JWTs, so without a row here nothing could be
+    revoked — signing out would leave a lost device working for the token's
+    full 30 days. The token itself is never stored, only its SHA-256, so a
+    leaked database hands out no working credentials.
+
+    `last_token_hash` keeps the previous token usable for a short grace period:
+    clients fire concurrent refreshes (several 401s in flight on resume), and
+    the one that loses the race must not destroy the session. See
+    `app/abs/sessions.py`."""
+
+    __tablename__ = "auth_session"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Client-facing session id. Must be a UUID — clients reject other shapes
+    # on DELETE /api/me/sessions/:id.
+    uuid: Mapped[str] = mapped_column(String(36), unique=True, default=lambda: str(uuid4()))
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), index=True)
+    last_token_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    last_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    # Free-text, straight from the request; shown on the client's sessions list.
+    user_agent: Mapped[str | None] = mapped_column(Text)
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="auth_sessions")
 
 
 class Author(Base):
@@ -319,6 +359,11 @@ class MediaProgress(Base):
     current_time: Mapped[float] = mapped_column(Float, default=0.0)
     duration: Mapped[float] = mapped_column(Float, default=0.0)
     is_finished: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # ABS "remove from continue listening": hides the book from that shelf
+    # until progress moves again (app/abs/progress.py clears it).
+    hide_from_continue_listening: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(

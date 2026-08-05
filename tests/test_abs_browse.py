@@ -58,6 +58,50 @@ def test_series_filter_and_sequence_sort(client, token, series_library):
     ]
 
 
+def test_series_filter_orders_by_sequence_for_any_sort(client, token, series_library):
+    """Upstream appends a sequence sort under a series filter, so an
+    unrecognised sort key (Absorb sends `media.metadata.series.sequence`) still
+    comes back in reading order rather than alphabetically."""
+    series_id = f"ser_{series_library['mayor'].book.series_id}"
+    body = items(client, token, filter=f"series.{encode(series_id)}",
+                 sort="media.metadata.series.sequence")
+    assert [r["media"]["metadata"]["title"] for r in body["results"]] == [
+        "The Mayor of Noobtown", "The Ranger of Noobtown",
+    ]
+
+
+def test_series_filter_attaches_series_to_metadata(client, token, series_library):
+    """Under a series filter the minified item carries the filtered series, so
+    clients can badge each book with its number."""
+    series_id = f"ser_{series_library['mayor'].book.series_id}"
+    body = items(client, token, filter=f"series.{encode(series_id)}", sort="sequence")
+    assert [r["media"]["metadata"]["series"] for r in body["results"]] == [
+        {"id": series_id, "name": "Noobtown", "sequence": "1"},
+        {"id": series_id, "name": "Noobtown", "sequence": "2"},
+    ]
+
+    # Only under that filter — a plain listing keeps the minified shape.
+    plain = items(client, token)
+    assert all("series" not in r["media"]["metadata"] for r in plain["results"])
+
+
+def test_series_detail(client, token, series_library):
+    series_id = f"ser_{series_library['mayor'].book.series_id}"
+    for path in (f"/api/libraries/lib_audiobooks/series/{series_id}",
+                 f"/api/series/{series_id}"):
+        body = get(client, token, path, include="progress").json()
+        assert body["id"] == series_id
+        assert body["name"] == "Noobtown"
+        assert body["libraryId"] == "lib_audiobooks"
+        assert body["totalDuration"] > 0
+        assert body["progress"]["libraryItemIds"] == [
+            f"li_{series_library['mayor'].id}", f"li_{series_library['ranger'].id}",
+        ]
+        assert body["progress"]["isFinished"] is False
+
+    assert get(client, token, "/api/series/ser_9999").status_code == 404
+
+
 def test_sequence_sort_ignored_without_series_filter(client, token, series_library):
     """ABS drops a sequence sort outside a series filter — books with no series
     would otherwise all collide on one key."""

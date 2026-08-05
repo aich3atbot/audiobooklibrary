@@ -107,6 +107,7 @@ def apply_progress(
     current_time: float | None = None,
     duration: float | None = None,
     is_finished: bool | None = None,
+    hide_from_continue_listening: bool | None = None,
 ) -> MediaProgress:
     """Upsert one user's progress for an edition. is_finished=None means derive
     it from the remaining time; an explicit value (PATCH /me/progress) wins."""
@@ -132,7 +133,14 @@ def apply_progress(
     if duration:
         row.duration = float(duration)
     if current_time is not None:
+        if row.current_time != float(current_time):
+            # Upstream un-hides a book from Continue Listening the moment its
+            # position moves (MediaProgress.applyProgressUpdate); an explicit
+            # flag in the same request wins and is re-applied by the caller.
+            row.hide_from_continue_listening = False
         row.current_time = float(current_time)
+    if hide_from_continue_listening is not None:
+        row.hide_from_continue_listening = hide_from_continue_listening
 
     if is_finished is None:
         # Playing a finished book again from well before the end is a genuine
@@ -175,3 +183,52 @@ def apply_progress(
 
     _sweep_near_finished(db, user, edition)
     return row
+
+
+def _from_ms(value: object) -> datetime | None:
+    if not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return datetime.fromtimestamp(value / 1000, tz=timezone.utc).replace(tzinfo=None)
+
+
+def set_progress_dates(
+    db: Session,
+    user: User,
+    row: MediaProgress,
+    created_at: object = None,
+    finished_at: object = None,
+) -> None:
+    """Honour explicit dates sent with PATCH /api/me/progress/:id.
+
+    ABS shows a book's *start* date as the progress row's `createdAt`, and
+    clients edit it by re-sending that field (Absorb's "change start date");
+    `finishedAt` edits the finish date the same way. Both are user-visible read
+    state, so mirror them onto the book's shelf entry — that is what reaches
+    Hardcover. A book the user doesn't have on a shelf keeps the dates locally;
+    editing a date is not a reason to add it to their library."""
+    started = _from_ms(created_at)
+    finished = _from_ms(finished_at)
+    if started is None and finished is None:
+        return
+
+    if started is not None:
+        row.started_at = started
+    if finished is not None and row.is_finished:
+        row.finished_at = finished
+    db.commit()
+
+    book = row.edition.book
+    user_book = get_user_book(db, user, book)
+    if user_book is None:
+        return
+    read_at = None
+    if finished is not None and user_book.read_state == ReadState.READ:
+        read_at = finished.date()
+    _set_read_state(
+        db,
+        user,
+        book,
+        user_book.read_state,  # a date edit never moves the shelf
+        read_at=read_at,
+        started_at=started.date() if started else None,
+    )

@@ -67,8 +67,10 @@ def library_items(
     offset = page * limit if limit else 0
     if limit:
         editions = editions[offset : offset + limit]
+    results = [catalogue.item_minified(e) for e in editions]
+    catalogue.attach_filter_series(results, editions, filter_by)
     return {
-        "results": [catalogue.item_minified(e) for e in editions],
+        "results": results,
         "total": total,
         "limit": limit,
         "page": page,
@@ -126,6 +128,37 @@ def library_series(library_id: str, limit: int = 0, page: int = 0,
     return {"results": results, "total": total, "limit": limit, "page": page,
             "sortBy": "name", "sortDesc": False, "filterBy": None,
             "minified": False, "include": ""}
+
+
+def _series_payload(db: Session, series_id: str, user: User, include: str) -> dict:
+    series = catalogue.get_series_by_id(db, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="Series not found")
+    return catalogue.series_json(db, series, user, include)
+
+
+@router.get("/libraries/{library_id}/series/{series_id}")
+def library_series_detail(
+    library_id: str,
+    series_id: str,
+    include: str = "",
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
+    """The series page header. Clients list the books themselves through
+    `/items?filter=series.<id>`; this only carries the series' own fields."""
+    _check_library(library_id)
+    return _series_payload(db, series_id, user, include)
+
+
+@router.get("/series/{series_id}")
+def series_detail(
+    series_id: str,
+    include: str = "",
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
+    return _series_payload(db, series_id, user, include)
 
 
 @router.get("/libraries/{library_id}/authors")

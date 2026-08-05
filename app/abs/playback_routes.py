@@ -8,12 +8,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.abs import catalogue, payloads
 from app.abs.deps import require_abs_user
-from app.abs.progress import apply_progress
+from app.abs.progress import apply_progress, set_progress_dates
 from app.db import get_db
 from app.models import AudioFile, Bookmark, Edition, MediaProgress, User
 
@@ -254,15 +255,23 @@ async def update_progress(
         )
         if effective_duration:
             current_time = float(body["progress"]) * effective_duration
-    await run_in_threadpool(
-        apply_progress,
-        db,
-        user,
-        edition,
-        current_time=current_time,
-        duration=duration,
-        is_finished=body.get("isFinished"),
-    )
+    hidden = body.get("hideFromContinueListening")
+
+    def update() -> None:
+        row = apply_progress(
+            db,
+            user,
+            edition,
+            current_time=current_time,
+            duration=duration,
+            is_finished=body.get("isFinished"),
+            hide_from_continue_listening=hidden if isinstance(hidden, bool) else None,
+        )
+        set_progress_dates(
+            db, user, row, body.get("createdAt"), body.get("finishedAt")
+        )
+
+    await run_in_threadpool(update)
     return Response(status_code=200)
 
 
@@ -277,11 +286,71 @@ def get_progress(
     return catalogue.progress_json(progress, user)
 
 
+def _get_progress(db: Session, user: User, progress_id: str) -> MediaProgress:
+    """`prog_<id>`, and only the requesting user's own row — upstream looks the
+    id up on the user, so someone else's progress is a 404, not a 403."""
+    row = None
+    if progress_id.startswith("prog_"):
+        try:
+            row = db.get(MediaProgress, int(progress_id[5:]))
+        except ValueError:
+            row = None
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Progress not found")
+    return row
+
+
+@router.delete("/me/progress/{progress_id}")
+def delete_progress(
+    progress_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
+    """Drop a progress row. Read state is book-level and lives on Hardcover,
+    so this clears the listening position only — it does not un-read the book."""
+    row = _get_progress(db, user, progress_id)
+    db.delete(row)
+    db.commit()
+    return Response(status_code=200)
+
+
+@router.get("/me/progress/{progress_id}/remove-from-continue-listening")
+def hide_progress_from_continue_listening(
+    progress_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
+    row = _get_progress(db, user, progress_id)
+    row.hide_from_continue_listening = True
+    db.commit()
+    return payloads.user_json(db, user)
+
+
+@router.get("/me/series/{series_id}/remove-from-continue-listening")
+def hide_series_from_continue_listening(
+    series_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_abs_user),
+):
+    """Upstream keeps a per-user list of series hidden from its *Continue
+    Series* shelf. We serve no such shelf, so the closest honest behaviour is
+    to hide the series' own books from Continue Listening."""
+    series = catalogue.get_series_by_id(db, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="Series not found")
+    edition_ids = {e.id for e in catalogue.series_editions(db, series)}
+    for row in db.scalars(
+        select(MediaProgress).where(MediaProgress.user_id == user.id)
+    ):
+        if row.edition_id in edition_ids:
+            row.hide_from_continue_listening = True
+    db.commit()
+    return payloads.user_json(db, user)
+
+
 def _user_bookmark(
     db: Session, user: User, edition: Edition, time: float
 ) -> Bookmark | None:
-    from sqlalchemy import select
-
     return db.scalar(
         select(Bookmark).where(
             Bookmark.user_id == user.id,

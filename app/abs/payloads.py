@@ -2,7 +2,7 @@
 Shapes are pinned in docs/abs-api-contract.md — change them only against source."""
 
 import time
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -19,6 +19,13 @@ LIBRARY_CREATED_AT_MS = 1704067200000  # fixed epoch; apps only display this
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def epoch_ms(dt: datetime | None) -> int | None:
+    """Stored timestamps are naive UTC; clients want epoch milliseconds."""
+    if dt is None:
+        return None
+    return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
 def item_id(edition_id: int) -> str:
@@ -87,13 +94,16 @@ def server_settings() -> dict[str, Any]:
 
 
 def user_json(db: Session, user: User, minimal: bool = False) -> dict[str, Any]:
-    """ABS user.toOldJSONForBrowser equivalent. Every account gets root
-    permissions — apps only gate features on it (deliberate simplification)."""
+    """ABS user.toOldJSONForBrowser equivalent. Every account is a plain
+    "user": clients unlock their whole server-administration UI for
+    root/admin, and we serve none of those endpoints, so advertising it would
+    only offer screens that 404. Library permissions below are all granted —
+    apps gate playback and downloads on those."""
     json: dict[str, Any] = {
         "id": user.uuid,
         "username": user.username,
         "email": None,
-        "type": "root",
+        "type": "user",
         "token": tokens.create_legacy_token(user),
         "isOldToken": False,
         "mediaProgress": media_progress_list(db, user),

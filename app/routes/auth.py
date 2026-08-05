@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from app.abs.routes import abs_login
+from app.abs import sessions
+from app.abs.routes import REFRESH_COOKIE, abs_login, refresh_token_from
 from app.auth import (
     SESSION_IS_ADMIN,
     SESSION_USER_ID,
@@ -69,6 +70,30 @@ async def login(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/logout")
-def logout(request: Request):
+def logout(request: Request, allDevices: str = "", db: Session = Depends(get_db)):  # noqa: N803
+    """Sign out. Two callers share this route: the UI form (cookie session,
+    wants the login page back) and ABS clients (refresh token in a header,
+    want JSON). Revoking the session row is what makes it stick — the tokens
+    themselves are stateless and would otherwise keep working for 30 days.
+
+    `?allDevices=1` drops every session the user has, not just this one."""
     request.session.clear()
-    return RedirectResponse(url="/login", status_code=303)
+
+    refresh_token = refresh_token_from(request)
+    revoked = sessions.revoke(db, refresh_token) if refresh_token else None
+    if revoked is not None and allDevices == "1":
+        user = db.get(User, revoked.user_id)
+        if user is not None:
+            sessions.revoke_all(db, user)
+
+    wants_json = (
+        request.headers.get("x-refresh-token") is not None
+        or request.headers.get("authorization", "").lower().startswith("bearer ")
+    )
+    response = (
+        JSONResponse({"success": True})
+        if wants_json
+        else RedirectResponse(url="/login", status_code=303)
+    )
+    response.delete_cookie(REFRESH_COOKIE)
+    return response
