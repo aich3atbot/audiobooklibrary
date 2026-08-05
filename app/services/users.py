@@ -133,7 +133,7 @@ def delete_user(session: Session, user: User, delete_disk_ids: set[int]) -> Dele
 
     # attribution on the shared Activity page becomes "deleted user"
     session.execute(update(Release).where(Release.user_id == user.id).values(user_id=None))
-    session.delete(user)  # cascades UserBook, MediaProgress, Bookmark
+    session.delete(user)  # cascades UserBook, MediaProgress, Bookmark, AuthSession
     session.commit()
     logger.info(
         "Deleted user %s: %d book(s) removed from disk, %d metadata-only, %d left available",

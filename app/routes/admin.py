@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from app.abs import sessions
 from app.auth import ADMIN_USERNAME, require_admin
 from app.db import get_db
 from app.models import User
@@ -101,6 +102,12 @@ def change_password(
         return _users_page(request, db, "Password must not be empty.", 422)
     user.password_hash = hash_password(password)
     db.commit()
+    # A reset is how a compromised account gets taken back, so the old password's
+    # logins have to die with it: without this an ABS client signed in before the
+    # reset keeps working for its refresh token's full 30 days. Browser sessions
+    # are signed cookies with no server-side record, so they are NOT covered —
+    # disable the account instead if you need to lock someone out of the UI.
+    sessions.revoke_all(db, user)
     return RedirectResponse(url="/admin/users", status_code=303)
 
 

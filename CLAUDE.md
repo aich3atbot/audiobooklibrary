@@ -170,7 +170,13 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   not "simplify" the refresh path back to signature-only, or a sign-out on a lost device
   becomes a no-op for 30 days. Rotation keeps the previous token alive for a 10-minute
   grace window (clients fire concurrent refreshes; the loser must survive), and refresh
-  tokens carry a random `jti` so two logins in the same second can't collide. The multi-user conversion is in progress — see plan.md
+  tokens carry a random `jti` so two logins in the same second can't collide. An admin
+  password reset revokes that user's sessions. **Browser sessions are not in the table** —
+  they are signed cookies with no server-side record, so a UI login cannot be revoked
+  individually (disabling the account is the lockout lever; rotating
+  `CONFIG_DIR/session_secret` is the blunt one, and it invalidates every ABS token too
+  since they share the secret). Putting UI logins in `auth_session` would close that and
+  make `/api/me/sessions` list browsers as upstream does; it is a deliberate not-yet. The multi-user conversion is in progress — see plan.md
   "Multi-user conversion" for design and remaining milestones.
 - **Config via env vars** only — see `.env.example` for the full list (auth, Hardcover,
   indexer, download client, paths, intervals, import mode). `DOWNLOAD_DIR` must be the

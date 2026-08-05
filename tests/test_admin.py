@@ -128,6 +128,24 @@ def test_change_password(admin_client, other_user, db_session, anon_client):
     assert empty.status_code == 422
 
 
+def test_change_password_revokes_abs_logins(admin_client, other_user, anon_client):
+    """Taking an account back has to end the sessions opened with the old
+    password — an ABS client would otherwise refresh for another 30 days."""
+    refresh = anon_client.post(
+        "/login",
+        json={"username": other_user.username, "password": "erin-pw"},
+        headers={"x-return-tokens": "true"},
+    ).json()["user"]["refreshToken"]
+    assert anon_client.post(
+        "/auth/refresh", headers={"x-refresh-token": refresh}).status_code == 200
+
+    admin_client.post(
+        f"/admin/users/{other_user.id}/password", data={"password": "new-pw"}
+    )
+    assert anon_client.post(
+        "/auth/refresh", headers={"x-refresh-token": refresh}).status_code == 401
+
+
 def test_change_token(admin_client, other_user, db_session):
     response = admin_client.post(
         f"/admin/users/{other_user.id}/token",
