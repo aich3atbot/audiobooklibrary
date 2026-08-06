@@ -5,6 +5,12 @@ virtual admin, who only sees user administration). The login session lives
 in a signed cookie (Starlette SessionMiddleware); regular users are
 re-checked against the database on every request so disabling an account
 locks it out immediately.
+
+*Limited* accounts (`UserRole.LIMITED`) are ABS-only: they authenticate over
+the API surface (`/api/`, `/auth/`) but never here. The per-request re-check
+is what enforces that — a user demoted mid-session loses the UI on their very
+next request, which matters because browser sessions are signed cookies with
+no server-side row to revoke.
 """
 
 import secrets
@@ -32,6 +38,11 @@ OPEN_PATHS = {"/login", "/logout", "/healthz", "/status", "/ping", "/healthcheck
 # ABS surface that carries no token at all (app/abs/public_routes.py) — a
 # redirect to /login there feeds an HTML page to the app's audio player.
 OPEN_PREFIXES = ("/static/", "/api/", "/auth/", "/public/")
+
+# Query key on /login explaining why the UI turned an account away. A key
+# rather than a message so nothing arbitrary reaches the template.
+APP_ONLY_ERROR = "app_only"
+APP_ONLY_MESSAGE = "This account can only be used with an Audiobookshelf app."
 
 
 def resolve_session_secret() -> str:
@@ -70,6 +81,10 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = db.get(User, user_id) if user_id is not None else None
     if user is None or not user.enabled:
         raise HTTPException(status_code=401, detail="Not logged in")
+    # The middleware already turned limited accounts away; this is the
+    # backstop for any UI route reached without passing through it.
+    if user.is_limited:
+        raise HTTPException(status_code=403, detail=APP_ONLY_MESSAGE)
     return user
 
 
@@ -94,23 +109,30 @@ class RequireAuthMiddleware(BaseHTTPMiddleware):
                 return RedirectResponse(url="/admin/users", status_code=303)
             return await call_next(request)
 
+        limited = False
         user_id = request.session.get(SESSION_USER_ID)
         if user_id is not None:
             with get_sessionmaker()() as db:
                 user = db.get(User, user_id)
-            if user is not None and user.enabled:
+            if user is not None and user.enabled and not user.is_limited:
                 request.state.user_id = user.id
                 request.state.username = user.username
                 if path.startswith("/admin"):
                     return RedirectResponse(url="/", status_code=303)
                 return await call_next(request)
-            # Deleted or disabled mid-session: drop the stale session.
+            # Deleted, disabled or demoted mid-session: drop the stale session.
+            limited = user is not None and user.is_limited
             request.session.clear()
 
         # HTMX fragment requests can't render a redirect target themselves;
         # tell htmx to do a full-page redirect instead.
         if request.headers.get("hx-request") == "true":
             return Response(status_code=401, headers={"HX-Redirect": "/login"})
+
+        # A limited account is told why it was turned away and gets no ?next=:
+        # sending it back here after login would only bounce it again.
+        if limited:
+            return RedirectResponse(url=f"/login?error={APP_ONLY_ERROR}", status_code=303)
 
         target = request.url.path
         if request.url.query:

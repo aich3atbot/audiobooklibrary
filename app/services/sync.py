@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.clients.hardcover import HardcoverClient, HardcoverError
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.models import AppState, Author, Book, ReadState, Series, User, UserBook
+from app.models import AppState, Author, Book, ReadState, Series, User, UserBook, UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -340,6 +340,10 @@ def run_sync_for_user(user_id: int) -> dict[str, int]:
         user = session.get(User, user_id)
         if user is None:
             raise ValueError(f"user {user_id} not found")
+        # A limited account has no Hardcover identity at all, so this is not
+        # a misconfiguration to report — there is simply nothing to sync.
+        if user.is_limited:
+            return {"created": 0, "updated": 0, "total": 0}
         if not user.hardcover_token:
             user.last_sync_result = "error: no Hardcover token set"
             session.commit()
@@ -416,7 +420,7 @@ def _run_with_first_token(work) -> int:
     with get_sessionmaker()() as session:
         user = session.scalars(
             select(User)
-            .where(User.enabled, User.hardcover_token != "")
+            .where(User.enabled, User.role == UserRole.FULL, User.hardcover_token != "")
             .order_by(User.id)
         ).first()
         if user is None:
@@ -441,7 +445,7 @@ def run_sync_all() -> dict[str, int]:
     with get_sessionmaker()() as session:
         user_ids = session.scalars(
             select(User.id)
-            .where(User.enabled, User.hardcover_token != "")
+            .where(User.enabled, User.role == UserRole.FULL, User.hardcover_token != "")
             .order_by(User.id)
         ).all()
 

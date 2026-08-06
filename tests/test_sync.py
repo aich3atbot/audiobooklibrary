@@ -371,3 +371,28 @@ def test_backfill_hardcover_slugs_fills_books_and_series(clean_db):
 
         # nothing left to look up: no further requests
         assert backfill_hardcover_slugs(clean_db, client) == 0
+
+
+@respx.mock
+def test_sync_skips_a_limited_user(clean_db, limited_user):
+    """A limited account has no Hardcover identity, so the sync pass must not
+    reach for one — not even if a token somehow ends up on the row. And its
+    skip is not an error to report: last_sync_result stays untouched."""
+    from app.services.sync import run_sync_all, run_sync_for_user
+
+    limited_user.hardcover_token = "limited-token"
+    limited_user.last_sync_result = None
+    clean_db.commit()
+
+    route = respx.post(API_URL).mock(return_value=me_response([]))
+
+    assert run_sync_for_user(limited_user.id) == {"created": 0, "updated": 0, "total": 0}
+    run_sync_all()
+
+    # other accounts in the shared test database may legitimately sync; none
+    # of the calls may carry this user's token
+    tokens_used = [c.request.headers.get("authorization") for c in route.calls]
+    assert "Bearer limited-token" not in tokens_used
+
+    clean_db.expire_all()
+    assert limited_user.last_sync_result is None

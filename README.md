@@ -15,7 +15,8 @@ Self-hosted audiobook manager, in a single container:
   activity page for downloads and import failures, settings page with connection checks.
 - **User accounts** — login is mandatory (30-day session cookie). The `admin` account
   (password from `ADMIN_PASSWORD`) manages users; each user gets their own password and
-  Hardcover token.
+  Hardcover token. *Limited* accounts are listeners: they sign in from Audiobookshelf apps
+  only — no web UI, no Hardcover.
 
 See `plan.md` for the full design.
 
@@ -43,6 +44,13 @@ docker compose up --build
 Open http://localhost:8000, log in as `admin` (password from `ADMIN_PASSWORD`) and create
 user accounts — each with its own password and Hardcover token. The app syncs every user's
 Hardcover library on startup and every `SYNC_INTERVAL_MINUTES` after that.
+
+Each account is **full** or **limited**. A full account is the normal one: the web UI, its
+own Hardcover token, searching and downloading. A **limited** account is for people who only
+want to listen — it signs in from Audiobookshelf apps, plays anything in the library and
+keeps its own progress and bookmarks, but cannot log in to the web UI, holds no Hardcover
+token, and never changes anything on Hardcover. Switch an account between the two at any
+time on the Users page (demoting clears its Hardcover token).
 
 Volumes:
 
@@ -110,12 +118,13 @@ app tells you the torrent may still be running so you can remove it yourself.
 The server speaks enough of the [Audiobookshelf](https://www.audiobookshelf.org/) API that
 ABS client apps (the official Android/iOS app, and generally Plappa/ShelfPlayer) can
 connect directly: add it as a server using the same URL as the web UI and log in with
-a user account (the admin account has no library and cannot log in to apps). Imported
-books appear as an "Audiobooks" library with
+a user account, full or limited (the admin account has no library and cannot log in to
+apps). Imported books appear as an "Audiobooks" library with
 covers, series, and chapters; streaming (with seeking), offline downloads, and listening
 progress all work. Progress syncs across devices, and finishing a book in the app marks
-it read on Hardcover automatically. Audio is always direct-played (no transcoding) —
-m4b/m4a/mp3/flac/ogg all play natively in the apps.
+it read on Hardcover automatically (for a limited account, which has no Hardcover, listening
+stays local: progress and "finished" work exactly as they do for anyone else). Audio is
+always direct-played (no transcoding) — m4b/m4a/mp3/flac/ogg all play natively in the apps.
 
 ## Importing an existing collection
 

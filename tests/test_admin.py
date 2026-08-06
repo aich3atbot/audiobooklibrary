@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import select
 
-from app.models import Bookmark, DownloadState, Edition, User
+from app.models import Bookmark, DownloadState, Edition, User, UserRole
 from tests.conftest import cheap_password_hash
 
 
@@ -155,6 +155,69 @@ def test_change_token(admin_client, other_user, db_session):
     assert response.status_code == 303
     db_session.refresh(other_user)
     assert other_user.hardcover_token == "new-token"
+
+
+def test_create_limited_user_gets_no_token(admin_client, db_session):
+    """"Limited means no Hardcover" is an invariant: a token posted alongside
+    the limited role is dropped, not stored."""
+    db_session.query(User).filter(User.username == "gina").delete()
+    db_session.commit()
+
+    response = admin_client.post(
+        "/admin/users",
+        data={
+            "username": "gina",
+            "password": "gina-pw",
+            "role": "limited",
+            "hardcover_token": "tok",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    created = db_session.scalar(select(User).where(User.username == "gina"))
+    assert created.role == UserRole.LIMITED
+    assert created.hardcover_token == ""
+
+    page = admin_client.get("/admin/users")
+    assert "limited" in page.text
+
+    db_session.delete(created)
+    db_session.commit()
+
+
+def test_change_role_clears_the_token_on_demotion(admin_client, other_user, db_session):
+    other_user.hardcover_token = "tok"
+    db_session.commit()
+
+    response = admin_client.post(
+        f"/admin/users/{other_user.id}/role",
+        data={"role": "limited"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    db_session.refresh(other_user)
+    assert other_user.role == UserRole.LIMITED
+    assert other_user.hardcover_token == ""
+
+    # promoting back leaves the token empty for the admin to set
+    admin_client.post(f"/admin/users/{other_user.id}/role", data={"role": "full"})
+    db_session.refresh(other_user)
+    assert other_user.role == UserRole.FULL
+    assert other_user.hardcover_token == ""
+
+
+def test_token_change_refused_for_a_limited_user(admin_client, other_user, db_session):
+    other_user.role = UserRole.LIMITED
+    db_session.commit()
+
+    response = admin_client.post(
+        f"/admin/users/{other_user.id}/token", data={"hardcover_token": "tok"}
+    )
+    assert response.status_code == 422
+    assert "no Hardcover access" in response.text
+    db_session.refresh(other_user)
+    assert other_user.hardcover_token == ""
 
 
 def test_delete_user(admin_client, other_user, db_session):

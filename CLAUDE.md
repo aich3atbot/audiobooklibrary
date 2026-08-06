@@ -178,6 +178,20 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   since they share the secret). Putting UI logins in `auth_session` would close that and
   make `/api/me/sessions` list browsers as upstream does; it is a deliberate not-yet. The multi-user conversion is in progress — see plan.md
   "Multi-user conversion" for design and remaining milestones.
+- **Limited accounts are ABS-only** (`user.role`: `full` | `limited`; see plan.md "Limited
+  accounts"). A limited user logs in from Audiobookshelf apps, plays everything available
+  and keeps its own progress/bookmarks — the ABS surface has **no role checks at all**, and
+  needs none: the catalogue is library-wide and progress-driven. What changes is everywhere
+  else. It cannot use the web UI: the middleware turns it away with `/login?error=app_only`
+  and the login *form* answers 403 (right password, wrong door — the JSON branch is theirs).
+  Enforcement is the middleware's per-request row re-read, so a demotion locks an open
+  browser session out immediately; ABS sessions are deliberately **not** revoked on
+  demotion. It holds **no Hardcover token** — forced empty on create, cleared on demotion,
+  refused by the token endpoint — and listening skips read state entirely via one guard in
+  `_set_read_state` (`app/abs/progress.py`), the choke point every progress route funnels
+  through: no `user_book` row, nothing stuck at `pending_push`, no push. Everything else in
+  `apply_progress` still runs, the near-finish sweep included — don't guard higher up or a
+  limited user's finished books stop leaving Continue Listening.
 - **Config via env vars** only — see `.env.example` for the full list (auth, Hardcover,
   indexer, download client, paths, intervals, import mode). `DOWNLOAD_DIR` must be the
   directory the torrent client writes *completed* downloads to. The session-cookie secret

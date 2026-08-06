@@ -27,7 +27,7 @@ finished audiobooks into a clean library folder. Single container, Python, SQLit
 | Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
 | Read-state sync | **Two-way**: UI changes push to Hardcover immediately; a periodic sync pulls Hardcover changes down. Hardcover is the source of truth for read state. |
 | Web stack | **FastAPI + Jinja2 + HTMX** (server-rendered, HTMX for in-page updates). |
-| Users | **Multi-user, mandatory login** (signed session cookie). A virtual `admin` account (password from `ADMIN_PASSWORD`, required at startup) only administers users: add, enable/disable, delete, change passwords/tokens. Regular users are DB rows (scrypt password hashes) created by the admin, each with their own Hardcover token. "admin" is a reserved username. See "Multi-user conversion" below for the full design. |
+| Users | **Multi-user, mandatory login** (signed session cookie). A virtual `admin` account (password from `ADMIN_PASSWORD`, required at startup) only administers users: add, enable/disable, delete, change passwords/tokens. Regular users are DB rows (scrypt password hashes) created by the admin, each with their own Hardcover token. An account is **full** (web UI + Hardcover) or **limited** (Audiobookshelf apps only — see "Limited accounts" below). "admin" is a reserved username. See "Multi-user conversion" below for the full design. |
 | Configuration | Environment variables (12-factor), with a `.env` file for local dev. |
 
 ## Architecture
@@ -59,7 +59,8 @@ One FastAPI process running:
 ## Data model (SQLite)
 
 - **user** — id, uuid (ABS userId), username (unique), password_hash (scrypt), hardcover_token,
-  enabled, created_at, last_sync_at, last_sync_result. The `admin` account is virtual — never a row.
+  role (`full` | `limited` — see "Limited accounts"), enabled, created_at, last_sync_at,
+  last_sync_result. The `admin` account is virtual — never a row.
 - **author** — id, hardcover_id, name, image_url (Hardcover's author photo; NULL = never
   looked up, "" = Hardcover has none)
 - **series** — id, hardcover_id, name, hardcover_slug
@@ -557,6 +558,30 @@ Milestones (commit each; the app stays runnable throughout):
 4. ✅ **ABS per-user** — progress/bookmarks/sessions filtered by the authenticated user.
 5. ✅ **Imports rework + delete-user orphan review.**
 6. ✅ **Squash migrations + final docs pass.**
+
+## Limited accounts (complete)
+
+`user.role` is `full` (everything above, the default) or `limited`: a listener who reaches
+the library only through Audiobookshelf apps.
+
+- **What a limited account can do**: exactly the ABS surface — log in over JSON, browse and
+  play every available edition, keep its own progress and bookmarks, sign devices in and
+  out. Nothing in `app/abs/` distinguishes it; the catalogue is library-wide and driven by
+  `media_progress`, which never touched `user_book` anyway.
+- **What it cannot do**: the web UI. `RequireAuthMiddleware` turns it away (`/login?error=app_only`)
+  and the login form refuses it with 403 — the credentials are valid, this door is not
+  theirs. Because the middleware re-reads the row per request, demoting a signed-in user
+  locks them out on their next request, which matters as browser sessions are signed
+  cookies with nothing to revoke. ABS sessions are deliberately left alive: app access is
+  precisely what a limited account keeps.
+- **No Hardcover, enforced**: the token is forced empty on create and cleared on demotion,
+  `POST /admin/users/{id}/token` refuses (422), and the sync selects filter on the role.
+  Listening skips read state entirely — `_set_read_state` in `app/abs/progress.py` returns
+  early, the single choke point every progress route funnels through — so no `user_book`
+  row is created and nothing is left `pending_push`. The rest of `apply_progress` still
+  runs: `is_finished`, resume, and the near-finish sweep behave exactly as for a full user.
+- **Promotion/demotion** keeps existing `user_book` rows, so promoting a demoted account
+  restores its library; the admin then sets a token.
 
 ## Multi-edition support (complete)
 

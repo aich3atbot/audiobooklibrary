@@ -522,6 +522,72 @@ def test_rewinding_into_the_credits_does_not_unfinish(client, token, library, us
     assert route.call_count == 0
 
 
+@pytest.fixture
+def limited_token(anon_client, limited_user):
+    """An ABS access token for a limited account. Not built on the `token`
+    fixture: that one rides the UI-logged-in `client`, a door limited accounts
+    do not have."""
+    from tests.conftest import TEST_PASSWORD, TEST_USERNAME
+
+    response = anon_client.post(
+        "/login",
+        json={"username": TEST_USERNAME, "password": TEST_PASSWORD},
+        headers={"x-return-tokens": "true"},
+    )
+    return response.json()["user"]["accessToken"]
+
+
+@respx.mock
+def test_limited_user_listens_without_touching_read_state(
+    anon_client, limited_token, library, limited_user
+):
+    """A limited account gets the full listening experience — progress,
+    finishing, resume — and no shelf entry at all: no user_book row, nothing
+    left pending_push, and not a single Hardcover call."""
+    route = hardcover_route()
+    db = library["db"]
+    edition = library["mayor"]
+    session_id = play(anon_client, limited_token, f"li_{edition.id}").json()["id"]
+
+    # past the start threshold, then all the way to the end
+    sync(anon_client, limited_token, session_id, 305.0, 36000.0)
+    sync(anon_client, limited_token, session_id, 35995.0, 36000.0)
+
+    db.expire_all()
+    progress = db.query(MediaProgress).filter_by(edition_id=edition.id).one()
+    assert progress.user_id == limited_user.id
+    assert progress.current_time == 35995.0
+    assert progress.is_finished is True
+    assert progress.finished_at is not None
+
+    assert db.query(UserBook).filter_by(user_id=limited_user.id).count() == 0
+    assert route.call_count == 0
+
+
+@respx.mock
+def test_limited_user_still_gets_the_near_finish_sweep(
+    anon_client, limited_token, library, limited_user
+):
+    """Only the read-state half is skipped: a book left in the credits is
+    still marked finished once another book starts, so the apps stop offering
+    it under Continue Listening."""
+    route = hardcover_route()
+    db = library["db"]
+    mayor, hail = library["mayor"], library["hail"]
+    db.add(MediaProgress(user_id=limited_user.id, edition_id=mayor.id,
+                         current_time=34600.0, duration=36000.0))
+    db.commit()
+
+    post(anon_client, limited_token, "/api/session/local",
+         json={"libraryItemId": f"li_{hail.id}", "currentTime": 10.0, "duration": 3600.0})
+
+    db.expire_all()
+    progress = db.query(MediaProgress).filter_by(edition_id=mayor.id).one()
+    assert progress.is_finished is True
+    assert db.query(UserBook).filter_by(user_id=limited_user.id).count() == 0
+    assert route.call_count == 0
+
+
 def test_start_threshold_without_a_hardcover_token(client, token, library, tokenless_user):
     db = library["db"]
     edition = library["mayor"]

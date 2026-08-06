@@ -94,12 +94,13 @@ def user(db_session):
     across tests (the session-scoped DB persists)."""
     from sqlalchemy import select
 
-    from app.models import User
+    from app.models import User, UserRole
 
     existing = db_session.scalar(select(User).where(User.username == TEST_USERNAME))
     if existing is not None:
-        if not existing.enabled:
+        if not existing.enabled or existing.is_limited:
             existing.enabled = True
+            existing.role = UserRole.FULL
             db_session.commit()
         return existing
     account = User(
@@ -118,6 +119,21 @@ def tokenless_user(user, db_session):
     user.hardcover_token = ""
     db_session.commit()
     yield user
+    user.hardcover_token = "hc-token"
+    db_session.commit()
+
+
+@pytest.fixture
+def limited_user(user, db_session):
+    """The default user demoted to a limited (ABS-only) account: no web UI,
+    no Hardcover token."""
+    from app.models import UserRole
+
+    user.role = UserRole.LIMITED
+    user.hardcover_token = ""
+    db_session.commit()
+    yield user
+    user.role = UserRole.FULL
     user.hardcover_token = "hc-token"
     db_session.commit()
 

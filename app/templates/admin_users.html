@@ -21,6 +21,7 @@
     <thead>
         <tr>
             <th>Username</th>
+            <th>Role</th>
             <th>Status</th>
             <th>Hardcover token</th>
             <th>Last sync</th>
@@ -32,8 +33,12 @@
         {% for user in users %}
         <tr>
             <td>{{ user.username }}</td>
+            <td>{{ user.role.value }}</td>
             <td>{{ "enabled" if user.enabled else "disabled" }}</td>
-            <td>{{ "set" if user.hardcover_token else "not set" }}</td>
+            <td>
+                {%- if user.is_limited %}—
+                {%- else %}{{ "set" if user.hardcover_token else "not set" }}{% endif %}
+            </td>
             <td>{{ user.last_sync_result or "—" }}</td>
             <td>{{ user.created_at.strftime("%Y-%m-%d") }}</td>
             <td class="user-actions">
@@ -51,9 +56,10 @@
             </td>
         </tr>
         <tr class="user-edit">
-            <td colspan="6">
+            <td colspan="7">
                 <details>
-                    <summary>Change password / Hardcover token</summary>
+                    <summary>Change password / role{% if not user.is_limited %} /
+                        Hardcover token{% endif %}</summary>
                     <div class="grid">
                         <form method="post" action="/admin/users/{{ user.id }}/password">
                             <label>
@@ -63,6 +69,21 @@
                             </label>
                             <button type="submit">Change password</button>
                         </form>
+                        <form method="post" action="/admin/users/{{ user.id }}/role">
+                            <label>
+                                Role
+                                <select name="role">
+                                    <option value="full"
+                                        {{ "selected" if not user.is_limited }}>
+                                        Full — web UI and Hardcover</option>
+                                    <option value="limited"
+                                        {{ "selected" if user.is_limited }}>
+                                        Limited — audiobook apps only</option>
+                                </select>
+                            </label>
+                            <button type="submit">Change role</button>
+                        </form>
+                        {% if not user.is_limited %}
                         <form method="post" action="/admin/users/{{ user.id }}/token">
                             <label>
                                 Hardcover token
@@ -71,12 +92,13 @@
                             </label>
                             <button type="submit">Update token</button>
                         </form>
+                        {% endif %}
                     </div>
                 </details>
             </td>
         </tr>
         {% else %}
-        <tr><td colspan="6">No users yet — add the first one below.</td></tr>
+        <tr><td colspan="7">No users yet — add the first one below.</td></tr>
         {% endfor %}
     </tbody>
 </table>
@@ -93,12 +115,23 @@
                 Password
                 <input type="password" name="password" autocomplete="new-password" required>
             </label>
+            <label>
+                Role
+                <select name="role">
+                    <option value="full" selected>Full — web UI and Hardcover</option>
+                    <option value="limited">Limited — audiobook apps only</option>
+                </select>
+            </label>
         </div>
         <label>
             Hardcover token
             <input name="hardcover_token" autocomplete="off"
                    placeholder="bearer token from hardcover.app settings">
         </label>
+        <small>A limited account signs in from Audiobookshelf apps only: it listens to the
+            whole library and keeps its own progress, but has no web UI and no Hardcover
+            token (any token entered above is ignored, and switching an account to limited
+            clears the one it has).</small>
         <button type="submit">Add user</button>
     </form>
 </article>

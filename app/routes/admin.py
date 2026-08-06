@@ -10,13 +10,20 @@ from starlette.concurrency import run_in_threadpool
 from app.abs import sessions
 from app.auth import ADMIN_USERNAME, require_admin
 from app.db import get_db
-from app.models import User
+from app.models import User, UserRole
 from app.passwords import hash_password
 from app.services.users import delete_user as delete_user_service
 from app.services.users import review_orphans
 from app.templating import templates
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
+
+LIMITED_NO_TOKEN = "Limited accounts have no Hardcover access."
+
+
+def _parse_role(value: str) -> UserRole:
+    """Anything unrecognised is a full account — the form's default."""
+    return UserRole.LIMITED if value == UserRole.LIMITED.value else UserRole.FULL
 
 
 def _users_page(
@@ -47,6 +54,7 @@ def create_user(
     username: str = Form(""),
     password: str = Form(""),
     hardcover_token: str = Form(""),
+    role: str = Form(UserRole.FULL.value),
 ):
     username = username.strip()
     if not username or not password:
@@ -54,10 +62,14 @@ def create_user(
     if username.lower() == ADMIN_USERNAME:
         return _users_page(request, db, '"admin" is reserved.', 422)
 
+    parsed_role = _parse_role(role)
     user = User(
         username=username,
         password_hash=hash_password(password),
-        hardcover_token=hardcover_token.strip(),
+        # "limited means no Hardcover" is an invariant, not a convention: a
+        # token posted alongside the limited role is dropped, not stored.
+        hardcover_token="" if parsed_role == UserRole.LIMITED else hardcover_token.strip(),
+        role=parsed_role,
     )
     db.add(user)
     try:
@@ -113,12 +125,37 @@ def change_password(
 
 @router.post("/users/{user_id}/token")
 def change_token(
+    request: Request,
     user_id: int,
     db: Session = Depends(get_db),
     hardcover_token: str = Form(""),
 ):
     user = _get_user(db, user_id)
+    if user.is_limited:
+        return _users_page(request, db, LIMITED_NO_TOKEN, 422)
     user.hardcover_token = hardcover_token.strip()
+    db.commit()
+    return RedirectResponse(url="/admin/users", status_code=303)
+
+
+@router.post("/users/{user_id}/role")
+def change_role(
+    user_id: int,
+    db: Session = Depends(get_db),
+    role: str = Form(UserRole.FULL.value),
+):
+    """Switch an account between full and limited.
+
+    Demoting clears the Hardcover token — the account loses its Hardcover
+    identity, and a stored credential nothing reads is just a liability. Their
+    existing user_book rows are left alone so promoting them back restores
+    their library. ABS sessions are deliberately NOT revoked: app access is
+    precisely what a limited account keeps, and the UI lockout is immediate
+    anyway (the middleware re-checks the row per request)."""
+    user = _get_user(db, user_id)
+    user.role = _parse_role(role)
+    if user.is_limited:
+        user.hardcover_token = ""
     db.commit()
     return RedirectResponse(url="/admin/users", status_code=303)
 

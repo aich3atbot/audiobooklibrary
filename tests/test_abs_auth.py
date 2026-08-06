@@ -80,6 +80,23 @@ def test_json_login_admin_rejected(anon_client):
     assert response.status_code == 401
 
 
+def test_limited_user_logs_in_like_any_other(anon_client, limited_user):
+    """The whole point of a limited account: the ABS surface is unchanged for
+    it, only the web UI and Hardcover are gone."""
+    response = abs_login(anon_client)
+    assert response.status_code == 200
+    payload_user = response.json()["user"]
+    assert payload_user["id"] == limited_user.uuid
+    assert payload_user["type"] == "user"
+    assert payload_user["accessToken"]
+    assert payload_user["refreshToken"]
+
+    access = payload_user["accessToken"]
+    headers = {"Authorization": f"Bearer {access}"}
+    assert anon_client.get("/api/me", headers=headers).status_code == 200
+    assert anon_client.post("/api/authorize", headers=headers).status_code == 200
+
+
 def test_form_login_still_works(anon_client, user):
     response = anon_client.post(
         "/login",

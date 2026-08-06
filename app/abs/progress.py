@@ -57,7 +57,15 @@ def near_finish_position(duration: float) -> float:
 
 def _set_read_state(db: Session, user: User, book, state: ReadState, **dates) -> None:
     """Push a read-state change, never failing the progress sync that caused
-    it (update_read_state leaves the row pending_push for the sync loop)."""
+    it (update_read_state leaves the row pending_push for the sync loop).
+
+    The single choke point through which listening reaches read state, so it
+    is also where limited accounts stop: they have no Hardcover identity, and
+    a shelf entry nothing will ever drain is just a row stuck at
+    pending_push. Their MediaProgress (finished, resume position, the
+    near-finish sweep) is untouched — only the book-level shelf state is."""
+    if user.is_limited:
+        return
     logger.info(
         "Listening moved %s to %s on %s's Hardcover", book.title, state.value, user.username
     )

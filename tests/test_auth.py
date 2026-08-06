@@ -110,6 +110,32 @@ def test_disabling_user_kills_existing_session(client, user, db_session):
         db_session.commit()
 
 
+def test_limited_user_cannot_log_in_to_the_ui(anon_client, limited_user):
+    """The password is right; this door just isn't theirs."""
+    response = login(anon_client)
+    assert response.status_code == 403
+    assert "Audiobookshelf app" in response.text
+    assert anon_client.get("/", follow_redirects=False).status_code == 303
+
+
+def test_demoting_a_user_kills_their_browser_session(client, user, db_session):
+    from app.models import UserRole
+
+    assert client.get("/", follow_redirects=False).status_code == 200
+    user.role = UserRole.LIMITED
+    db_session.commit()
+    try:
+        response = client.get("/", follow_redirects=False)
+        assert response.status_code == 303
+        # told why, and no ?next= — coming back would only bounce them again
+        assert response.headers["location"] == "/login?error=app_only"
+        page = client.get(response.headers["location"])
+        assert "Audiobookshelf app" in page.text
+    finally:
+        user.role = UserRole.FULL
+        db_session.commit()
+
+
 def test_admin_login_lands_on_user_admin(anon_client):
     response = login(anon_client, username="admin", password=ADMIN_PASSWORD)
     assert response.status_code == 303

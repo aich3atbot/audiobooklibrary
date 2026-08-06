@@ -29,6 +29,16 @@ class ReadState(str, enum.Enum):
     READ = "read"
 
 
+class UserRole(str, enum.Enum):
+    """What an account may do. A *limited* account is ABS-only: it listens
+    through the apps (its own progress and bookmarks over the shared library)
+    but cannot log in to the web UI, holds no Hardcover token, and never gets
+    a shelf entry — see `app/auth.py` and `app/abs/progress.py`."""
+
+    FULL = "full"
+    LIMITED = "limited"
+
+
 class DownloadState(str, enum.Enum):
     NONE = "none"
     GRABBED = "grabbed"
@@ -98,6 +108,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(300))
     hardcover_token: Mapped[str] = mapped_column(Text, default="")
+    role: Mapped[UserRole] = _enum_column(UserRole, UserRole.FULL)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     # Per-user Hardcover sync cursor and outcome.
@@ -116,6 +127,11 @@ class User(Base):
     auth_sessions: Mapped[list["AuthSession"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+
+    @property
+    def is_limited(self) -> bool:
+        """ABS-only account: no web UI, no Hardcover."""
+        return self.role == UserRole.LIMITED
 
 
 class AuthSession(Base):
