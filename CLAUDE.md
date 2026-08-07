@@ -196,6 +196,15 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   indexer, download client, paths, intervals, import mode). `DOWNLOAD_DIR` must be the
   directory the torrent client writes *completed* downloads to. The session-cookie secret
   is not configurable; it is auto-generated and persisted at `CONFIG_DIR/session_secret`.
+  **Defaults live in `app/config.py` and nowhere else.** `docker-compose.yml` lists
+  optional variables bare (`- SYNC_INTERVAL_MINUTES`), so an unset one never reaches the
+  container — do not reintroduce `${VAR:-default}` there, it duplicates the default and an
+  empty expansion used to crash startup on the typed fields. Only `ADMIN_PASSWORD` and the
+  four bind-mount paths use `${VAR:?}` (a host path is compose's to know, not the app's).
+  A blank value is treated as absent by `Settings._blank_means_default`, *except* where the
+  field's own default is `""` — there empty is meaningful (no `DOWNLOAD_CLIENT` disables
+  downloading, no `DOWNLOAD_LABEL` means no label, blank `ADMIN_PASSWORD` still refuses to
+  start).
 
 ## Sandbox environment
 

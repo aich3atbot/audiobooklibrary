@@ -275,6 +275,12 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
 
 ## Configuration (env vars)
 
+The defaults below are applied by `app/config.py`, which is the only place they are
+written down: `docker-compose.yml` lists the optional variables bare so an unset one is
+never passed into the container, and a blank value is treated as absent (except where the
+default is itself empty — there empty is a real setting). Everything but `ADMIN_PASSWORD`
+and the four bind-mount paths can simply be left out.
+
 ```
 ADMIN_PASSWORD          # password for the virtual "admin" account (required at startup)
                         # (Hardcover tokens are per-user, set on the admin's Users page)

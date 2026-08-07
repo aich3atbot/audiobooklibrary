@@ -1,6 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,6 +52,29 @@ class Settings(BaseSettings):
     # How much trailing credits to forgive: a book left this close to the end
     # is marked read once another book starts. 0 requires a complete listen.
     mark_read_tail_minutes: float = 30.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_means_default(cls, data: Any) -> Any:
+        """An empty environment value falls back to the field's default.
+
+        Optional variables are passed through bare by docker-compose, so an
+        unset one never reaches us at all — but a variable set to "" in .env
+        still arrives as an empty string, and parsing that as an int or a bool
+        would abort startup. Fields whose default is "" keep it: empty is
+        meaningful there (no DOWNLOAD_LABEL means no label, no DOWNLOAD_CLIENT
+        disables downloading).
+        """
+        if not isinstance(data, dict):
+            return data
+        fields = cls.model_fields
+        return {
+            key: value
+            for key, value in data.items()
+            if value != ""
+            or key not in fields
+            or fields[key].get_default(call_default_factory=True) == ""
+        }
 
     @property
     def database_url(self) -> str:

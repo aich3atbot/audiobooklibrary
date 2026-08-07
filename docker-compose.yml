@@ -9,25 +9,34 @@ services:
     ports:
       - "8000:8000"
     environment:
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set in .env}
-      INDEX_URL: ${INDEX_URL:?set in .env}
-      DOWNLOAD_CLIENT: ${DOWNLOAD_CLIENT:-}
-      DOWNLOAD_URL: ${DOWNLOAD_URL:-}
-      DOWNLOAD_USERNAME: ${DOWNLOAD_USERNAME:-}
-      DOWNLOAD_PASSWORD: ${DOWNLOAD_PASSWORD:-}
-      DOWNLOAD_LABEL: ${DOWNLOAD_LABEL:-}
-      DOWNLOAD_REMOVE_IMMEDIATELY: ${DOWNLOAD_REMOVE_IMMEDIATELY:-false}
-      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-30}
-      WATCH_INTERVAL_SECONDS: ${WATCH_INTERVAL_SECONDS:-30}
-      DOWNLOAD_QUIET_SECONDS: ${DOWNLOAD_QUIET_SECONDS:-120}
-      IMPORT_MODE: ${IMPORT_MODE:-copy}
+      # Optional variables are listed bare: one that is set in .env (or the
+      # shell) is passed through, and one that is not never reaches the
+      # container at all, so app/config.py applies its own default. Defaults
+      # live there and nowhere else — write VAR=value here only to force one.
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?set in .env}
+      - INDEX_URL
+      - DOWNLOAD_CLIENT
+      - DOWNLOAD_URL
+      - DOWNLOAD_USERNAME
+      - DOWNLOAD_PASSWORD
+      - DOWNLOAD_LABEL
+      - DOWNLOAD_REMOVE_IMMEDIATELY
+      - SYNC_INTERVAL_MINUTES
+      - WATCH_INTERVAL_SECONDS
+      - DOWNLOAD_QUIET_SECONDS
+      - IMPORT_MODE
+      - MARK_READING_AFTER_MINUTES
+      - MARK_READ_TAIL_MINUTES
     volumes:
-      - ${CONFIG_DIR}:/config
+      # Bind-mount sources: only compose can default a host path, and a wrong
+      # guess would silently write the library somewhere else, so they are
+      # required rather than defaulted.
+      - ${CONFIG_DIR:?set in .env}:/config
       # Must be the directory Deluge writes *completed* downloads to — if Deluge
       # saves to /downloads/complete, mount that path here, not its parent.
-      - ${DOWNLOAD_DIR}:/downloads
-      - ${LIBRARY_DIR}:/audiobooks
-      - ${IMPORTS_DIR}:/imports
+      - ${DOWNLOAD_DIR:?set in .env}:/downloads
+      - ${LIBRARY_DIR:?set in .env}:/audiobooks
+      - ${IMPORTS_DIR:?set in .env}:/imports
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"

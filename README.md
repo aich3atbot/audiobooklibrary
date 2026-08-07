@@ -36,8 +36,8 @@ See `plan.md` for the full design.
 ## Run with Docker
 
 ```bash
-cp .env.example .env    # fill in ADMIN_PASSWORD, INDEX_URL and DOWNLOAD_URL
-# edit docker-compose.yml volume paths, then:
+cp .env.example .env    # fill in ADMIN_PASSWORD, the four paths, INDEX_URL and DOWNLOAD_URL
+# everything else in it is commented out — uncomment only what you want to change, then:
 docker compose up --build
 ```
 
@@ -63,7 +63,10 @@ Volumes:
 
 By default imports **hardlink or copy** files so seeding torrents are left intact; set
 `IMPORT_MODE=move` to relocate them instead. All settings are environment variables — see
-`.env.example` for the full list.
+`.env.example` for the full list. Only `ADMIN_PASSWORD` and the four host paths are
+required; leave any other variable out of `.env` and the app applies its own default
+(they are defined in `app/config.py`, and `docker-compose.yml` passes each one through
+only if you set it).
 
 The container runs as a non-root user — `PUID`/`PGID` from `.env`, default `1000:1000` —
 so the config database and imported audiobooks are owned by that user on the host. The
