@@ -294,9 +294,15 @@ DOWNLOAD_USERNAME       # required by qBittorrent; unused by Deluge (password-on
 DOWNLOAD_PASSWORD       # may legitimately be empty (Deluge)
 DOWNLOAD_LABEL          # optional label/category for the app's torrents; empty = none
 DOWNLOAD_REMOVE_IMMEDIATELY  # default false — true removes torrent+data after import (no seeding)
-DOWNLOAD_DIR            # default /downloads — the client's *completed*-downloads directory
-LIBRARY_DIR             # default /audiobooks
-CONFIG_DIR              # default /config (sqlite db location)
+                        # The four paths below name a *host* directory in .env, which
+                        # docker-compose bind-mounts onto the container path they default
+                        # to; they are never passed into the container, so there they are
+                        # always the default. Running outside a container (dev, tests)
+                        # they are the paths the app uses directly.
+DOWNLOAD_DIR            # -> /downloads — the client's *completed*-downloads directory
+LIBRARY_DIR             # -> /audiobooks
+CONFIG_DIR              # -> /config (sqlite db + session_secret)
+IMPORTS_DIR             # -> /imports (staging area for an existing collection)
 SYNC_INTERVAL_MINUTES   # default 30
 WATCH_INTERVAL_SECONDS  # default 30 (download dir poll)
 DOWNLOAD_QUIET_SECONDS  # default 120 (download "finished" quiet period)

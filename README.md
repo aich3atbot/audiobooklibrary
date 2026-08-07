@@ -75,7 +75,7 @@ mounted directories must be writable by it, and the completed downloads readable
 version that ran as root:** fix ownership once before starting —
 
 ```bash
-sudo chown -R 1000:1000 ./data/config ./data/audiobooks   # your CONFIG_DIR / LIBRARY_DIR
+sudo chown -R 1000:1000 ./data/config ./data/audiobooks   # the dirs mounted as /config and /audiobooks
 ```
 
 ## Development
