@@ -179,10 +179,6 @@ def find_cover_file(edition: Edition) -> Path | None:
     return images[0] if images else None
 
 
-def has_cover(edition: Edition) -> bool:
-    return bool(edition.book.cover_url) or find_cover_file(edition) is not None
-
-
 def edition_duration(edition: Edition) -> float:
     return sum(f.duration or 0.0 for f in edition.audio_files)
 

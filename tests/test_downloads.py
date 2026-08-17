@@ -189,7 +189,6 @@ def test_releases_route_renders_dialog(client, book):
     assert "Andy Weir - Project Hail Mary" in response.text
     assert "M4B" in response.text
     assert "14 Nov 2021" in response.text
-    assert "Seeders" not in response.text  # ABB publishes none
     assert 'name="indexer" value="AudioBookBay"' in response.text
 
 

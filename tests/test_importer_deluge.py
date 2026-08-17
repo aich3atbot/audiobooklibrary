@@ -263,7 +263,10 @@ def test_torrent_the_client_does_not_know_falls_back_to_name_matching(
 def test_release_without_an_info_hash_never_asks_the_client(
     clean_db, clean_dirs, deluge_configured, release, monkeypatch, test_settings
 ):
-    # A release grabbed before hashes were recorded (pre-migration).
+    # Nothing writes a null hash today — grab_release always stores one, and
+    # the indexer raises rather than returning without it. The column is still
+    # nullable, so this pins the guard: no hash means no client call at all,
+    # and the name-matching watcher carries the import on its own.
     release.info_hash = None
     clean_db.commit()
     monkeypatch.setattr(test_settings, "download_quiet_seconds", 0)
@@ -315,7 +318,9 @@ def test_cancel_still_cancels_when_the_client_cannot_be_reached(
 def test_cancel_without_an_info_hash_touches_no_client(
     client, clean_db, deluge_configured, book, release, monkeypatch
 ):
-    release.info_hash = None  # grabbed before hashes were recorded
+    # As above: a null hash is unreachable in practice but permitted by the
+    # schema, and cancelling one must not fabricate a torrent to remove.
+    release.info_hash = None
     clean_db.commit()
     fake = use_client_for_cancel(monkeypatch, FakeClient())
 

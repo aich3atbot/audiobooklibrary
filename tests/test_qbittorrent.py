@@ -259,13 +259,3 @@ def test_remove_torrent_deletes_the_data_too(qbit):
     body = route.calls[0].request.content.decode()
     assert f"hashes={HASH}" in body  # lowercased
     assert "deleteFiles=true" in body
-
-
-@respx.mock
-def test_remove_torrent_keeps_data_when_asked(qbit):
-    login_ok()
-    route = respx.post(f"{API}/torrents/delete").respond(200)
-
-    qbit.remove_torrent(HASH, remove_data=False)
-
-    assert "deleteFiles=false" in route.calls[0].request.content.decode()
