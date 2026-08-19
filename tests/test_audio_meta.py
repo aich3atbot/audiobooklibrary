@@ -16,8 +16,8 @@ from app.models import (
     Series,
 )
 from app.services.audio_meta import (
-    _marker_seconds,
     _overdrive_chapters,
+    parse_timecode,
     scan_edition_audio,
     scan_missing,
 )
@@ -125,7 +125,7 @@ def test_scan_missing_backfills_only_unscanned(clean_db, imported_edition, test_
     ],
 )
 def test_overdrive_marker_times(text, expected):
-    assert _marker_seconds(text) == expected
+    assert parse_timecode(text) == expected
 
 
 def test_overdrive_chapters_from_tags():

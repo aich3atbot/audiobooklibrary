@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     # files; "move" relocates them out of the download directory.
     import_mode: str = "copy"
 
+    # Converting an MP3 edition to a single chaptered m4b (see
+    # app/services/transcode.py). The target AAC bitrate is halved for a book
+    # that is mono throughout and is never raised above the source's own
+    # bitrate. ffprobe is deliberately not used — mutagen already reports MP3
+    # durations — so only ffmpeg has to exist.
+    transcode_bitrate: str = "64k"
+    ffmpeg_path: str = "ffmpeg"
+
     # How listening moves a book's read state (see app/abs/progress.py).
     # Listened this long and the book counts as started; 0 marks it "currently
     # reading" on the first progress sync after playback begins.

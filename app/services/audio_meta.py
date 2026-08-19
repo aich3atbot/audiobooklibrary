@@ -40,8 +40,9 @@ def _natural_key(path: Path):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(path))]
 
 
-def _marker_seconds(text: str) -> float | None:
-    """An OverDrive marker time — `H:MM:SS.mmm`, `MM:SS.mmm` or `SS.mmm`."""
+def parse_timecode(text: str) -> float | None:
+    """`H:MM:SS.mmm`, `MM:SS.mmm` or `SS.mmm` -> seconds. Shared by OverDrive
+    markers and the transcoder's chapter sidecars, which use the same shapes."""
     parts = text.strip().split(":")
     if not 1 <= len(parts) <= 3:
         return None
@@ -73,7 +74,7 @@ def _overdrive_chapters(tags) -> list[dict] | None:
                 continue
             for marker in root.iter("Marker"):
                 name = (marker.findtext("Name") or "").strip()
-                start = _marker_seconds(marker.findtext("Time") or "")
+                start = parse_timecode(marker.findtext("Time") or "")
                 if name and start is not None:
                     marks.append((start, name))
     if not marks:

@@ -237,15 +237,29 @@ def track_chapter_title(file: AudioFile, tags_usable: bool = True) -> str:
     return stem
 
 
-def edition_chapters(edition: Edition) -> list[dict[str, Any]]:
+def edition_chapters(
+    edition: Edition, durations: list[float] | None = None
+) -> list[dict[str, Any]]:
     """Embedded chapters, shifted by each file's start offset, and one chapter
     per track for files that carry none (matches how ABS treats multi-file
-    books without metadata)."""
+    books without metadata).
+
+    `durations` overrides the stored per-file durations, in track order. The
+    ABS API never passes it — the stored values are what it serves elsewhere,
+    so the chapter list must agree with them. The transcoder does: tag-derived
+    durations are systematically long (they count the encoder delay and padding
+    a gapless decoder trims), which is harmless while each file is its own
+    track but would accumulate into minutes of drift once they are concatenated
+    into one."""
     chapters: list[dict[str, Any]] = []
     offset = 0.0
     tags_usable = tags_can_name_chapters(edition)
-    for file in edition.audio_files:
-        duration = file.duration or 0.0
+    for index, file in enumerate(edition.audio_files):
+        duration = (
+            durations[index]
+            if durations is not None and index < len(durations)
+            else (file.duration or 0.0)
+        )
         embedded = json.loads(file.chapters_json) if file.chapters_json else None
         if embedded:
             for chapter in embedded:

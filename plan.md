@@ -858,10 +858,23 @@ the library, with or without transcoding:
 Everything normalizes to `[(start, title)]`, sorted, deduped, clamped, ends closed with
 the next start (last = total duration), and is written as an FFMETADATA file with
 `TIMEBASE=1/1000`. A source that parses to nothing usable falls through to the next.
-Per-file start offsets are the cumulative `audio_file.duration` values (mutagen's MP3
-durations, already stored) — no ffprobe. ffmpeg writes MP4 chapters as a QuickTime
-chapter text track, which `app/services/mp4_chapters.py` already reads; the
-post-transcode rescan is the proof.
+ffmpeg writes MP4 chapters as a QuickTime chapter text track, which
+`app/services/mp4_chapters.py` already reads; the post-transcode rescan is the proof.
+
+**Offsets come from a decode pass, not from the tags** (`measure_durations`). Tag
+durations are systematically long — measured at **+0.8% on every file** of a mixed test
+set, because the frame count includes the encoder delay and padding a gapless decoder
+trims. While each file is its own track that is invisible; concatenated into one it
+accumulates, and 0.8% of a ten-hour book is nearly five minutes of chapter drift by the
+end. So each input is decoded once (`-f null -`, which is why the build needs the `null`
+muxer and a `pcm_s16le` encoder) and its real length used for every offset. On the test
+set this moved the chapter marks from 0 / 5.042 / 12.095 to exactly 0 / 5.0 / 12.0 and cut
+the whole-file duration error from 105 ms to 21 ms. The pass costs one cheap decode: MP3
+decodes an order of magnitude faster than the AAC encode that follows, and a file that
+cannot be measured falls back to its tag duration rather than failing the job.
+`catalogue.edition_chapters` takes the measured durations as an override — the ABS API
+never passes it, because the chapter list it serves must agree with the durations it
+serves alongside.
 
 ### Metadata written into the m4b
 
@@ -923,8 +936,11 @@ by a restart") and its stray `.part` file removed — never silently resumed.
    both our scanner and ABS).
 2. **Tag** the temp file with mutagen (series movement atoms, cover art, narrator) —
    before validation, so what gets validated is the file that will actually be kept.
-3. **Validate**: `identify()` says family `mp4`, and its duration is within 1% (and 5s) of
-   the summed source duration. Anything else fails the job and leaves the folder untouched.
+3. **Validate**: `identify()` says family `mp4`, and its duration is within **1 second** of
+   the summed *measured* durations. That tolerance can be this tight precisely because the
+   offsets are measured rather than taken from tags: the only remaining difference is the
+   AAC encoder's priming (21 ms on the test encode), which is constant and does not grow
+   with the book. Anything else fails the job and leaves the folder untouched.
 3. Atomically rename to `<edition folder name>.m4b` (refusing an occupied name).
 4. Delete the MP3s **and the chapter sidecar that was actually consumed** (the `.cue` that
    produced the chapters — never one we didn't use); prune emptied disc subfolders with
@@ -989,9 +1005,9 @@ feature uses:
 --disable-debug --disable-shared --enable-static --enable-small
 --disable-ffplay --disable-ffprobe --disable-swscale --disable-postproc
 --enable-decoder=mp3,mp3float,aac,aac_fixed,alac
---enable-encoder=aac
+--enable-encoder=aac,pcm_s16le
 --enable-demuxer=mp3,mov,concat,ffmetadata
---enable-muxer=mp4,ipod
+--enable-muxer=mp4,ipod,null
 --enable-parser=mpegaudio,aac
 --enable-protocol=file,pipe,concat,concatf
 --enable-filter=aresample,aformat,concat,anull,atrim,aselect,anullsrc
@@ -1001,8 +1017,11 @@ feature uses:
 That yields a **2.04 MB** static binary, copied into the runtime stage. **`ffmetadata` must
 be in the demuxer list** — chapters are fed to ffmpeg as an input file, and without it the
 whole command dies with "Invalid data found when processing input" (this is how the flag
-list was found to be wrong the first time). No image codecs are needed because cover art
-is written by mutagen, not ffmpeg. A missing flag fails loudly at encode time, never
+list was found to be wrong the first time). The `null` muxer plus the `pcm_s16le` encoder
+are what the duration-measuring pass decodes into; without the encoder ffmpeg answers
+"Default encoder for format null (codec pcm_s16le) is probably disabled" (this is how the
+list was found to be wrong the *second* time). No image codecs are needed because cover
+art is written by mutagen, not ffmpeg. A missing flag fails loudly at encode time, never
 silently. If the source build ever
 becomes a maintenance annoyance, `COPY --from=mwader/static-ffmpeg:7.1 /ffmpeg
 /usr/local/bin/ffmpeg` is the one-line, zero-build fallback at +129 MB.
