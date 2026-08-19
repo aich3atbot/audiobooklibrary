@@ -18,6 +18,7 @@ import logging
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -74,7 +75,11 @@ DURATION_TOLERANCE = 1.0
 # which runs systematically long (see measure_durations).
 LOOSE_TOLERANCE = 0.02
 WORKER_POLL_SECONDS = 2.0
-PROGRESS_EVERY = 25  # progress lines between database writes
+# Progress lines between database writes. ffmpeg emits a block twice a second
+# and two of its lines carry a position, so 10 is a write every ~2.5s — often
+# enough that the Activity page's 5s refresh shows a new number each time,
+# rare enough to stay a rounding error next to the encode itself.
+PROGRESS_EVERY = 10
 
 
 class TranscodeFailure(RuntimeError):
@@ -730,8 +735,14 @@ def _run_encode(session: Session, job: TranscodeJob, command: list[str], total: 
     handle: the request that wants to stop this sets `cancel_requested`, and
     this loop — which is already reading a progress pipe — notices."""
     logger.info("Transcoding: %s", " ".join(command))
+    # stderr goes to a file, never a pipe. We consume stdout line by line for
+    # progress and only look at stderr at the end, so a pipe would fill and
+    # block ffmpeg mid-encode: at 64 KB, which a book of MP3s with damaged
+    # frames reaches easily. One measured case wrote 132 KB of "Header
+    # missing" and hung the job at 48% forever.
+    stderr_file = tempfile.TemporaryFile(mode="w+", errors="replace")
     process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        command, stdout=subprocess.PIPE, stderr=stderr_file, text=True
     )
     position = 0.0
     seen = 0
@@ -755,10 +766,11 @@ def _run_encode(session: Session, job: TranscodeJob, command: list[str], total: 
                     process.kill()
                 raise TranscodeCancelled("cancelled by the user")
     finally:
-        stderr = process.stderr.read() if process.stderr else ""
         process.stdout.close()
-        process.stderr.close()
         process.wait()
+        stderr_file.seek(0)
+        stderr = stderr_file.read()
+        stderr_file.close()
     if process.returncode != 0:
         tail = " ".join(stderr.split())[-400:]
         raise TranscodeFailure(f"ffmpeg failed ({process.returncode}): {tail or 'no output'}")

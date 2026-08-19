@@ -94,6 +94,48 @@ emit(seconds)
 
 FAILING_FFMPEG = "#!/bin/sh\necho 'something exploded' >&2\nexit 1\n"
 
+# Writes far more to stderr than a pipe holds (64 KB) before finishing, the way
+# ffmpeg does on MP3s with damaged frames — one real case emitted 132 KB of
+# "Header missing". If stderr is ever a pipe again this stops dead mid-encode.
+NOISY_FFMPEG = '''#!{python}
+import os, sys
+
+args = sys.argv[1:]
+for _ in range(4000):
+    print("[mp3float @ 0x0] Header missing", file=sys.stderr)
+
+if "null" in args:
+    source = [a for a in args if a.endswith(".mp3")][-1]
+    print("out_time_us=%d" % int(float(os.path.basename(source)[:-4]) * 1e6))
+    print("progress=end")
+    sys.exit(0)
+
+meta = [a for a in args if a.endswith(".ffmeta")][-1]
+with open(meta) as handle:
+    end = max(int(line.split("=")[1]) for line in handle if line.startswith("END="))
+seconds = end / 1000
+
+
+def box(kind, *parts):
+    payload = b"".join(parts)
+    return (len(payload) + 8).to_bytes(4, "big") + kind + payload
+
+
+def u32(value):
+    return value.to_bytes(4, "big")
+
+
+mvhd = box(b"mvhd", b"\\x00" * 4 + u32(0) + u32(0) + u32(1000) + u32(int(seconds * 1000))
+           + u32(0x00010000) + b"\\x01\\x00" + b"\\x00" * 10 + b"\\x00" * 36
+           + b"\\x00" * 24 + u32(2))
+with open(args[-1], "wb") as handle:
+    handle.write(box(b"ftyp", b"M4A \\x00\\x00\\x00\\x00") + box(b"moov", mvhd))
+for _ in range(4000):
+    print("[mp3float @ 0x0] Header missing", file=sys.stderr)
+print("out_time_us=%d" % int(seconds * 1e6))
+print("progress=end")
+'''
+
 
 def write_stub(path, body=None):
     path.write_text((body or FAKE_FFMPEG).format(python=sys.executable))
@@ -324,6 +366,32 @@ def test_a_missing_folder_fails_cleanly(edition, clean_db, fake_ffmpeg, settings
 
     assert run_job(clean_db, job) is False
     assert job.state == TranscodeState.FAILED
+
+
+def test_a_chatty_ffmpeg_does_not_deadlock(edition, clean_db, tmp_path, settings_with):
+    """ffmpeg on MP3s with damaged frames writes megabytes of decoder errors.
+    If stderr were a pipe it would fill at 64 KB and block the encode forever —
+    which is exactly what happened on a real 61-minute book, frozen at 48%.
+
+    Run in a thread so a regression fails the test instead of hanging the suite.
+    """
+    import threading
+
+    settings_with(write_stub(tmp_path / "noisy-ffmpeg", NOISY_FFMPEG))
+    job = queue_job(clean_db, edition, None)
+    result = {}
+
+    # daemon, so a regression fails this test in 60s rather than wedging the
+    # whole suite at interpreter exit waiting for a thread that never returns
+    worker = threading.Thread(
+        target=lambda: result.update(ok=run_job(clean_db, job)), daemon=True
+    )
+    worker.start()
+    worker.join(timeout=60)
+
+    assert not worker.is_alive(), "the encode blocked on its own stderr"
+    assert result.get("ok") is True
+    assert library_files(edition) == ["Transcode Me.m4b", "cover.jpg"]
 
 
 def test_temp_files_never_survive_a_failure(edition, clean_db, tmp_path, settings_with):

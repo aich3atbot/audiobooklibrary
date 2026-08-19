@@ -1,0 +1,149 @@
+{# Everything on the Activity page that can change on its own, in one fragment
+   that refreshes itself.
+
+   The interval comes from the server (`poll_seconds`): 5s while a download or
+   conversion is running, 30s when nothing is, re-decided on every swap — so a
+   page left open on an idle library stops working hard, and one that gets busy
+   speeds up, without any JavaScript of ours.
+
+   The trigger filter is what keeps a refresh from stealing your typing: an
+   open "Manual import…" box (or any focused field in here) suppresses the tick.
+   htmx re-arms the timer even for a filtered tick, so it resumes on its own. #}
+<div id="activity"
+     hx-get="/activity"
+     hx-trigger="every {{ poll_seconds }}s[!document.querySelector('#activity details[open], #activity :focus')]"
+     hx-swap="outerHTML">
+
+{% macro book_cell(book, label, narrator="") %}
+<div class="book-cell">
+    {% if book.cover_url %}<a class="activity-cover" href="/books/{{ book.id }}"><img src="{{ book.cover_url }}" alt="Cover of {{ book.title }}" loading="lazy"></a>{% else %}<span class="activity-cover placeholder"></span>{% endif %}
+    <div><a href="/books/{{ book.id }}">{{ book.title }}</a>{% if label %} <span class="badge"{% if narrator %} title="{{ narrator }}"{% endif %}>{{ label }}</span>{% endif %}<br><small>{{ book.author.name }}</small></div>
+</div>
+{% endmacro %}
+
+<h3>Active downloads</h3>
+{% if active %}
+<table>
+    <thead><tr><th>Book</th><th>Release</th><th>Status</th><th>Progress</th><th>Grabbed</th><th>By</th><th></th></tr></thead>
+    <tbody>
+        {% for r in active %}
+        <tr>
+            <td>{{ book_cell(r.book, r.edition.label, r.edition.narrator) }}</td>
+            <td><small>{{ r.title }}</small></td>
+            <td><span class="badge">{{ r.status }}</span></td>
+            <td><small>{{ "%.0f%%" | format(r.progress) if r.progress is not none else "—" }}</small></td>
+            <td><small>{{ r.grabbed_at.strftime("%Y-%m-%d %H:%M") if r.grabbed_at }}</small></td>
+            <td><small>{{ r.user.username if r.user else "—" }}</small></td>
+            <td class="actions">
+                <form method="post" action="/releases/{{ r.id }}/cancel"
+                      onsubmit="return confirm('Cancel this download? The torrent and its downloaded files will be deleted from the download client.')">
+                    <button class="secondary" type="submit">Cancel &amp; delete</button>
+                </form>
+                <details>
+                    <summary role="button" class="secondary outline">Manual import…</summary>
+                    <form method="post" action="/releases/{{ r.id }}/manual-import">
+                        <input name="folder" placeholder="Folder name in downloads dir" required>
+                        <button type="submit">Import</button>
+                    </form>
+                </details>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No active downloads.</p>
+{% endif %}
+
+{% if transcoding %}
+<h3>Converting to M4B</h3>
+<table>
+    <thead><tr><th>Book</th><th>Status</th><th>Progress</th><th>By</th><th></th></tr></thead>
+    <tbody>
+        {% for j in transcoding %}
+        <tr>
+            <td>{{ book_cell(j.edition.book, j.edition.label, j.edition.narrator) }}</td>
+            <td><span class="badge">{{ j.state.value }}</span>{% if j.cancel_requested %} <small><em>stopping</em></small>{% endif %}</td>
+            <td><small>{{ "%.0f%%" | format(j.progress) if j.progress is not none else "—" }}{% if j.source_count %} <span class="dir-size">{{ j.source_count }} files</span>{% endif %}</small></td>
+            <td><small>{{ j.user.username if j.user else "—" }}</small></td>
+            <td class="actions">
+                <form method="post" action="/transcodes/{{ j.id }}/cancel"
+                      onsubmit="return confirm('Stop this conversion? The MP3 files are left alone.')">
+                    <button class="secondary" type="submit">Stop</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<h3>Needs attention</h3>
+{% if transcode_failed %}
+<table>
+    <thead><tr><th>Book</th><th>Conversion error</th><th></th></tr></thead>
+    <tbody>
+        {% for j in transcode_failed %}
+        <tr>
+            <td>{{ book_cell(j.edition.book, j.edition.label, j.edition.narrator) }}</td>
+            <td><small class="error">{{ j.error }}</small><br><small>The MP3 files were left alone.</small></td>
+            <td class="actions">
+                <form method="post" action="/transcodes/{{ j.id }}/dismiss">
+                    <button class="secondary" type="submit">Dismiss</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% if failed %}
+<table>
+    <thead><tr><th>Book</th><th>Release</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+        {% for r in failed %}
+        <tr>
+            <td>{{ book_cell(r.book, r.edition.label, r.edition.narrator) }}</td>
+            <td><small>{{ r.title }}</small></td>
+            <td><small class="error">{{ r.error }}</small></td>
+            <td class="actions">
+                <form method="post" action="/releases/{{ r.id }}/retry">
+                    <button type="submit">Retry</button>
+                </form>
+                <details>
+                    <summary role="button" class="secondary outline">Manual import…</summary>
+                    <form method="post" action="/releases/{{ r.id }}/manual-import">
+                        <input name="folder" placeholder="Folder name in downloads dir" required>
+                        <button type="submit">Import</button>
+                    </form>
+                </details>
+                <form method="post" action="/releases/{{ r.id }}/cancel"
+                      onsubmit="return confirm('Dismiss this release? The torrent and its downloaded files will be deleted from the download client.')">
+                    <button class="secondary" type="submit">Dismiss &amp; delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% elif not transcode_failed %}
+<p>Nothing needs attention.</p>
+{% endif %}
+
+<h3>Recently imported</h3>
+{% if imported %}
+<table>
+    <thead><tr><th>Book</th><th>Library path</th></tr></thead>
+    <tbody>
+        {% for e in imported %}
+        <tr>
+            <td>{{ book_cell(e.book, e.label, e.narrator) }}</td>
+            <td><small>{{ e.library_path }}</small></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>Nothing imported yet.</p>
+{% endif %}
+</div>

@@ -49,6 +49,11 @@ def test_settings(tmp_path_factory):
     os.environ["DOWNLOAD_LABEL"] = ""
     os.environ["DOWNLOAD_REMOVE_IMMEDIATELY"] = "false"
     os.environ["IMPORT_MODE"] = "copy"
+    # Pinned for the same reason as the rest: a developer whose own .env sets a
+    # different bitrate (or points at a real ffmpeg) would otherwise see tests
+    # that assert on the encode parameters fail on their machine and nowhere else.
+    os.environ["TRANSCODE_BITRATE"] = "64k"
+    os.environ["FFMPEG_PATH"] = "ffmpeg"
 
     from app.config import get_settings
     from app.db import get_engine, get_sessionmaker

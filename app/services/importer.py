@@ -50,6 +50,12 @@ COMPANION_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".pdf", ".nfo", ".cue", ".tx
 INCOMPLETE_SUFFIXES = (".part", ".!qb", ".crdownload", ".tmp", ".lftp-pget-status")
 
 ACTIVE_STATUSES = ("grabbed", "downloading")
+# How often to ask the download client about a torrent that is actually
+# running. The Activity page refreshes every few seconds, so a 30s default
+# would show progress advancing in visible jumps. This is a floor on
+# responsiveness rather than a setting: WATCH_INTERVAL_SECONDS stays the idle
+# cadence *and* the ceiling, so an operator who wants less chatter still gets it.
+ACTIVE_WATCH_SECONDS = 10
 
 
 class ImportFailure(RuntimeError):
@@ -336,7 +342,7 @@ def scan_downloads_once() -> dict[str, int]:
     back to matching the release title against the download directory and
     waiting for the download to go quiet."""
     settings = get_settings()
-    counts = {"matched": 0, "imported": 0, "failed": 0}
+    counts = {"matched": 0, "imported": 0, "failed": 0, "active": 0}
     download_dir = settings.download_dir
     if not download_dir.is_dir():
         return counts
@@ -354,6 +360,9 @@ def scan_downloads_once() -> dict[str, int]:
             .unique()
             .all()
         )
+        # What the watch loop paces itself on — reported here because this pass
+        # has already loaded them.
+        counts["active"] = len(releases)
         if not releases:
             return counts
 
@@ -433,13 +442,22 @@ def _apply_torrent_status(
         counts["failed"] += 1
 
 
+def watch_interval(active: int) -> float:
+    """How long to wait before the next watcher pass. A download in flight is
+    worth asking about often — its progress is what the Activity page shows —
+    while an idle library is not worth waking the client for."""
+    interval = get_settings().watch_interval_seconds
+    return min(interval, ACTIVE_WATCH_SECONDS) if active else interval
+
+
 async def download_watch_loop() -> None:
     """Background task: poll the download client and directory for finished
-    downloads."""
-    settings = get_settings()
+    downloads, faster while something is actually downloading."""
     while True:
+        active = 0
         try:
-            await asyncio.to_thread(scan_downloads_once)
+            counts = await asyncio.to_thread(scan_downloads_once)
+            active = counts.get("active", 0)
         except Exception:
             logger.exception("Download watcher pass failed")
-        await asyncio.sleep(settings.watch_interval_seconds)
+        await asyncio.sleep(watch_interval(active))

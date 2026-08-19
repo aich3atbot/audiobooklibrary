@@ -304,7 +304,7 @@ def test_scan_imports_stable_download(clean_db, edition, release, clean_dirs):
 
     counts = scan_downloads_once()
 
-    assert counts == {"matched": 1, "imported": 1, "failed": 0}
+    assert counts == {"matched": 1, "imported": 1, "failed": 0, "active": 1}
     clean_db.refresh(release)
     clean_db.refresh(edition)
     assert release.status == "imported"
@@ -317,7 +317,7 @@ def test_scan_marks_fresh_download_as_downloading(clean_db, edition, release, cl
 
     counts = scan_downloads_once()
 
-    assert counts == {"matched": 1, "imported": 0, "failed": 0}
+    assert counts == {"matched": 1, "imported": 0, "failed": 0, "active": 1}
     clean_db.refresh(release)
     assert release.status == "downloading"
     clean_db.refresh(edition)
@@ -341,7 +341,7 @@ def test_scan_no_match_leaves_release_alone(clean_db, edition, release, clean_di
 
     counts = scan_downloads_once()
 
-    assert counts == {"matched": 0, "imported": 0, "failed": 0}
+    assert counts == {"matched": 0, "imported": 0, "failed": 0, "active": 1}
     clean_db.refresh(release)
     assert release.status == "grabbed"
 

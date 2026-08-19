@@ -216,7 +216,10 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   **Chapter offsets come from a decode pass (`measure_durations`), never from tags** —
   tag durations run ~0.8% long, which is minutes of drift once files are concatenated.
   One `transcode_job` row + one serial worker; cancel goes through `cancel_requested`,
-  and a job left RUNNING by a restart is failed, never resumed. ffmpeg is a 2 MB
+  and a job left RUNNING by a restart is failed, never resumed. **ffmpeg's stderr goes to
+  a file, never a `PIPE`** — we drain stdout for progress and read stderr only at the end,
+  so a pipe fills at 64 KB and deadlocks the encode; a real book with damaged MP3 frames
+  emitted 132 KB of "Header missing" and froze at 48%. ffmpeg is a 2 MB
   purpose-built binary from a Dockerfile stage (Debian's package would add 434 MB, mostly
   Mesa); its configure flags are exact and a missing one fails loudly at encode time.
 - **Config via env vars** only — see `.env.example` for the full list (auth, Hardcover,

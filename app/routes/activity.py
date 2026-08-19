@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# How often the page refreshes itself, decided per render: the fast rate while
+# there is something to watch, the slow one when there is not. A tab left open
+# on an idle library should not poll like one watching a download.
+ACTIVE_POLL_SECONDS = 5
+IDLE_POLL_SECONDS = 30
+
 
 def _get_release(db: Session, release_id: int) -> Release:
     release = db.get(Release, release_id)
@@ -79,15 +85,21 @@ def activity(request: Request, db: Session = Depends(get_db)):
             .all()
         )
 
+    active = releases_with(*ACTIVE_STATUSES)
+    transcoding = transcodes(*TRANSCODE_ACTIVE)
     return templates.TemplateResponse(
         request,
-        "activity.html",
+        # htmx asks for the fragment; a browser navigation gets the whole page.
+        "_activity_content.html" if request.headers.get("hx-request") else "activity.html",
         {
-            "active": releases_with(*ACTIVE_STATUSES),
+            "active": active,
             "failed": releases_with("failed"),
             "imported": imported,
-            "transcoding": transcodes(*TRANSCODE_ACTIVE),
+            "transcoding": transcoding,
             "transcode_failed": transcodes(TranscodeState.FAILED),
+            "poll_seconds": (
+                ACTIVE_POLL_SECONDS if (active or transcoding) else IDLE_POLL_SECONDS
+            ),
         },
     )
 

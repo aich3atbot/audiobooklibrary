@@ -164,7 +164,7 @@ def test_in_progress_torrent_records_progress_and_does_not_import(
 
     clean_db.refresh(release)
     clean_db.refresh(release.edition)
-    assert counts == {"matched": 1, "imported": 0, "failed": 0}
+    assert counts == {"matched": 1, "imported": 0, "failed": 0, "active": 1}
     assert release.status == "downloading"
     assert release.progress == 42.5
     assert release.edition.download_state == DownloadState.DOWNLOADING

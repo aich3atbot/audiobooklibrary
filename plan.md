@@ -270,8 +270,52 @@ Verified live against qBittorrent 5.2.3 / Web API 2.15.1.
   manual-match actions). Rows show the edition label being downloaded (when set) and
   book titles link to the book detail page. *Cancel & delete* removes the torrent and
   its data from the client (confirmation prompt first), then stops tracking the release.
-- **Settings page** (`/settings`) — connection status for Hardcover, the indexer and the
-  download client, sync interval, paths (read-only display of env config), "Sync now" button.
+- **Settings page** (`/settings`) — connection status for Hardcover, the indexer, the
+  download client and ffmpeg, sync interval, paths (read-only display of env config),
+  "Sync now" button.
+
+### Live Activity page (built)
+
+The book detail page already updates itself while a conversion runs; Activity does not, so
+the one page whose whole job is showing work in flight is the one you have to reload. It
+should refresh itself for **both** downloads and conversions.
+
+- **Fragment + self-chosen interval.** Everything below the `<h2>` moves into
+  `_activity_content.html` under `id="activity"`; `GET /activity` returns the whole page
+  normally and just that fragment when the `HX-Request` header is present (the pattern
+  `cancel_transcode` already uses). The fragment's root carries
+  `hx-get="/activity" hx-trigger="every {{ poll_seconds }}s[…]" hx-swap="outerHTML"`, and
+  the *server* picks the interval: **5s when anything is active** (a release in
+  `ACTIVE_STATUSES` or a job in `TRANSCODE_ACTIVE`), **30s when nothing is**. Because each
+  swap re-renders the attribute, a page that goes quiet slows itself down and one that gets
+  busy speeds up, with no JavaScript of ours and no risk of a tab polling hard all day.
+  Refreshing everything — including *Recently imported* — means a finished download is seen
+  moving from one section to another.
+- **An open form is never clobbered.** A periodic swap would collapse an open "Manual
+  import…" disclosure and discard whatever folder name was being typed into it, so the
+  trigger carries a filter:
+  `every 5s[!document.querySelector('#activity details[open], #activity :focus')]`.
+  Checked against htmx 2.0.10's own tokenizer and `maybeGenerateConditional`: `every`
+  accepts an event filter, the `[open]` inside the selector survives because bracket
+  counting is balanced, and `processPolling` re-schedules the timer *even when a tick is
+  filtered out* — so the refresh pauses while you type and resumes when you close the box,
+  rather than stopping for good.
+- **The watcher gets the same treatment.** Page polling alone would show download progress
+  advancing in 30-second steps, because that is how often the watcher asks the torrent
+  client. `download_watch_loop` sleeps `ACTIVE_WATCH_SECONDS` (10) when its last pass saw
+  active releases and `watch_interval_seconds` when it did not — never *longer* than the
+  configured interval, so `WATCH_INTERVAL_SECONDS` stays both the idle cadence and the
+  ceiling for an operator who wants it slower. `scan_downloads_once` already loads the
+  active releases, so it returns that count rather than the loop asking again. No new env
+  var: this is a floor on responsiveness, not a knob.
+- **Matching granularity.** `PROGRESS_EVERY` (transcode progress writes, every 25 ffmpeg
+  progress lines ≈ 6s) drops to 10 (≈2.5s), so a 5s poll actually shows movement rather
+  than the same number twice. The cost is one extra tiny commit every few seconds.
+- **Not** websockets or SSE: there is no such machinery in this app, polling is what the
+  rest of the UI does, and an idle page costs two requests a minute.
+
+Watching a real 61-minute conversion through this is what turned up the stderr deadlock
+described under "Transcoding" — the page did its job and showed the encode frozen at 48%.
 
 ## Configuration (env vars)
 
@@ -768,6 +812,15 @@ ffmpeg -nostdin -hide_banner -y \
   are routinely mixed (22.05/44.1 kHz, mono/stereo) and the demuxer does not resample
   between segments. Inputs beyond a few hundred fall back to the demuxer with a temp list
   file (command-length guard).
+- **ffmpeg's stderr goes to a file, never a pipe.** The worker consumes stdout line by
+  line for progress and only reads stderr at the end, so a stderr *pipe* fills at 64 KB
+  and blocks ffmpeg mid-encode — the job then sits at RUNNING forever holding a
+  half-written `.part`, until a restart fails it. Not theoretical: a 61-minute test book
+  whose MP3s had damaged frame headers made ffmpeg emit **132 KB** of "Header missing" and
+  froze the encode at 48%, which is exactly the shape of a torrent-sourced rip. Damaged
+  frames are common enough that the noisy case is the one to design for, and
+  `test_a_chatty_ffmpeg_does_not_deadlock` holds the line (in a daemon thread, so a
+  regression fails in 60s instead of wedging the suite).
 - **Bitrate**: `TRANSCODE_BITRATE` (default `64k`), halved when every source is mono, and
   capped at the highest source bitrate so a 32k MP3 is never "upscaled".
 - Cover art: an image already in the folder (`cover.*`/`folder.*`, else the only image) is
