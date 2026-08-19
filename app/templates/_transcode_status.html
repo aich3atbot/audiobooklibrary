@@ -1,0 +1,49 @@
+{# The transcode control for one edition, in every state it can be in. Lives
+   inside the expanded file list, and replaces itself while a job runs.
+
+   Only shown for an edition that really is a pile of MP3s — an m4b edition
+   has nothing to convert and should not be told about it. #}
+<div id="transcode-{{ edition.id }}" class="transcode"
+     {%- if oob is defined and oob %} hx-swap-oob="outerHTML"{% endif %}
+     {% if active %}hx-get="/editions/{{ edition.id }}/transcode"
+     hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+{% if active %}
+    <p>
+        <small>{% if job.state.value == 'queued' %}Waiting to convert…{% else %}Converting to M4B…{% endif %}
+        {% if job.cancel_requested %}<em>stopping</em>{% endif %}</small>
+    </p>
+    <progress {% if job.progress %}value="{{ job.progress }}" max="100"{% endif %}></progress>
+    <div class="edition-actions">
+        <button type="button" class="secondary"
+                hx-post="/transcodes/{{ job.id }}/cancel"
+                hx-target="#transcode-{{ edition.id }}" hx-swap="outerHTML"
+                {% if job.cancel_requested %}disabled{% endif %}>Stop</button>
+    </div>
+{% elif applicable %}
+    {% if job and job.state.value == 'failed' %}
+    <p class="error"><small>Conversion failed: {{ job.error }}</small></p>
+    {% elif job and job.state.value == 'cancelled' %}
+    <p><small>Conversion stopped. The MP3 files were left alone.</small></p>
+    {% endif %}
+    {% if blocked %}
+    <p><small>{{ blocked }}</small></p>
+    {% else %}
+    <div class="edition-actions">
+        <button type="button" class="secondary"
+                hx-get="/editions/{{ edition.id }}/transcode/confirm"
+                hx-target="#modal" hx-swap="outerHTML"
+                title="Join these MP3 files into one chaptered M4B and delete the originals">
+            {% if job and job.state.value in ('failed', 'cancelled') %}Try converting again{% else %}Convert to M4B…{% endif %}
+        </button>
+    </div>
+    {% endif %}
+{% elif job and job.state.value == 'done' %}
+    <p><small>Converted to a single M4B.</small></p>
+    {% if refresh %}
+    {# The job just finished: pull the new file list in once. The fragment
+       that comes back renders this panel without `refresh`, so it stops. #}
+    <div hx-get="/editions/{{ edition.id }}/files" hx-trigger="load"
+         hx-target="#edition-files-{{ edition.id }}" hx-swap="innerHTML"></div>
+    {% endif %}
+{% endif %}
+</div>

@@ -15,7 +15,17 @@ from app.abs import routes as abs_routes
 from app.abs.socket import wrap_asgi
 from app.auth import RequireAuthMiddleware, resolve_session_secret
 from app.config import get_settings
-from app.routes import activity, admin, auth, downloads, imports, search, settings, ui
+from app.routes import (
+    activity,
+    admin,
+    auth,
+    downloads,
+    imports,
+    search,
+    settings,
+    transcode,
+    ui,
+)
 from app.services.audio_meta import audio_backfill_task
 from app.services.importer import download_watch_loop
 from app.services.sync import hardcover_sync_loop
@@ -61,6 +71,7 @@ app.include_router(settings.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(imports.router)
+app.include_router(transcode.router)
 app.include_router(abs_public_routes.router)
 app.include_router(abs_routes.router)
 app.include_router(abs_library_routes.router)

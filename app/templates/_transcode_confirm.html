@@ -1,0 +1,42 @@
+{# Confirm dialog. This deletes the MP3s, so it says exactly what goes in,
+   what comes out, and where the chapters will come from. #}
+<div id="modal">
+<dialog open>
+    <article class="release-dialog">
+        <header>
+            <button aria-label="Close" rel="prev" onclick="this.closest('dialog').remove()"></button>
+            <strong>Convert to M4B — {{ edition.book.title }}{% if edition.label %} ({{ edition.label }}){% endif %}</strong>
+        </header>
+        {% if error %}
+        <p class="error">{{ error }}</p>
+        {% else %}
+        <p>
+            Join <strong>{{ count }}</strong> MP3 file{{ "s" if count != 1 }}
+            ({{ duration | duration }}) into one <strong>{{ output }}</strong>
+            at {{ (bitrate / 1000) | round | int }} kb/s.
+        </p>
+        <p>
+            <small>
+                {{ chapters }} chapter{{ "s" if chapters != 1 }}, from
+                {% if sidecar %}<strong>{{ sidecar }}</strong>{% else %}the files themselves{% endif %} —
+                the same chapters your apps show now.
+            </small>
+        </p>
+        <p class="error">
+            <small>
+                The MP3 files{% if sidecar %} and {{ sidecar }}{% endif %} are deleted once the
+                new file is written and checked. This cannot be undone: if these are your only
+                copy, the audio is re-encoded and the originals are gone.
+            </small>
+        </p>
+        <footer>
+            <button type="button" class="secondary"
+                    onclick="this.closest('dialog').remove()">Cancel</button>
+            <button type="button"
+                    hx-post="/editions/{{ edition.id }}/transcode"
+                    hx-target="#modal" hx-swap="outerHTML">Convert</button>
+        </footer>
+        {% endif %}
+    </article>
+</dialog>
+</div>

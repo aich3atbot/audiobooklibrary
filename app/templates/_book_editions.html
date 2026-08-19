@@ -10,7 +10,8 @@
         </header>
         <details class="edition-files">
             <summary><small>{{ e.library_path }}<span class="dir-size">{{ dir_sizes[e.id] | human_size }}</span></small></summary>
-            <div hx-get="/editions/{{ e.id }}/files"
+            <div id="edition-files-{{ e.id }}"
+                 hx-get="/editions/{{ e.id }}/files"
                  hx-trigger="toggle once from:closest details"
                  hx-swap="innerHTML"><p aria-busy="true">Loading files…</p></div>
         </details>

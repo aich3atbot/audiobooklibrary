@@ -1,0 +1,4 @@
+{# Closes the confirm dialog and swaps the edition's transcode panel — now a
+   progress bar polling the job — back into the open file list. #}
+<div id="modal"></div>
+{% with oob = true %}{% include "_transcode_status.html" %}{% endwith %}

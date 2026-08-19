@@ -176,15 +176,20 @@ def book_detail(book_id: int, request: Request, db: Session = Depends(get_db)):
 @router.get("/editions/{edition_id}/files", response_class=HTMLResponse)
 def edition_files(edition_id: int, request: Request, db: Session = Depends(get_db)):
     """An edition's file table, loaded lazily when its path is expanded —
-    bitrate probing reads every audio file, too slow for page load."""
+    bitrate probing reads every audio file, too slow for page load. The
+    transcode control rides along: this is the one place the user can see
+    exactly which files a conversion would consume."""
+    from app.routes.transcode import status_context  # deferred: import cycle
+
     edition = db.get(Edition, edition_id)
     if edition is None:
         raise HTTPException(status_code=404, detail="edition not found")
     missing = not (edition.library_path and Path(edition.library_path).is_dir())
     files = [] if missing else _edition_files(edition)
-    return templates.TemplateResponse(
-        request, "_edition_files.html", {"files": files, "missing": missing}
-    )
+    context = {"files": files, "missing": missing, "edition": edition}
+    if not missing:
+        context |= status_context(db, edition)
+    return templates.TemplateResponse(request, "_edition_files.html", context)
 
 
 @router.get("/editions/{edition_id}/rename", response_class=HTMLResponse)

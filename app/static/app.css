@@ -359,3 +359,17 @@ button.edition-option {
 .user-actions button { padding: 0.15rem 0.6rem; font-size: 0.8rem; width: auto; }
 .user-edit td { border-top: none; padding-top: 0; }
 .user-edit details { margin-bottom: 0; }
+
+/* The transcode control inside an expanded file list: a button, or a progress
+   bar while a conversion runs. */
+.transcode {
+    margin: 0.5rem 0;
+}
+
+.transcode p {
+    margin: 0 0 0.3rem;
+}
+
+.transcode progress {
+    margin: 0 0 0.5rem;
+}

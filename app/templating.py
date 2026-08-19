@@ -17,8 +17,21 @@ def human_size(n: int | float | None) -> str:
     return f"{size:.1f} PB"
 
 
+def human_duration(seconds: float | int | None) -> str:
+    """`9h 12m`, `47m`, `38s` — long enough to be useful, short enough to sit
+    inline in a sentence."""
+    if not seconds:
+        return "?"
+    total = int(seconds)
+    hours, minutes = divmod(total // 60, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m" if minutes else f"{total}s"
+
+
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters["human_size"] = human_size
+templates.env.filters["duration"] = human_duration
 templates.env.filters["series_index"] = format_series_index
 templates.env.globals["display_status"] = display_status
 templates.env.globals["book_status"] = book_status

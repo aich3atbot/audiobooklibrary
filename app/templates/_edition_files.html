@@ -1,6 +1,7 @@
 {% if missing %}
 <p class="error">Folder not found — the files may have been moved or deleted.</p>
 {% else %}
+{% include "_transcode_status.html" %}
 <table>
     <thead><tr><th>File</th><th>Size</th><th>Bitrate</th></tr></thead>
     <tbody>

@@ -8,7 +8,15 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Book, DownloadState, Edition, Release
+from app.models import (
+    TRANSCODE_ACTIVE,
+    Book,
+    DownloadState,
+    Edition,
+    Release,
+    TranscodeJob,
+    TranscodeState,
+)
 from app.services.downloads import drop_from_client
 from app.services.importer import ACTIVE_STATUSES, import_release, replace_key
 from app.services.sync import delete_state
@@ -54,6 +62,23 @@ def activity(request: Request, db: Session = Depends(get_db)):
         .unique()
         .all()
     )
+    def transcodes(*states):
+        return (
+            db.scalars(
+                select(TranscodeJob)
+                .where(TranscodeJob.state.in_(states))
+                .options(
+                    joinedload(TranscodeJob.edition)
+                    .joinedload(Edition.book)
+                    .joinedload(Book.author),
+                    joinedload(TranscodeJob.user),
+                )
+                .order_by(TranscodeJob.id.desc())
+            )
+            .unique()
+            .all()
+        )
+
     return templates.TemplateResponse(
         request,
         "activity.html",
@@ -61,6 +86,8 @@ def activity(request: Request, db: Session = Depends(get_db)):
             "active": releases_with(*ACTIVE_STATUSES),
             "failed": releases_with("failed"),
             "imported": imported,
+            "transcoding": transcodes(*TRANSCODE_ACTIVE),
+            "transcode_failed": transcodes(TranscodeState.FAILED),
         },
     )
 
