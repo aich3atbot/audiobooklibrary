@@ -10,6 +10,7 @@ import pytest
 
 from app.services.audio_meta import (
     CHAPTER_SCAN_KEY,
+    CHAPTER_SCAN_VERSION,
     rescan_for_chapters,
     scan_edition_audio,
 )
@@ -247,4 +248,4 @@ def test_rescan_backfills_older_scans_once(clean_db, imported_edition, test_sett
 
     from app.models import AppState
 
-    assert clean_db.get(AppState, CHAPTER_SCAN_KEY).value == "2"
+    assert clean_db.get(AppState, CHAPTER_SCAN_KEY).value == CHAPTER_SCAN_VERSION

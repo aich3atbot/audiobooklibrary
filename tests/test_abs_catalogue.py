@@ -190,6 +190,71 @@ def test_chapters_merge_embedded_across_files(client, token, library):
     assert chapters[2]["end"] == pytest.approx(first.duration + second.duration)
 
 
+@pytest.mark.parametrize(
+    "rel_path, title, expected",
+    [
+        # a name that is only a position hands over to the file's title tag
+        ("003.mp3", "The Vanishing Glass", "The Vanishing Glass"),
+        ("track_07.mp3", "Escape", "Escape"),
+        ("CD2/04.mp3", "Escape", "Escape"),
+        ("Chapter 12.mp3", "Dobby's Warning", "Dobby's Warning"),
+        # a descriptive filename always wins — it is the user's own naming
+        ("03 - The Vanishing Glass.mp3", "Something Else", "03 - The Vanishing Glass"),
+        ("Prologue.mp3", "Something Else", "Prologue"),
+        # nothing to fall back to
+        ("003.mp3", None, "003"),
+    ],
+)
+def test_track_chapter_title(rel_path, title, expected):
+    from app.abs.catalogue import track_chapter_title
+    from app.models import AudioFile
+
+    assert track_chapter_title(AudioFile(rel_path=rel_path, title=title)) == expected
+
+
+def test_identical_title_tags_are_ignored(client, token, library):
+    """Rippers stamp the book's name on every track. Numbered filenames beat
+    forty chapters all called "The Mayor of Noobtown"."""
+    db = library["db"]
+    mayor = library["mayor"]
+    for index, file in enumerate(mayor.audio_files, start=1):
+        file.rel_path = f"{index:03d}.mp3"  # a filename that names nothing
+        file.title = "The Mayor of Noobtown (Unabridged)"
+    db.commit()
+
+    chapters = get(client, token, f"/api/items/li_{mayor.id}").json()["media"]["chapters"]
+
+    assert [c["title"] for c in chapters] == ["001", "002"]
+
+
+def test_title_tags_that_are_just_the_book_name_are_ignored(client, token, library):
+    """Distinct, but still saying nothing the book title doesn't."""
+    db = library["db"]
+    mayor = library["mayor"]
+    for index, file in enumerate(mayor.audio_files, start=1):
+        file.rel_path = f"{index:03d}.mp3"
+        file.title = f"The Mayor of Noobtown - Part {index}"
+    db.commit()
+
+    chapters = get(client, token, f"/api/items/li_{mayor.id}").json()["media"]["chapters"]
+
+    assert [c["title"] for c in chapters] == ["001", "002"]
+
+
+def test_chapters_fall_back_to_title_tags(client, token, library):
+    """Files with no embedded chapters and numeric names title their chapters
+    from their own tags."""
+    db = library["db"]
+    mayor = library["mayor"]
+    for file, title in zip(mayor.audio_files, ["The Boy Who Lived", "Vanishing Glass"]):
+        file.title = title
+    db.commit()
+
+    chapters = get(client, token, f"/api/items/li_{mayor.id}").json()["media"]["chapters"]
+
+    assert [c["title"] for c in chapters] == ["The Boy Who Lived", "Vanishing Glass"]
+
+
 def test_item_detail_progress_include(client, token, library, user):
     db = library["db"]
     db.add(MediaProgress(user_id=user.id, edition_id=library["mayor"].id,

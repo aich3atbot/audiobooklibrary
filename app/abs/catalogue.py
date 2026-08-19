@@ -7,6 +7,7 @@ ids are li_<edition.id>. Book metadata is read through edition.book."""
 
 import base64
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,16 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.abs import payloads
 from app.config import get_settings
-from app.models import Author, Book, Bookmark, Edition, MediaProgress, Series, User
+from app.models import (
+    Author,
+    AudioFile,
+    Book,
+    Bookmark,
+    Edition,
+    MediaProgress,
+    Series,
+    User,
+)
 
 COVER_NAMES = ("cover", "folder")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
@@ -187,12 +197,53 @@ def edition_size(edition: Edition) -> int:
     return sum(f.size for f in edition.audio_files)
 
 
+# A filename that names nothing but a position: "003", "track_07", "CD2-04",
+# "Chapter 12". Only these hand the chapter title over to the file's own title
+# tag — a descriptive filename always wins, because library filenames are the
+# user's own naming and a generic number is the only case where the tag can
+# say something the name doesn't.
+JUNK_STEM = re.compile(
+    r"^(?:track|part|chapter|chap|cd|disc|disk|file|section)?[\s_.\-]*\d{1,4}$",
+    re.IGNORECASE,
+)
+
+
+def tags_can_name_chapters(edition: Edition) -> bool:
+    """Whether this edition's title tags say anything a chapter list can use.
+
+    Rippers routinely stamp the *book's* name onto every track's title tag, so
+    a tag is only worth reading when it varies across the edition and is not
+    just the book's own name — otherwise a 40-file book turns into 40
+    identically-named chapters, which is far worse than the numbers it
+    replaced. This is not hypothetical: of the three MP3 editions in the
+    library this was measured against, two carry one identical title on every
+    file, and on one of them that title names the wrong edition."""
+    titles = [f.title.strip() for f in edition.audio_files if f.title and f.title.strip()]
+    if not titles:
+        return False
+    if len(edition.audio_files) > 1 and len(set(titles)) == 1:
+        return False
+    book_title = (edition.book.title or "").strip().casefold()
+    if book_title and all(t.casefold().startswith(book_title) for t in titles):
+        return False
+    return True
+
+
+def track_chapter_title(file: AudioFile, tags_usable: bool = True) -> str:
+    """The chapter name for a track carrying no embedded chapters."""
+    stem = Path(file.rel_path).stem.strip()
+    if tags_usable and file.title and (not stem or JUNK_STEM.match(stem)):
+        return file.title
+    return stem
+
+
 def edition_chapters(edition: Edition) -> list[dict[str, Any]]:
     """Embedded chapters, shifted by each file's start offset, and one chapter
     per track for files that carry none (matches how ABS treats multi-file
     books without metadata)."""
     chapters: list[dict[str, Any]] = []
     offset = 0.0
+    tags_usable = tags_can_name_chapters(edition)
     for file in edition.audio_files:
         duration = file.duration or 0.0
         embedded = json.loads(file.chapters_json) if file.chapters_json else None
@@ -213,7 +264,7 @@ def edition_chapters(edition: Edition) -> list[dict[str, Any]]:
                     "id": len(chapters),
                     "start": offset,
                     "end": offset + duration,
-                    "title": Path(file.rel_path).stem,
+                    "title": track_chapter_title(file, tags_usable),
                 }
             )
         offset += duration

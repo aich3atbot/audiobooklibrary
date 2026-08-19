@@ -699,6 +699,358 @@ Both thresholds are plain durations — there is deliberately no percentage-of-b
   squashed away: the Alembic history is now the single revision `4279694b0300`, which
   creates the current schema outright.
 
+## Transcoding MP3 editions to M4B (planned — not built)
+
+An edition whose files are a pile of MP3s can be converted, on demand, into a single
+chaptered `.m4b`. This is a *library* operation, not a download one: it rewrites files
+already imported, and it is destructive (the MP3s are deleted afterwards), so every part
+of it is designed around "prove the new file is good before removing the old ones".
+
+### Where it is offered
+
+On the book detail page, inside an edition's **expanded file list** (`_edition_files.html`,
+lazily loaded from `/editions/{id}/files`) — that fragment already walks the folder and
+probes every file with `identify()` for the bitrate column, so the predicate costs nothing
+extra and lands exactly where the user can see what would be converted.
+
+`transcodable(edition)` is true when **all** of:
+
+- the edition has a `library_path` and the folder exists;
+- it holds at least one file whose *contents* are MP3 (`identify().family == "mp3"` — by
+  contents, never the extension, like everything else in the app) and **no other audio**:
+  no file in `AUDIO_EXTS` and no file identifying as another audio family. Subfolders
+  (CD1/CD2) count and are walked;
+- ffmpeg is available (probed once, cached like `downloads_enabled`);
+- the edition has no queued/running transcode job and no active release (a replace
+  download in flight would land on the same folder).
+
+The button opens a confirm dialog (destructive, irreversible) naming the file count, the
+target bitrate, where the chapters will come from, and what will be deleted. It also warns
+when the MP3s are the *only* copy: with the default `IMPORT_MODE=copy` the library files
+are hardlinks to the still-seeding torrent, so deleting them costs nothing, but a `move`
+import or a collection import leaves no second copy.
+
+### Encoding
+
+Shell out to `ffmpeg` (`FFMPEG_PATH`, default `ffmpeg`). **ffprobe is deliberately not
+used**: the only thing it was wanted for is per-file durations, which mutagen already
+reports accurately for MP3 (Xing header / frame count) and which `audio_file.duration`
+already holds from the import scan. Not needing it halves the cost of shipping ffmpeg.
+There is no lossless path — MP3 must be re-encoded to AAC (remuxing MP3 into an MP4
+container is legal but half the players choke on it, so it is not an option here).
+
+The exact command below has been **run for real** (see "Verified live" at the end of this
+section) against mixed-format MP3s:
+
+```
+ffmpeg -nostdin -hide_banner -y \
+  -i 01.mp3 -i 02.mp3 … -i chapters.ffmeta \
+  -filter_complex "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[a0]; …
+                   [a0][a1]…concat=n=N:v=0:a=1[out]" \
+  -map "[out]" -map_metadata N -map_chapters N \
+  -metadata title=… -metadata album=… -metadata artist=… -metadata composer=<narrator> \
+  -f ipod -c:a aac -b:a <rate> -movflags +faststart -progress pipe:1 -nostats \
+  "<folder>/.<name>.m4b.part"
+```
+
+- **`-f ipod` is mandatory**, not cosmetic: the output is written to a `.part` temp name,
+  so ffmpeg cannot infer the muxer from the extension and fails without it.
+- `-map_metadata`/`-map_chapters` take the *input index* of the FFMETADATA file, which is
+  last, so both are `N` (the number of MP3s).
+
+- The **concat filter with a per-input `aformat`**, not the concat demuxer: a book's MP3s
+  are routinely mixed (22.05/44.1 kHz, mono/stereo) and the demuxer does not resample
+  between segments. Inputs beyond a few hundred fall back to the demuxer with a temp list
+  file (command-length guard).
+- **Bitrate**: `TRANSCODE_BITRATE` (default `64k`), halved when every source is mono, and
+  capped at the highest source bitrate so a 32k MP3 is never "upscaled".
+- Cover art: an image already in the folder (`cover.*`/`folder.*`, else the only image) is
+  embedded as the MP4 cover; the file itself stays where it is.
+- Progress comes from `-progress pipe:1` (`out_time_us` against the summed source
+  duration), written to the job row every few seconds.
+
+### Chapters
+
+Chapters can be *embedded in the MP3s* as well as sitting beside them, and embedded data
+wins: it travels with the files and, for an edition we have already imported, it is what
+the ABS apps are showing right now. Sources, first hit wins:
+
+1. **ID3v2 `CHAP` frames inside the MP3s** — the ID3 chapter-frame addendum, one `TIT2`
+   sub-frame per chapter title, times in ms relative to the file. **The app already reads
+   these**: `audio_meta._read_chapters` does `tags.getall("CHAP")`, and for an imported
+   edition the result is already sitting in `audio_file.chapters_json`. So the transcode
+   does not re-parse anything — it takes each file's stored chapters and shifts them by
+   that file's start offset, which is the *identical* rule the ABS API already uses to
+   build a book's chapter list (see CLAUDE.md, "a book's chapters are its files' chapters
+   shifted by each file's start offset"). The m4b therefore inherits exactly the chapter
+   list the user already sees in their app — the conversion changes nothing they can
+   perceive except the file count.
+2. **OverDrive MediaMarkers** (**built** — see "Embedded chapter sources" below) — a
+   `TXXX` frame with description `OverDrive MediaMarkers` whose value is XML
+   (`<Markers><Marker><Name>…</Name><Time>0:00.000</Time></Marker>…`), times relative to
+   the file. Extremely common in library-sourced MP3 audiobooks. It lives in
+   `_read_chapters`, not in the transcoder, so it improves the ABS chapter list for every
+   existing MP3 edition and the transcode inherits it for free.
+   **Triviality demotion**: embedded chapters that amount to exactly one chapter spanning
+   a whole file are not chapter information — they restate the file boundary, which the
+   fallback already knows. Treat those as *absent* so a real sidecar below can win;
+   otherwise a folder of one-trivial-CHAP-per-file MP3s would shadow a hand-made 40-entry
+   `.cue`. This is the only case where a sidecar outranks embedded data.
+3. **`*.cue`** in the folder. Both real-world shapes: one `FILE` (times absolute over the
+   whole book) and one `FILE` per MP3 (times relative to that file, offset by the file's
+   start in the concatenation, matched by filename). `INDEX 01 mm:ss:ff` frames are 1/75s.
+4. **`chapters.txt` / `*.chapters.txt`** — `HH:MM:SS(.mmm) Title` or `MM:SS Title` lines.
+5. **An FFMETADATA file** (`*.ffmeta`/`*.ffmetadata`, or any sidecar starting with
+   `;FFMETADATA1`) — parsed through our own reader rather than trusted wholesale.
+6. **An Audiobookshelf `metadata.json` / `metadata.abs`**, if the folder came from an ABS
+   library — it carries a `chapters` array in our own shape. Cheap to support, and this
+   app is ABS-compatible everywhere else.
+7. **Fallback: one chapter per MP3**, titled from the filename stem verbatim
+   (`03 - The Vanishing Glass.mp3` → `03 - The Vanishing Glass`). Disc subfolders are
+   ignored in the title. This is `catalogue.edition_chapters`, which the transcoder calls
+   rather than reimplementing — the m4b's chapters are then *by construction* the ones the
+   ABS apps were already showing.
+
+**The title tag never beats a filename**, and this was settled by measurement against the
+real library rather than by preference. Of its three MP3 editions:
+
+| edition | files | filenames | title tags |
+|---|---|---|---|
+| Chamber of Secrets {Full Cast} | 20 | `Chapter 1 - The Worst Birthday` … | **all 20 identical**: the book title |
+| Chamber of Secrets {Stephen Fry} | 20 | `Chapter 1 - The Worst Birthday` … | all 20 identical — and naming the *wrong* edition ("Full-Cast Edition") |
+| Four: A Divergent Collection | 52 | `Four - D01T02 Part 1 - The Transfer` … | **none at all** |
+
+Nought for three. Preferring tags would have turned two perfectly-titled books into forty
+chapters named after the book, one of them mislabelled. So: the filename wins, and the tag
+is read only when the name says nothing but a position — `003.mp3`, `track_07.mp3`,
+`CD2/04.mp3`, `Chapter 12.mp3` (`catalogue.JUNK_STEM` / `track_chapter_title`).
+
+That same measurement exposed a failure mode worth guarding directly, since the tag
+pattern it depends on is demonstrably common: **tags are ignored wholesale unless they
+vary across the edition and are more than the book's own name**
+(`catalogue.tags_can_name_chapters`). Without it, a book of `001.mp3 … 040.mp3` files all
+tagged with the book title — exactly what these editions carry — would render forty
+identically-named chapters. Both rules are **built**.
+
+Two sources are rejected outright: **silence detection**
+(`silencedetect` guesses boundaries, and this project never guesses a match) and
+**playlist files** (`.m3u`), which give order, not chapters — order already comes from the
+natural-sort that produced `audio_file.index`, and must keep coming from there so
+positions stay put.
+
+**Embedded chapter sources (built, ahead of the transcoder)** — sources 1, 2 and 7 landed
+on their own, because they improve the ABS chapter list for every MP3 edition already in
+the library, with or without transcoding:
+
+- `audio_meta._overdrive_chapters` parses the marker XML; `_read_chapters` tries CHAP
+  first, then markers, then the MP4 container. Marker times are `H:MM:SS.mmm` /
+  `MM:SS.mmm` / `SS.mmm`; ends close on the next marker and the last stays open for
+  `scan_edition_audio` to close with the track duration. A chapter split across files
+  repeats its marker at the same instant, so a marker at or before the previous one is
+  dropped rather than becoming a zero-length chapter.
+- `audio_file.title` (revision `a4e1c7b90d33`) stores each track's own title tag —
+  ID3 `TIT2`, MP4 `©nam`, Vorbis `title` — read during the scan.
+- `CHAPTER_SCAN_VERSION` is **3**, and its re-scan is now *every* imported edition rather
+  than only the MP4s version 2 looked at: markers apply to MP3s and the title column is
+  new on every row, so no narrower predicate would find the rows that need filling.
+  Header-only, so a full pass stays cheap.
+
+Everything normalizes to `[(start, title)]`, sorted, deduped, clamped, ends closed with
+the next start (last = total duration), and is written as an FFMETADATA file with
+`TIMEBASE=1/1000`. A source that parses to nothing usable falls through to the next.
+Per-file start offsets are the cumulative `audio_file.duration` values (mutagen's MP3
+durations, already stored) — no ffprobe. ffmpeg writes MP4 chapters as a QuickTime
+chapter text track, which `app/services/mp4_chapters.py` already reads; the
+post-transcode rescan is the proof.
+
+### Metadata written into the m4b
+
+Nothing in *this* app reads these tags — the ABS API serves title/author/narrator/series
+from the database, and `scan_edition_audio` only takes duration and chapters. They exist
+so the file is a good citizen anywhere else: played in another app, re-imported into ABS,
+or found on disk in five years. The split below is measured, not assumed (see "Verified
+live"): ffmpeg writes what its MP4 muxer maps, and a mutagen pass afterwards adds the rest.
+
+| Atom | Source | Written by |
+|---|---|---|
+| `©nam` title | `book.title` | ffmpeg |
+| `©ART` artist, `aART` album artist | `author.name` | ffmpeg |
+| `©alb` album | `book.title` | ffmpeg |
+| `©wrt` composer | `edition.narrator` (the m4b convention for narrator) | ffmpeg |
+| `©gen` genre | `"Audiobook"` | ffmpeg |
+| `©grp` grouping | `series.name` | ffmpeg |
+| `trkn` track | `book.series_index` | ffmpeg |
+| `stik` media type | `2` — marks it an **audiobook**, not music | ffmpeg |
+| `pgap` gapless | `1` | ffmpeg |
+| `©cmt` comment | provenance: transcoded from N MP3s by this app | ffmpeg |
+| `desc` description | Hardcover URL when we have the slug | ffmpeg |
+| `©mvn`/`©mvi`/`©mvc`/`shwm` | series name / index / count — **ffmpeg silently drops these** | mutagen |
+| `covr` cover art | an image already in the folder (`cover.*`/`folder.*`, else the only image) | mutagen |
+| `----:com.apple.iTunes:NARRATOR` | `edition.narrator`, for tools that look there | mutagen |
+
+Doing cover art in mutagen rather than ffmpeg is not just tidiness: it keeps an image
+stream out of a filter-graph output mapping, and it removes png/mjpeg
+decoders/encoders/parsers from the minimal ffmpeg build entirely. The mutagen pass is
+verified not to disturb the chapter track, the duration, or the `moov`-before-`mdat`
+ordering that `+faststart` produced.
+
+### Job model and worker
+
+A `transcode_job` table (new Alembic revision on top of head `f8d2a63b7c14`) and **one**
+background worker task started in `lifespan`, draining `queued` jobs oldest-first, one at a
+time (ffmpeg is CPU-bound; a queue keeps the picture simple and the box usable).
+
+```
+transcode_job
+  id, edition_id (FK→edition, index), user_id (FK→user, SET NULL)
+  status        queued | running | done | failed | cancelled
+  progress      0–100, null until running
+  bitrate       what was actually used
+  source_count  how many MP3s went in
+  output_path   the resulting .m4b
+  cancel_requested  bool — set by the request handler, polled by the worker
+  error, created_at, started_at, finished_at
+```
+
+Cancellation goes through the row, not a shared process handle: the request handler sets
+`cancel_requested`, the worker (already polling the progress pipe) kills ffmpeg and cleans
+up the temp file. On **startup**, any row left `running` is marked `failed` ("interrupted
+by a restart") and its stray `.part` file removed — never silently resumed.
+
+### The destructive part, in order
+
+1. Encode to `<folder>/.<name>.m4b.part` (leading dot + non-audio suffix: invisible to
+   both our scanner and ABS).
+2. **Tag** the temp file with mutagen (series movement atoms, cover art, narrator) —
+   before validation, so what gets validated is the file that will actually be kept.
+3. **Validate**: `identify()` says family `mp4`, and its duration is within 1% (and 5s) of
+   the summed source duration. Anything else fails the job and leaves the folder untouched.
+3. Atomically rename to `<edition folder name>.m4b` (refusing an occupied name).
+4. Delete the MP3s **and the chapter sidecar that was actually consumed** (the `.cue` that
+   produced the chapters — never one we didn't use); prune emptied disc subfolders with
+   `prune_empty_dirs`. Cover art, `.nfo`, and everything else stay.
+5. `scan_edition_audio` rebuilds the `audio_file` rows and reads the chapters back out of
+   the new file.
+6. Job → `done`.
+
+Any failure before step 3 leaves the edition exactly as it was.
+
+### Effect on the ABS side
+
+`MediaProgress.current_time` is absolute seconds over the whole edition and the M4B is the
+same audio in the same order, so **progress and bookmarks stay valid**; the library item id
+(`li_<edition.id>`) does not change. What does change: `audio_file` row ids (the ABS file
+inos), so apps re-fetch the track list, and a client mid-playback on a track that just
+vanished will error until it reloads. Total duration may shift by well under a second.
+Read-state logic is untouched.
+
+### UI
+
+- `_edition_files.html`: a "Convert to M4B…" button under the table when `transcodable`;
+  `_transcode_confirm.html` as the modal; `_transcode_status.html` as a progress panel that
+  polls `GET /editions/{id}/transcode` every 2s while queued/running and swaps the refreshed
+  file table in when the job finishes.
+- Routes (`app/routes/transcode.py`): `POST /editions/{id}/transcode` (queue),
+  `GET /editions/{id}/transcode` (status fragment), `POST /transcodes/{id}/cancel`,
+  `POST /transcodes/{id}/dismiss`.
+- **Activity page**: a "Transcoding" section for active jobs (book, progress, Cancel), and
+  failed jobs join "Needs attention" with the error and Retry/Dismiss — the same convention
+  as failed imports.
+
+### Config, container, tests
+
+```
+TRANSCODE_BITRATE   # default 64k — target AAC bitrate; halved for mono sources,
+                    # never above the source's own bitrate
+FFMPEG_PATH         # default "ffmpeg" (ffprobe resolved alongside it)
+```
+
+Both optional, bare in `docker-compose.yml`, defaults in `app/config.py` only.
+
+**Shipping ffmpeg — measured, not estimated** (docker, `python:3.12-slim` on trixie,
+amd64; the app image today is 315 MB on disk / 104 MB pulled):
+
+| how | on disk | pulled | build cost |
+|---|---|---|---|
+| `apt install --no-install-recommends ffmpeg` | **+434 MB** | +168 MB | none |
+| `COPY --from=mwader/static-ffmpeg` (ffmpeg only) | **+129 MB** | +51 MB | none |
+| **minimal source build** (chosen) | **+2 MB** | +1 MB | ~1.5 min, cached |
+
+Debian's ffmpeg is one monolithic package whose dependency tail is 124 MB of libLLVM,
+41 MB of libgallium and 27 MB of libz3 — the **Mesa 3D stack**, pulled in via
+`libavdevice` → `libplacebo` → Vulkan/OpenCL. `/usr/bin/ffmpeg` itself is 1 MB. None of
+it can be removed afterwards without breaking ffmpeg's dynamic linking. We convert MP3 to
+AAC; paying 434 MB for a software GPU driver and a shader compiler is absurd, so the
+Dockerfile gains a build stage compiling ffmpeg with everything disabled but what this
+feature uses:
+
+```
+--disable-everything --disable-doc --disable-network --disable-autodetect
+--disable-debug --disable-shared --enable-static --enable-small
+--disable-ffplay --disable-ffprobe --disable-swscale --disable-postproc
+--enable-decoder=mp3,mp3float,aac,aac_fixed,alac
+--enable-encoder=aac
+--enable-demuxer=mp3,mov,concat,ffmetadata
+--enable-muxer=mp4,ipod
+--enable-parser=mpegaudio,aac
+--enable-protocol=file,pipe,concat,concatf
+--enable-filter=aresample,aformat,concat,anull,atrim,aselect,anullsrc
+--enable-bsf=aac_adtstoasc
+```
+
+That yields a **2.04 MB** static binary, copied into the runtime stage. **`ffmetadata` must
+be in the demuxer list** — chapters are fed to ffmpeg as an input file, and without it the
+whole command dies with "Invalid data found when processing input" (this is how the flag
+list was found to be wrong the first time). No image codecs are needed because cover art
+is written by mutagen, not ffmpeg. A missing flag fails loudly at encode time, never
+silently. If the source build ever
+becomes a maintenance annoyance, `COPY --from=mwader/static-ffmpeg:7.1 /ffmpeg
+/usr/local/bin/ffmpeg` is the one-line, zero-build fallback at +129 MB.
+
+`tests/test_transcode.py`: cue/chapters.txt/ffmetadata parsing and priority, the
+`transcodable` predicate (including a `.mp3` that is really AAC → not transcodable),
+bitrate selection, ffmpeg argv construction, progress parsing, and the whole worker path
+against a **fake ffmpeg** (a stub that emits progress lines and drops a canned m4b) —
+success (MP3s and cue gone, cover kept, audio_file rows rebuilt), non-zero exit, duration
+mismatch, cancel, and restart-with-a-running-row.
+
+### Verified live
+
+The sandbox has no ffmpeg (`deb.debian.org` is blocked by the network policy) but Docker's
+own network is not, so the encode was verified inside a container built from the minimal
+configure line above. Three MP3s deliberately mismatched — 5s 44.1 kHz stereo, 7s
+22.05 kHz **mono**, 4s 48 kHz stereo — plus an FFMETADATA chapter file, through the exact
+command above:
+
+- the `aformat` + `concat` filter chain handled the mixed rates and channel counts with no
+  demuxer complaints, which is the reason for preferring it over the concat demuxer;
+- `-progress pipe:1` emitted `out_time=00:00:16.000000` then `progress=end` — the progress
+  reporting the job row needs;
+- the output duration measured **16.023s against a 16.000s source sum**: +23 ms of encoder
+  padding. Real, small, and exactly why validation step 2 is a tolerance (1% / 5s) rather
+  than an equality check;
+- `app/services/audio_format.identify()` reads it back as family `mp4`, mime `audio/mp4`,
+  `has_video_track` False — so it survives our own importer's identification;
+- `app/services/mp4_chapters.read_mp4_chapters()` returns all three chapters with correct
+  titles and boundaries. ffmpeg's chapter text track is readable by the reader we already
+  have — no new MP4 parsing needed. The last chapter comes back with `end: None`, which
+  `scan_edition_audio` already closes with the track duration.
+
+The tagging split was measured the same way. Feeding ffmpeg a full `-metadata` set and
+dumping the result with mutagen showed it writes `©nam ©ART aART ©alb ©wrt ©gen ©grp
+©cmt desc trkn stik pgap` — and **silently drops `movement`/`movement_index`**, so the
+series atoms have no ffmpeg path at all. A mutagen pass then added `©mvn ©mvi ©mvc shwm`,
+`covr` and the freeform narrator atom, after which the file still reported: same three
+chapters, same 16.023s duration, and top-level box order still `ftyp moov free mdat` —
+i.e. **`+faststart` survives the tagging pass** (ffmpeg leaves a `free` box that mutagen
+writes into). The chapter side was checked too: an MP3 given real ID3v2 `CHAP`/`CTOC`
+frames is read correctly by the *existing* `audio_meta._read_chapters`, which is what
+makes source 1 above free; the same file's `TXXX:OverDrive MediaMarkers` frame is visible
+to mutagen but ignored by our reader today, which is the gap source 2 closes.
+
+What remains unverified is only the parts that need the user's own library: a real
+multi-hour book, a real `.cue`, and the ABS apps picking up the rebuilt file list.
+
 ## Future work (out of scope for this build)
 
 - Public REST API: list books, download audio files, update reading state — designed to serve

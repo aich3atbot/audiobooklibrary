@@ -43,11 +43,23 @@ Hardcover's `author.image_url`) and direct-play streaming
 open in `RequireAuthMiddleware`; putting either behind auth breaks covers and playback.
 **Chapters**: mutagen reads ID3 `CHAP` (mp3) but exposes *nothing* for MP4, so
 `app/services/mp4_chapters.py` parses the container itself — Nero `moov/udta/chpl` first,
-then a QuickTime chapter text track via the audio track's `tref/chap`. Files with no
-embedded chapters fall back to one chapter per track, and a book's chapters are its
-files' chapters shifted by each file's start offset. Improving extraction means bumping
-`CHAPTER_SCAN_VERSION` in `app/services/audio_meta.py`, which triggers a one-time
-re-scan of already-scanned MP4s at startup (marker in `app_state`).
+then a QuickTime chapter text track via the audio track's `tref/chap`. mp3 has a second
+embedded source after `CHAP`: **OverDrive MediaMarkers**, XML in a `TXXX` frame, which
+library-sourced audiobooks ship with (`_overdrive_chapters`; a marker repeated at the
+same instant is a chapter continued across files, not a zero-length chapter). Files with
+no embedded chapters fall back to one chapter per track, titled from the **filename** —
+except when the filename is only a position (`003`, `track_07`, `Chapter 12`), where the
+track's own title tag wins (`audio_file.title`, `catalogue.track_chapter_title`); a
+descriptive filename always beats the tag. **Do not flip that precedence**: measured
+across the real library, two of its three MP3 editions carry one identical title tag on
+every file (the book's name, once naming the wrong edition) and the third has no tags at
+all — tags-first would have wrecked every one of them. Tags are ignored entirely unless
+they vary across the edition and say more than the book's title
+(`catalogue.tags_can_name_chapters`). A book's chapters are its files' chapters
+shifted by each file's start offset (`catalogue.edition_chapters` — call it, don't
+reimplement it). Improving extraction means bumping `CHAPTER_SCAN_VERSION` in
+`app/services/audio_meta.py`, which triggers a one-time re-scan at startup (marker in
+`app_state`); version 3 re-scans every imported edition, not just MP4s.
 
 Third-party clients (Lissen, Absorb) are supported too, and they exercise paths the
 official app never touches: item detail **without** `expanded=1` (must return the full

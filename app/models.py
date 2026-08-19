@@ -355,6 +355,10 @@ class AudioFile(Base):
     mime_type: Mapped[str] = mapped_column(String(50))
     # JSON [{id, start, end, title}] in seconds; usually only on m4b
     chapters_json: Mapped[str | None] = mapped_column(Text)
+    # The file's own title tag (ID3 TIT2 / MP4 ©nam), used to name a chapter
+    # when the filename says nothing but a number — see
+    # app/abs/catalogue.py. NULL when the file carries no title.
+    title: Mapped[str | None] = mapped_column(Text)
 
     edition: Mapped[Edition] = relationship(back_populates="audio_files")
 
