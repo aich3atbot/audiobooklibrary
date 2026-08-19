@@ -14,7 +14,8 @@ Audiobookshelf-compatible API, the direct torrent pipeline (AudioBookBay + Delug
 replaced Prowlarr), the **multi-user conversion** (mandatory accounts, virtual admin,
 per-user Hardcover sync and ABS progress over a shared /audiobooks store — see plan.md
 "Multi-user conversion"), and **multi-edition support** (a book can hold several
-recordings as `edition` rows — see plan.md "Multi-edition support") are built, tested,
+recordings as `edition` rows — see plan.md "Multi-edition support"), and **MP3 → M4B
+transcoding** (see plan.md "Transcoding MP3 editions to M4B") are built, tested,
 and committed. The Alembic history is rooted at a **squashed base revision**, `4279694b0300`
 (creates the whole schema as of that point; no upgrade path from any earlier revision —
 the only live database, `data/config/`, was stamped at it by hand), with a linear chain
@@ -204,6 +205,20 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   through: no `user_book` row, nothing stuck at `pending_push`, no push. Everything else in
   `apply_progress` still runs, the near-finish sweep included — don't guard higher up or a
   limited user's finished books stop leaving Continue Listening.
+- **MP3 → M4B transcoding** (`app/services/transcode.py`, plan.md "Transcoding MP3
+  editions to M4B"): offered in an expanded edition's file list when every audio file in
+  the folder identifies as MP3. **The order in `run_job` is the safety property** — encode
+  to a dotfile, validate (parses as MP4, holds the audio that went in), tag, re-validate,
+  rename, and only then delete the MP3s and the consumed chapter sidecar; anything failing
+  before the rename leaves the edition untouched. Chapters reuse
+  `catalogue.edition_chapters` so the m4b carries exactly what the apps already showed;
+  a sidecar only wins when the embedded data is trivial (one chapter per file).
+  **Chapter offsets come from a decode pass (`measure_durations`), never from tags** —
+  tag durations run ~0.8% long, which is minutes of drift once files are concatenated.
+  One `transcode_job` row + one serial worker; cancel goes through `cancel_requested`,
+  and a job left RUNNING by a restart is failed, never resumed. ffmpeg is a 2 MB
+  purpose-built binary from a Dockerfile stage (Debian's package would add 434 MB, mostly
+  Mesa); its configure flags are exact and a missing one fails loudly at encode time.
 - **Config via env vars** only — see `.env.example` for the full list (auth, Hardcover,
   indexer, download client, paths, intervals, import mode). `DOWNLOAD_DIR` must be the
   directory the torrent client writes *completed* downloads to. The session-cookie secret

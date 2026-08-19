@@ -27,6 +27,8 @@ services:
       - IMPORT_MODE
       - MARK_READING_AFTER_MINUTES
       - MARK_READ_TAIL_MINUTES
+      - TRANSCODE_BITRATE
+      - FFMPEG_PATH
     volumes:
       # Bind-mount sources: only compose can default a host path, and a wrong
       # guess would silently write the library somewhere else, so they are

@@ -129,6 +129,32 @@ it read on Hardcover automatically (for a limited account, which has no Hardcove
 stays local: progress and "finished" work exactly as they do for anyone else). Audio is
 always direct-played (no transcoding) — m4b/m4a/mp3/flac/ogg all play natively in the apps.
 
+## Converting a folder of MP3s to one M4B
+
+An edition that arrived as a pile of MP3s can be joined into a single chaptered `.m4b`.
+Open the book, expand an edition's file list, and press **Convert to M4B…** — the button
+only appears when every audio file in the folder really is an MP3 (checked by reading the
+files, not by trusting their extensions).
+
+The chapters are the ones your apps already show: embedded ID3 `CHAP` frames or OverDrive
+markers if the files carry them, otherwise a `.cue`, `chapters.txt`, ffmetadata or
+Audiobookshelf `metadata.json` sitting beside them, and failing all of that one chapter per
+MP3 named after the file. Chapter positions come from decoding the files rather than from
+their tags, which run systematically long and would otherwise drift by minutes across a
+long book. Title, author, narrator, series and cover art are written into the result, and
+`TRANSCODE_BITRATE` (default 64k) sets the quality — halved for a mono book, and never
+raised above what the source actually holds.
+
+The conversion runs in the background, one book at a time, with progress on the book page
+and on **Activity** (where you can also stop it). **The MP3s are deleted** — but only after
+the new file has been written, checked for the right amount of audio, tagged and moved into
+place, so anything that goes wrong leaves the folder exactly as it was. A `.cue` whose
+chapters ended up inside the m4b is removed with them; cover art and everything else stays.
+
+With the default `IMPORT_MODE=copy` your library files are hardlinks to the still-seeding
+torrent, so converting costs nothing — the torrent keeps its own copy. If you imported with
+`move`, or from `/imports`, the MP3s are your only copy and the conversion is one-way.
+
 ## Importing an existing collection
 
 Mount your current audiobook collection at `/imports` and open the **Imports** page. The

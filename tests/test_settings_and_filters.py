@@ -30,6 +30,17 @@ def clean_db(db_session):
     return db_session
 
 
+@pytest.fixture(autouse=True)
+def ffmpeg_stub(test_settings, tmp_path, monkeypatch):
+    """A working ffmpeg, so the connection badges do not depend on whether the
+    machine running the tests happens to have one."""
+    stub = tmp_path / "ffmpeg"
+    stub.write_text("#!/bin/sh\necho 'ffmpeg version 7.1.1-static'\n")
+    stub.chmod(0o755)
+    monkeypatch.setattr(test_settings, "ffmpeg_path", str(stub))
+    return stub
+
+
 @pytest.fixture
 def download_config(test_settings, monkeypatch):
     monkeypatch.setattr(test_settings, "index_url", ABB)
@@ -135,7 +146,8 @@ def test_settings_page_all_connected(client, clean_db, download_config):
     assert "connected as davidr" in response.text
     assert "reachable" in response.text
     assert "Deluge daemon 2.2.0" in response.text
-    assert response.text.count(">ok</span>") == 3
+    assert "ffmpeg version 7.1.1-static" in response.text
+    assert response.text.count(">ok</span>") == 4
 
 
 @respx.mock
@@ -147,7 +159,17 @@ def test_settings_page_shows_errors(client, clean_db, download_config):
     response = client.get("/settings")
 
     assert response.status_code == 200
-    assert response.text.count(">error</span>") == 3
+    assert response.text.count(">error</span>") == 3  # ffmpeg is fine here
+
+
+def test_settings_page_reports_a_missing_ffmpeg(client, clean_db, test_settings, monkeypatch):
+    """Without ffmpeg the only symptom in the UI is a button that never
+    appears, so the connection check has to say so."""
+    monkeypatch.setattr(test_settings, "ffmpeg_path", "/nonexistent/ffmpeg")
+
+    response = client.get("/settings")
+
+    assert "cannot be converted to M4B" in response.text
 
 
 def test_settings_page_downloads_disabled(

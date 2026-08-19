@@ -307,13 +307,18 @@ SYNC_INTERVAL_MINUTES   # default 30
 WATCH_INTERVAL_SECONDS  # default 30 (download dir poll)
 DOWNLOAD_QUIET_SECONDS  # default 120 (download "finished" quiet period)
 IMPORT_MODE             # copy (default, hardlink-or-copy) | move
+TRANSCODE_BITRATE       # default 64k — target AAC bitrate for MP3 -> M4B; halved for a
+                        # mono book, never above the source's own bitrate
+FFMPEG_PATH             # default "ffmpeg" (the image builds its own 2 MB copy)
 PUID / PGID             # compose-only, optional (default 1000:1000): the uid:gid the
                         # container runs as (docker-compose `user:`), owning written files
 ```
 
 ## Container
 
-- Single `Dockerfile` (python:3.12-slim, uv or pip install, uvicorn entrypoint).
+- Single `Dockerfile` (python:3.12-slim, uv or pip install, uvicorn entrypoint), with a
+  first stage that builds a **2 MB purpose-built ffmpeg** for MP3 → M4B conversion (see
+  the transcoding section for why not Debian's 434 MB package).
 - `docker-compose.yml` example wiring volumes and env vars (the torrent client is external,
   run by the user).
 - **Non-root**: compose sets `user: "${PUID:-1000}:${PGID:-1000}"`, covering the whole
@@ -339,6 +344,7 @@ audiobooklibrary/
 │  ├─ clients/qbittorrent.py        # qBittorrent Web API v2
 │  ├─ services/sync.py      # Hardcover sync logic
 │  ├─ services/downloads.py # grab, watch, import
+│  ├─ services/transcode.py # MP3 -> M4B: chapter sources, ffmpeg, the job worker
 │  ├─ routes/               # ui.py, books.py, search.py, activity.py, settings.py
 │  ├─ templates/            # Jinja2 + HTMX partials
 │  └─ static/
@@ -699,7 +705,7 @@ Both thresholds are plain durations — there is deliberately no percentage-of-b
   squashed away: the Alembic history is now the single revision `4279694b0300`, which
   creates the current schema outright.
 
-## Transcoding MP3 editions to M4B (planned — not built)
+## Transcoding MP3 editions to M4B (built)
 
 An edition whose files are a pile of MP3s can be converted, on demand, into a single
 chaptered `.m4b`. This is a *library* operation, not a download one: it rewrites files
@@ -996,6 +1002,9 @@ amd64; the app image today is 315 MB on disk / 104 MB pulled):
 | `COPY --from=mwader/static-ffmpeg` (ffmpeg only) | **+129 MB** | +51 MB | none |
 | **minimal source build** (chosen) | **+2 MB** | +1 MB | ~1.5 min, cached |
 
+Confirmed on the finished image: 317 MB on disk / 105 MB pulled, against 315 / 104 before,
+with a 2.04 MB `/usr/local/bin/ffmpeg` that runs the real conversion.
+
 Debian's ffmpeg is one monolithic package whose dependency tail is 124 MB of libLLVM,
 41 MB of libgallium and 27 MB of libz3 — the **Mesa 3D stack**, pulled in via
 `libavdevice` → `libplacebo` → Vulkan/OpenCL. `/usr/bin/ffmpeg` itself is 1 MB. None of
@@ -1030,12 +1039,21 @@ silently. If the source build ever
 becomes a maintenance annoyance, `COPY --from=mwader/static-ffmpeg:7.1 /ffmpeg
 /usr/local/bin/ffmpeg` is the one-line, zero-build fallback at +129 MB.
 
-`tests/test_transcode.py`: cue/chapters.txt/ffmetadata parsing and priority, the
-`transcodable` predicate (including a `.mp3` that is really AAC → not transcodable),
-bitrate selection, ffmpeg argv construction, progress parsing, and the whole worker path
-against a **fake ffmpeg** (a stub that emits progress lines and drops a canned m4b) —
-success (MP3s and cue gone, cover kept, audio_file rows rebuilt), non-zero exit, duration
-mismatch, cancel, and restart-with-a-running-row.
+Tests split three ways. `tests/test_transcode.py` is the pure half: cue (both shapes,
+frames, pre-gap, unresolvable FILE), chapters.txt, ffmetadata timebases, ABS metadata.json,
+sidecar precedence and case-insensitive matching, the triviality demotion, chapter
+normalisation and escaping, bitrate/layout selection, argv construction and progress
+parsing. `tests/test_transcode_worker.py` drives `run_job` against a **stub ffmpeg that
+writes a real MP4** whose `mvhd` duration matches what it claims to have encoded — so the
+duration check is genuinely exercised, and `FAKE_SCALE` makes it lie to test the
+truncated-encode rejection. It covers the eligibility guards (other audio present, a
+mislabelled `.mp3`, a download in flight, an existing job, no ffmpeg), the happy path
+(MP3s and the consumed cue gone, cover kept, disc folders pruned, audio rows rebuilt), and
+every failure leaving the folder untouched: non-zero exit, unplayable output, truncated
+output, missing folder, no stray temp files, cancel mid-encode, and
+restart-with-a-running-row. `tests/test_transcode_routes.py` covers where the control
+appears and where it deliberately does not, what the confirm dialog states, and that
+queue/cancel/dismiss go through their guards.
 
 ### Verified live
 
@@ -1071,8 +1089,16 @@ frames is read correctly by the *existing* `audio_meta._read_chapters`, which is
 makes source 1 above free; the same file's `TXXX:OverDrive MediaMarkers` frame is visible
 to mutagen but ignored by our reader today, which is the gap source 2 closes.
 
+The finished feature was then run end to end twice against that ffmpeg: once through
+`run_job` directly (cue chapters chosen over trivial embedded ones, MP3s and the consumed
+cue deleted, `cover.jpg` and `notes.nfo` kept, cover art and narrator embedded, audio rows
+rebuilt around the single file), and once through the **running app over HTTP** — queue
+from the file list, worker picks it up, queued → running → done, and the file list
+replacing itself with the one m4b without a page reload.
+
 What remains unverified is only the parts that need the user's own library: a real
-multi-hour book, a real `.cue`, and the ABS apps picking up the rebuilt file list.
+multi-hour book (where encode time and the progress bar actually matter), a real `.cue`
+from a torrent, and the ABS apps picking up the rebuilt file list.
 
 ## Future work (out of scope for this build)
 

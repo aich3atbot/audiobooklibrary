@@ -22,6 +22,11 @@
             <td>{% if not settings.download_client %}<span class="badge">disabled</span>{% elif download_client[0] %}<span class="badge badge-ok">ok</span>{% else %}<span class="badge badge-err">error</span>{% endif %}</td>
             <td><small>{{ download_client[1] }}</small></td>
         </tr>
+        <tr>
+            <td>ffmpeg</td>
+            <td>{% if ffmpeg[0] %}<span class="badge badge-ok">ok</span>{% else %}<span class="badge badge-err">error</span>{% endif %}</td>
+            <td><small>{{ ffmpeg[1] }}{% if not ffmpeg[0] %} — MP3 editions cannot be converted to M4B{% endif %}</small></td>
+        </tr>
     </tbody>
 </table>
 
@@ -47,6 +52,7 @@
         <tr><td>Watch interval</td><td><code>{{ settings.watch_interval_seconds }} s</code></td></tr>
         <tr><td>Download quiet period</td><td><code>{{ settings.download_quiet_seconds }} s</code></td></tr>
         <tr><td>Import mode</td><td><code>{{ settings.import_mode }}</code></td></tr>
+        <tr><td>Transcode bitrate</td><td><code>{{ settings.transcode_bitrate }}</code></td></tr>
     </tbody>
 </table>
 {% endblock %}

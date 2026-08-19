@@ -58,6 +58,24 @@ def check_download_client() -> tuple[bool, str]:
         return False, str(exc)
 
 
+def check_ffmpeg() -> tuple[bool, str]:
+    """Whether MP3 → M4B conversion is possible. Worth surfacing here because
+    its absence shows up in the UI only as a missing button."""
+    import subprocess
+
+    settings = get_settings()
+    try:
+        result = subprocess.run(
+            [settings.ffmpeg_path, "-hide_banner", "-version"],
+            capture_output=True, text=True, timeout=CHECK_TIMEOUT, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"{settings.ffmpeg_path}: {exc}"
+    if result.returncode != 0:
+        return False, f"{settings.ffmpeg_path} exited {result.returncode}"
+    return True, result.stdout.splitlines()[0] if result.stdout else "available"
+
+
 @router.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, user: User = Depends(get_current_user)):
     settings = get_settings()
@@ -68,6 +86,7 @@ def settings_page(request: Request, user: User = Depends(get_current_user)):
             "hardcover": check_hardcover(user),
             "indexer": check_indexer(),
             "download_client": check_download_client(),
+            "ffmpeg": check_ffmpeg(),
             "settings": settings,
             "last_sync": user.last_sync_at,
             "last_sync_result": user.last_sync_result,
