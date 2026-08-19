@@ -934,13 +934,17 @@ by a restart") and its stray `.part` file removed — never silently resumed.
 
 1. Encode to `<folder>/.<name>.m4b.part` (leading dot + non-audio suffix: invisible to
    both our scanner and ABS).
-2. **Tag** the temp file with mutagen (series movement atoms, cover art, narrator) —
-   before validation, so what gets validated is the file that will actually be kept.
-3. **Validate**: `identify()` says family `mp4`, and its duration is within **1 second** of
-   the summed *measured* durations. That tolerance can be this tight precisely because the
-   offsets are measured rather than taken from tags: the only remaining difference is the
-   AAC encoder's priming (21 ms on the test encode), which is constant and does not grow
-   with the book. Anything else fails the job and leaves the folder untouched.
+2. **Validate**: `identify()` says family `mp4`, and its duration is within **1 second** of
+   both what ffmpeg reported encoding and the summed *measured* durations. That tolerance
+   can be this tight precisely because the offsets are measured rather than taken from
+   tags: the only remaining difference is the AAC encoder's priming (21 ms on the test
+   encode), which is constant and does not grow with the book. Anything else fails the job
+   and leaves the folder untouched. Validation comes **before** tagging, not after —
+   mutagen cannot open a file that is not really an MP4, and its error is far less useful
+   than ours (found by a test that fed the validator a stub's junk output).
+3. **Tag** with mutagen (series movement atoms, cover art, narrator), then confirm the
+   file still parses at the same duration — a tagging pass rewrites the container, and
+   nothing should be deleted for a file that pass damaged.
 3. Atomically rename to `<edition folder name>.m4b` (refusing an occupied name).
 4. Delete the MP3s **and the chapter sidecar that was actually consumed** (the `.cue` that
    produced the chapters — never one we didn't use); prune emptied disc subfolders with

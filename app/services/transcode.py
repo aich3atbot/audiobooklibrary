@@ -12,19 +12,34 @@ only gets a look when the embedded data is *trivial* — one chapter per file,
 which restates the file boundaries the per-file fallback already knows.
 """
 
+import asyncio
 import json
 import logging
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.abs.catalogue import edition_chapters
 from app.config import get_settings
-from app.models import Edition
+from app.db import get_sessionmaker
+from app.models import (
+    TRANSCODE_ACTIVE,
+    Edition,
+    Release,
+    TranscodeJob,
+    TranscodeState,
+    User,
+    format_series_index,
+)
 from app.services.audio_format import identify
 from app.services.audio_meta import parse_timecode
+from app.services.importer import ACTIVE_STATUSES, AUDIO_EXTS, prune_empty_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +65,24 @@ MAX_SAMPLE_RATE = 48_000
 # ffmpeg is fed one -i per file; a book with more parts than this gets the
 # concat demuxer and a list file instead, to stay well inside ARG_MAX.
 MAX_DIRECT_INPUTS = 300
+# How far the finished file may sit from what we measured going in. The AAC
+# encoder's priming is the only expected difference (21 ms on the reference
+# encode) and it does not grow with the book, which is what lets this be a
+# flat second rather than a percentage.
+DURATION_TOLERANCE = 1.0
+# ...unless a file could not be measured and fell back to its tag duration,
+# which runs systematically long (see measure_durations).
+LOOSE_TOLERANCE = 0.02
+WORKER_POLL_SECONDS = 2.0
+PROGRESS_EVERY = 25  # progress lines between database writes
 
 
 class TranscodeFailure(RuntimeError):
     """Anything that stops a transcode. The message reaches the Activity page."""
+
+
+class TranscodeCancelled(TranscodeFailure):
+    """The user asked for it to stop; not a failure to report."""
 
 
 @dataclass(frozen=True)
@@ -536,3 +565,376 @@ def ffmpeg_available(ffmpeg: str | None = None) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     return result.returncode == 0
+
+
+# --------------------------------------------------------------------------
+# Eligibility
+# --------------------------------------------------------------------------
+
+
+def mp3_sources(root: Path) -> list[Path] | None:
+    """Every MP3 under the folder, or None when the folder holds any *other*
+    audio. Identified by contents, like everything else here — a `.mp3` that
+    is really an AAC stream is not something we can concatenate as one, and a
+    stray .m4b means the edition is not the pile of MP3s this converts."""
+    audio = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in AUDIO_EXTS]
+    if not audio:
+        return None
+    mp3s = []
+    for path in audio:
+        fmt = identify(path)
+        if fmt is None or fmt.family != "mp3":
+            return None
+        mp3s.append(path)
+    return mp3s
+
+
+def active_job(session: Session, edition: Edition) -> TranscodeJob | None:
+    return session.scalar(
+        select(TranscodeJob)
+        .where(TranscodeJob.edition_id == edition.id)
+        .where(TranscodeJob.state.in_(TRANSCODE_ACTIVE))
+        .order_by(TranscodeJob.id.desc())
+    )
+
+
+def transcode_blocked(session: Session, edition: Edition) -> str | None:
+    """Why this edition cannot be converted right now, or None."""
+    if not edition.library_path or not Path(edition.library_path).is_dir():
+        return "This edition has no files on disk."
+    if not ffmpeg_available():
+        return "ffmpeg is not available in this container."
+    if active_job(session, edition) is not None:
+        return "This edition is already being converted."
+    downloading = session.scalar(
+        select(Release.id)
+        .where(Release.edition_id == edition.id)
+        .where(Release.status.in_(ACTIVE_STATUSES))
+    )
+    if downloading is not None:
+        # A replace download lands in this same folder.
+        return "This edition has a download in flight."
+    if mp3_sources(Path(edition.library_path)) is None:
+        return "Only editions whose audio is all MP3 can be converted."
+    return None
+
+
+def queue_job(session: Session, edition: Edition, user: User | None) -> TranscodeJob:
+    """Add a job for the worker to pick up. Caller has already checked
+    transcode_blocked."""
+    job = TranscodeJob(
+        edition_id=edition.id,
+        user_id=user.id if user is not None else None,
+        state=TranscodeState.QUEUED,
+    )
+    session.add(job)
+    session.commit()
+    logger.info("Queued transcode of %s (edition %s)", edition.book.title, edition.id)
+    return job
+
+
+# --------------------------------------------------------------------------
+# Tagging the output
+# --------------------------------------------------------------------------
+
+
+COVER_STEMS = ("cover", "folder")
+COVER_EXTS = (".jpg", ".jpeg", ".png")
+
+
+def output_tags(edition: Edition, source_count: int) -> dict[str, str]:
+    """The metadata ffmpeg's MP4 muxer can write. Nothing in this app reads
+    these back — the ABS API serves metadata from the database — so they exist
+    to make the file a good citizen in any other player."""
+    book = edition.book
+    tags = {
+        "title": book.title,
+        "album": book.title,
+        "artist": book.author.name,
+        "album_artist": book.author.name,
+        "composer": edition.narrator,  # the m4b convention for the narrator
+        "genre": "Audiobook",
+        "media_type": "2",  # marks it an audiobook rather than music
+        "gapless_playback": "1",
+        "comment": f"Transcoded from {source_count} MP3 files by Audiobook Library",
+    }
+    if book.hardcover_slug:
+        tags["description"] = f"https://hardcover.app/books/{book.hardcover_slug}"
+    if book.series is not None:
+        tags["grouping"] = book.series.name
+        index = format_series_index(book.series_index)
+        if index.isdigit():  # -metadata track= wants a number, and 2.5 is not one
+            tags["track"] = index
+    return tags
+
+
+def find_cover(root: Path) -> Path | None:
+    images = [
+        p for p in root.rglob("*")
+        if p.is_file() and p.suffix.lower() in COVER_EXTS
+    ]
+    for stem in COVER_STEMS:
+        for image in images:
+            if image.stem.casefold() == stem:
+                return image
+    return images[0] if len(images) == 1 else None
+
+
+def tag_output(path: Path, edition: Edition, cover: Path | None) -> None:
+    """The metadata ffmpeg cannot write: the MP4 "movement" atoms that carry
+    series and position, cover art, and a freeform narrator field.
+
+    Verified not to disturb the chapter track, the duration, or the
+    moov-before-mdat ordering `+faststart` produced — ffmpeg leaves a `free`
+    box that mutagen writes into."""
+    from mutagen.mp4 import MP4, MP4Cover
+
+    book = edition.book
+    mp4 = MP4(path)
+    if mp4.tags is None:
+        mp4.add_tags()
+    if book.series is not None:
+        mp4.tags["\xa9mvn"] = [book.series.name]
+        index = format_series_index(book.series_index)
+        if index.isdigit():
+            mp4.tags["\xa9mvi"] = [int(index)]
+        mp4.tags["shwm"] = [1]
+    if edition.narrator:
+        mp4.tags["----:com.apple.iTunes:NARRATOR"] = [edition.narrator.encode("utf-8")]
+    if cover is not None:
+        fmt = MP4Cover.FORMAT_PNG if cover.suffix.lower() == ".png" else MP4Cover.FORMAT_JPEG
+        try:
+            mp4.tags["covr"] = [MP4Cover(cover.read_bytes(), imageformat=fmt)]
+        except OSError:
+            logger.warning("Could not read cover art %s", cover)
+    mp4.save()
+
+
+# --------------------------------------------------------------------------
+# Running a job
+# --------------------------------------------------------------------------
+
+
+def _finish(session: Session, job: TranscodeJob, state: TranscodeState, error: str | None = None):
+    job.state = state
+    job.error = error
+    job.finished_at = datetime.now()
+    session.commit()
+
+
+def _run_encode(session: Session, job: TranscodeJob, command: list[str], total: float) -> float:
+    """Run ffmpeg, feeding its progress into the job row and honouring a
+    cancel while it runs. Returns the last position ffmpeg reported.
+
+    Cancellation goes through the database rather than a shared process
+    handle: the request that wants to stop this sets `cancel_requested`, and
+    this loop — which is already reading a progress pipe — notices."""
+    logger.info("Transcoding: %s", " ".join(command))
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    position = 0.0
+    seen = 0
+    try:
+        for line in process.stdout:
+            value = parse_progress(line)
+            if value is None:
+                continue
+            position = value
+            seen += 1
+            if seen % PROGRESS_EVERY:
+                continue
+            job.progress = min(99.0, position / total * 100) if total else None
+            session.commit()
+            session.refresh(job)  # picks up a cancel written by a request
+            if job.cancel_requested:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                raise TranscodeCancelled("cancelled by the user")
+    finally:
+        stderr = process.stderr.read() if process.stderr else ""
+        process.stdout.close()
+        process.stderr.close()
+        process.wait()
+    if process.returncode != 0:
+        tail = " ".join(stderr.split())[-400:]
+        raise TranscodeFailure(f"ffmpeg failed ({process.returncode}): {tail or 'no output'}")
+    return position
+
+
+def run_job(session: Session, job: TranscodeJob) -> bool:
+    """Convert one edition. Returns True on success.
+
+    The order is the whole point: nothing is deleted until a file has been
+    produced, tagged, checked and moved into place, so any failure before the
+    rename leaves the edition exactly as it was.
+    """
+    from app.services.audio_meta import scan_edition_audio
+
+    settings = get_settings()
+    edition = job.edition
+    root = Path(edition.library_path) if edition.library_path else None
+    job.state = TranscodeState.RUNNING
+    job.started_at = datetime.now()
+    job.progress = 0.0
+    session.commit()
+
+    temp = meta_path = list_path = None
+    try:
+        if root is None or not root.is_dir():
+            raise TranscodeFailure("the edition's folder is gone")
+        # Re-scan first: the chapter data and the file order both come from
+        # audio_file rows, and they have to match what is on disk right now.
+        scan_edition_audio(session, edition)
+        paths = [root / f.rel_path for f in edition.audio_files]
+        missing = [p for p in paths if not p.is_file()]
+        if missing:
+            raise TranscodeFailure(f"{missing[0].name} disappeared during the scan")
+        if mp3_sources(root) is None:
+            raise TranscodeFailure("the folder no longer holds only MP3s")
+
+        sources = probe_sources(paths)
+        durations = measure_durations(sources, settings.ffmpeg_path)
+        exact = durations != [s.duration for s in sources]
+        total = sum(durations)
+        if total <= 0:
+            raise TranscodeFailure("the files report no duration")
+
+        chapters, sidecar = chapter_plan(edition, durations)
+        bitrate = target_bitrate(sources, settings.transcode_bitrate)
+        job.source_count = len(sources)
+        job.bitrate = bitrate
+        session.commit()
+
+        meta_path = root / ".chapters.ffmeta"
+        write_ffmetadata(chapters, meta_path)
+        temp = root / f".{root.name}{TEMP_SUFFIX}"
+        if len(sources) > MAX_DIRECT_INPUTS:
+            list_path = root / ".sources.ffconcat"
+            write_concat_list(sources, list_path)
+        command = build_command(
+            sources, meta_path, temp, bitrate, output_tags(edition, len(sources)),
+            ffmpeg=settings.ffmpeg_path, list_path=list_path,
+        )
+        reported = _run_encode(session, job, command, total)
+
+        # Validate before tagging, not after: mutagen cannot open a file that
+        # is not really an MP4, and its error is far less useful than ours.
+        fmt = identify(temp)
+        if fmt is None or fmt.family != "mp4":
+            raise TranscodeFailure("the encoded file is not playable audio")
+        actual = fmt.duration or 0.0
+        # ffmpeg's own last position is the tight check; the measured total is
+        # the sanity check on the timeline the chapters were placed against.
+        if reported and abs(actual - reported) > DURATION_TOLERANCE:
+            raise TranscodeFailure(
+                f"the encode stopped at {reported:.0f}s but the file holds {actual:.0f}s"
+            )
+        tolerance = DURATION_TOLERANCE if exact else max(DURATION_TOLERANCE, total * LOOSE_TOLERANCE)
+        if abs(actual - total) > tolerance:
+            raise TranscodeFailure(
+                f"expected about {total:.0f}s of audio but the file holds {actual:.0f}s"
+            )
+
+        tag_output(temp, edition, find_cover(root))
+        # A tagging pass rewrites the container, so confirm it is still the
+        # file we just validated before anything gets deleted for it.
+        retagged = identify(temp)
+        if retagged is None or abs((retagged.duration or 0.0) - actual) > DURATION_TOLERANCE:
+            raise TranscodeFailure("writing the tags damaged the encoded file")
+
+        destination = root / f"{root.name}.m4b"
+        if destination.exists():
+            raise TranscodeFailure(f"{destination.name} already exists")
+        temp.rename(destination)
+        temp = None
+
+        for path in paths:
+            path.unlink(missing_ok=True)
+        if sidecar is not None:
+            # Its chapters are inside the m4b now, and it describes files that
+            # no longer exist.
+            sidecar.unlink(missing_ok=True)
+        prune_empty_dirs(root)
+
+        job.output_path = str(destination)
+        job.progress = 100.0
+        scan_edition_audio(session, edition)
+        _finish(session, job, TranscodeState.DONE)
+        logger.info("Transcoded %s -> %s", edition.book.title, destination)
+        return True
+    except TranscodeFailure as exc:
+        cancelled = isinstance(exc, TranscodeCancelled)
+        _finish(
+            session, job,
+            TranscodeState.CANCELLED if cancelled else TranscodeState.FAILED,
+            None if cancelled else str(exc),
+        )
+        logger.warning("Transcode of %s did not finish: %s", job.edition_id, exc)
+        return False
+    except Exception as exc:
+        logger.exception("Transcode failed for edition %s", job.edition_id)
+        _finish(session, job, TranscodeState.FAILED, f"unexpected error: {exc}")
+        return False
+    finally:
+        for path in (temp, meta_path, list_path):
+            if path is not None:
+                Path(path).unlink(missing_ok=True)
+
+
+def run_next_job() -> bool:
+    """Run the oldest queued job, if there is one. One at a time: ffmpeg will
+    take every core it is given, and a queue keeps the box usable."""
+    with get_sessionmaker()() as session:
+        job = session.scalar(
+            select(TranscodeJob)
+            .where(TranscodeJob.state == TranscodeState.QUEUED)
+            .order_by(TranscodeJob.id)
+        )
+        if job is None:
+            return False
+        if job.cancel_requested:
+            _finish(session, job, TranscodeState.CANCELLED)
+            return True
+        run_job(session, job)
+        return True
+
+
+def recover_interrupted_jobs() -> int:
+    """Fail anything left running by a restart, and sweep up its temp files.
+    The process that owned the encode is gone, so the job cannot be resumed —
+    and a half-written .part must not be left to confuse the next attempt."""
+    with get_sessionmaker()() as session:
+        jobs = session.scalars(
+            select(TranscodeJob).where(TranscodeJob.state == TranscodeState.RUNNING)
+        ).all()
+        for job in jobs:
+            library_path = job.edition.library_path if job.edition else None
+            if library_path:
+                root = Path(library_path)
+                for leftover in (root.glob(f"*{TEMP_SUFFIX}"), root.glob(".*.ffmeta"),
+                                 root.glob(".*.ffconcat")):
+                    for path in leftover:
+                        path.unlink(missing_ok=True)
+            _finish(session, job, TranscodeState.FAILED, "interrupted by a restart")
+        return len(jobs)
+
+
+async def transcode_worker_loop() -> None:
+    """Background task: drain the transcode queue, one job at a time."""
+    try:
+        recovered = await asyncio.to_thread(recover_interrupted_jobs)
+        if recovered:
+            logger.info("Failed %d transcode job(s) interrupted by a restart", recovered)
+    except Exception:
+        logger.exception("Transcode recovery failed")
+    while True:
+        try:
+            if await asyncio.to_thread(run_next_job):
+                continue  # something ran; look for the next one straight away
+        except Exception:
+            logger.exception("Transcode worker pass failed")
+        await asyncio.sleep(WORKER_POLL_SECONDS)

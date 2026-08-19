@@ -19,6 +19,7 @@ from app.routes import activity, admin, auth, downloads, imports, search, settin
 from app.services.audio_meta import audio_backfill_task
 from app.services.importer import download_watch_loop
 from app.services.sync import hardcover_sync_loop
+from app.services.transcode import transcode_worker_loop
 
 logging.basicConfig(level=logging.INFO)
 
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(hardcover_sync_loop()),
         asyncio.create_task(download_watch_loop()),
         asyncio.create_task(audio_backfill_task()),
+        asyncio.create_task(transcode_worker_loop()),
     ]
     yield
     for task in tasks:

@@ -269,6 +269,9 @@ class Edition(Base):
     bookmarks: Mapped[list["Bookmark"]] = relationship(
         back_populates="edition", order_by="Bookmark.time", cascade="all, delete-orphan"
     )
+    transcode_jobs: Mapped[list["TranscodeJob"]] = relationship(
+        back_populates="edition", cascade="all, delete-orphan"
+    )
 
 
 class UserBook(Base):
@@ -410,6 +413,55 @@ class Bookmark(Base):
 
     user: Mapped[User] = relationship(back_populates="bookmarks")
     edition: Mapped[Edition] = relationship(back_populates="bookmarks")
+
+
+class TranscodeState(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+TRANSCODE_ACTIVE = (TranscodeState.QUEUED, TranscodeState.RUNNING)
+
+
+class TranscodeJob(Base):
+    """One request to convert an MP3 edition into a single chaptered m4b.
+
+    A row rather than an in-memory task because the work outlives a request,
+    is destructive, and has to be answerable for afterwards: the Activity page
+    reads failures here, and a job left RUNNING by a restart is recovered from
+    here too (it is failed, never silently resumed — the process that owned the
+    temp file is gone).
+
+    `cancel_requested` is how a request handler stops a running encode: the
+    worker owns the subprocess and polls this flag, so nothing has to share a
+    process handle across the request boundary."""
+
+    __tablename__ = "transcode_job"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    edition_id: Mapped[int] = mapped_column(
+        ForeignKey("edition.id", ondelete="CASCADE"), index=True
+    )
+    # Who asked for it; null once that account is deleted.
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"))
+    state: Mapped[TranscodeState] = _enum_column(TranscodeState, TranscodeState.QUEUED)
+    progress: Mapped[float | None] = mapped_column(Float)  # percent, 0–100
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # What it did, for the Activity page: how many files went in, at what
+    # bitrate, and what came out.
+    source_count: Mapped[int | None] = mapped_column(Integer)
+    bitrate: Mapped[int | None] = mapped_column(Integer)
+    output_path: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    edition: Mapped[Edition] = relationship(back_populates="transcode_jobs")
+    user: Mapped[User | None] = relationship()
 
 
 class AppState(Base):
