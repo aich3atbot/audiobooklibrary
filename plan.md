@@ -58,7 +58,8 @@ One FastAPI process running:
 
 ## Data model (SQLite)
 
-- **user** — id, uuid (ABS userId), username (unique), password_hash (scrypt), hardcover_token,
+- **user** — id, uuid (ABS userId), username (unique, **`COLLATE NOCASE`** — see below),
+  password_hash (scrypt), hardcover_token,
   role (`full` | `limited` — see "Limited accounts" — or `admin`), enabled, created_at,
   last_sync_at, last_sync_result. The `admin` account is one of these rows; see
   "Revocable sessions".
@@ -658,8 +659,15 @@ no row to point at).
   against the row for every account, and `user.is_admin` alone chooses the interface — no
   code path compares a username, or `ADMIN_PASSWORD`, to authenticate or authorise
   anybody. Creating an account called "admin" is refused by the unique index like any
-  other duplicate, and one called "Admin" is simply an ordinary user with a confusing
-  name. Renaming the administrator in the database costs it nothing.
+  other duplicate. Renaming the administrator in the database costs it nothing.
+- **Usernames are case-insensitive**, which is a rule about *all* accounts rather than a
+  reservation of one name: `user.username` carries SQLite's `COLLATE NOCASE`, so "Admin"
+  cannot be registered beside "admin" and — because the collation belongs to the column,
+  not to a `lower()` index — every `username = ?` lookup folds case as well. Logging in as
+  "DAVE" finds "dave"; the case as typed is still what gets stored and displayed. Two
+  caveats worth knowing: NOCASE folds **ASCII only**, so accented or non-Latin names are
+  still compared exactly; and the migration refuses to run if the database already holds
+  two accounts differing only by case, naming them so one can be renamed first.
 - **`ADMIN_PASSWORD` reconciles the account at startup, and is read nowhere else**
   (`ensure_admin_account`): it creates the row on a fresh database and refuses to start
   without one; while it stays set it is authoritative, and changing it rehashes and

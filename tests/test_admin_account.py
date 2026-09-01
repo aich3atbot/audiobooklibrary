@@ -145,6 +145,20 @@ def test_a_non_admin_account_named_admin_stops_startup(fresh_db, admin_password)
     assert not stored_admin(fresh_db).is_admin
 
 
+def test_a_lookalike_name_also_stops_startup(fresh_db, admin_password):
+    """Usernames are case-insensitive, so "Admin" holds the name just as
+    firmly — the insert would fail on the unique index either way."""
+    from app.models import User
+    from app.services.users import ensure_admin_account
+
+    fresh_db.add(User(username="Admin", password_hash=cheap_password_hash()))
+    fresh_db.commit()
+
+    admin_password("whatever")
+    with pytest.raises(RuntimeError, match="rename"):
+        ensure_admin_account(fresh_db)
+
+
 def test_the_account_is_found_by_role_not_by_name(fresh_db, admin_password):
     """Renaming the administrator in the database is not startup's business:
     the role is its identity, so it is reconciled, not duplicated."""

@@ -205,7 +205,16 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   delete, demote or re-password it, and the ABS surface rejects it in four places (JSON
   login, `require_abs_user`, `/auth/refresh`, socket.io) now that it has a uuid a
   hand-made token could name. Creating a user called "admin" is refused only by the
-  unique index ("already exists"), and a lookalike like "Admin" is just an ordinary user.
+  unique index ("already exists").
+- **Usernames are case-insensitive for everyone** — `user.username` is
+  `String(100, collation="NOCASE")`, a property of the column rather than a `lower()`
+  index, so the unique constraint *and* every `username == ` lookup fold case with no
+  query having to remember to (logging in as "DAVE" finds "dave"; the typed case is still
+  stored and shown). Do not "simplify" this into a lower() expression index without also
+  fixing the three lookup sites (form login, ABS JSON login, the admin bootstrap's clash
+  check). NOCASE is **ASCII-only**, so non-Latin names still compare exactly; and the
+  migration refuses to run on a database already holding two names that differ only by
+  case, naming the pairs.
   **`ADMIN_PASSWORD` is reconciled at startup and used nowhere else**
   (`ensure_admin_account`, called at import in `app/main.py`, after `alembic upgrade
   head`): it creates the row on a fresh database and refuses to start without one; while

@@ -147,6 +147,16 @@ def test_wrong_admin_password_rejected(anon_client):
     assert response.status_code == 401
 
 
+def test_login_is_case_insensitive(anon_client, user):
+    """Usernames are unique case-insensitively, so the login lookup folds case
+    too — otherwise a name you cannot re-register would still fail to sign in."""
+    response = login(anon_client, username=TEST_USERNAME.upper())
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    # It really is the same account, not a second one.
+    assert user.username in anon_client.get("/").text
+
+
 def test_login_routes_on_the_role_not_the_username(anon_client, db_session):
     """Which interface you get is decided by `user.is_admin` alone — the login
     path never compares a name (or ADMIN_PASSWORD) against anything."""

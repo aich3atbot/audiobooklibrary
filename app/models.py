@@ -116,7 +116,14 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     # Stable identity exposed as the ABS API userId.
     uuid: Mapped[str] = mapped_column(String(36), unique=True, default=lambda: str(uuid4()))
-    username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    # NOCASE: usernames are unique case-insensitively, so "Dave" cannot be
+    # registered alongside "dave". Putting it on the column rather than in a
+    # lower() index means every `username ==` lookup folds case too — logging
+    # in as "DAVE" finds "dave" — with no query having to remember to. The
+    # typed case is still stored and displayed as given.
+    username: Mapped[str] = mapped_column(
+        String(100, collation="NOCASE"), unique=True, index=True
+    )
     password_hash: Mapped[str] = mapped_column(String(300))
     hardcover_token: Mapped[str] = mapped_column(Text, default="")
     role: Mapped[UserRole] = _enum_column(UserRole, UserRole.FULL)
