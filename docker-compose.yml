@@ -13,7 +13,13 @@ services:
       # shell) is passed through, and one that is not never reaches the
       # container at all, so app/config.py applies its own default. Defaults
       # live there and nowhere else — write VAR=value here only to force one.
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?set in .env}
+      #
+      # ADMIN_PASSWORD is required on a fresh install (it creates the admin
+      # account) but bare like the rest, because after that the stored account
+      # is the record: leave it set and it overwrites the password at every
+      # restart, or remove it and manage the password in the app. Unset with
+      # no admin account, the app refuses to start.
+      - ADMIN_PASSWORD
       - INDEX_URL
       - DOWNLOAD_CLIENT
       - DOWNLOAD_URL

@@ -1,4 +1,5 @@
-"""User deletion with orphan-book review.
+"""Account lifecycle: the admin bootstrap, and user deletion with orphan-book
+review.
 
 Deleting a user reviews the books only they had: each one on disk can be
 deleted from disk or left in place ("available", ownerless); metadata-only
@@ -11,13 +12,83 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import exists, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased, joinedload
 
+from app.abs import sessions
+from app.auth import ADMIN_USERNAME
 from app.config import get_settings
-from app.models import Book, Edition, MediaProgress, Release, User, UserBook
+from app.db import get_sessionmaker
+from app.models import Book, Edition, MediaProgress, Release, User, UserBook, UserRole
+from app.passwords import hash_password, verify_password
 from app.services.importer import ACTIVE_STATUSES, cleanup_empty_parents
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_admin_account(session: Session | None = None) -> User:
+    """Reconcile the admin account with ADMIN_PASSWORD, at startup.
+
+    The admin is a row like any other account so that its browser sessions can
+    be revoked (`auth_session.user_id` is a foreign key). ADMIN_PASSWORD is
+    what creates it, and stays authoritative while it is set:
+
+    * no row, no password  -> refuse to start (nobody could administer users)
+    * no row, password     -> create the account
+    * row, no password     -> leave it alone; the database is the record
+    * row, password same   -> nothing to do
+    * row, password differs-> store the new one and revoke the admin's sessions
+
+    Note the last line: leaving ADMIN_PASSWORD set means the environment wins
+    at every restart. To manage the password anywhere else, unset it.
+    """
+    if session is None:
+        with get_sessionmaker()() as own_session:
+            return ensure_admin_account(own_session)
+
+    password = get_settings().admin_password
+    admin = session.scalar(select(User).where(User.username == ADMIN_USERNAME))
+
+    if admin is None:
+        if not password:
+            raise RuntimeError(
+                "ADMIN_PASSWORD must be set to create the admin account "
+                "(no admin user exists yet)"
+            )
+        admin = User(
+            username=ADMIN_USERNAME,
+            password_hash=hash_password(password),
+            hardcover_token="",
+            role=UserRole.ADMIN,
+        )
+        session.add(admin)
+        try:
+            session.commit()
+        except IntegrityError:
+            # Another process won the race; its row is as good as ours.
+            session.rollback()
+            return ensure_admin_account(session)
+        logger.info("Created the admin account")
+        return admin
+
+    if not admin.is_admin:
+        raise RuntimeError(
+            'a non-admin account named "admin" exists; rename it in the '
+            "database before starting (the name is reserved)"
+        )
+    if not password:
+        return admin
+    if verify_password(password, admin.password_hash):
+        return admin
+
+    admin.password_hash = hash_password(password)
+    # The environment password is the way back in, so it un-disables too.
+    admin.enabled = True
+    session.commit()
+    # The old password's logins die with it, browser sessions included.
+    sessions.revoke_all(session, admin)
+    logger.info("Updated the admin password from ADMIN_PASSWORD; sessions revoked")
+    return admin
 
 
 @dataclass

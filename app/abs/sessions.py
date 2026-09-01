@@ -1,15 +1,23 @@
-"""Server-side refresh-token sessions, so a sign-out actually revokes.
+"""Server-side sessions, so a sign-out actually revokes.
 
-Access tokens stay stateless (they expire in an hour); the *refresh* token is
-what keeps a client logged in for 30 days, so it gets a row. Mirrors ABS's
+Two kinds of login share the table. **ABS clients** (`kind="abs"`): access
+tokens stay stateless (they expire in an hour); the *refresh* token is what
+keeps a client logged in for 30 days, so it gets a row. Mirrors ABS's
 `TokenManager`/session model — including the rotation grace period, without
 which the concurrent refreshes clients fire on resume would knock each other
-out. Only SHA-256 hashes are stored.
+out. **Browsers** (`kind="ui"`): the signed session cookie carries nothing but
+an opaque token whose row is this; without it a stolen cookie could not be
+revoked short of rotating the cookie secret for everyone. Browser sessions
+never rotate, and slide their expiry as they are used.
 
-Contract: docs/abs-api-contract.md.
+Only SHA-256 hashes are stored, so a leaked database hands out no working
+credentials.
+
+Contract (the ABS half): docs/abs-api-contract.md.
 """
 
 import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Request
@@ -23,6 +31,16 @@ from app.models import AuthSession, User
 # default (REFRESH_TOKEN_GRACE_PERIOD); a client whose rotation response never
 # arrived can still recover instead of being logged out.
 GRACE_PERIOD = timedelta(minutes=10)
+
+KIND_ABS = "abs"
+KIND_UI = "ui"
+
+# Browser sessions match the cookie's own max_age, and slide the same way it
+# does (Starlette re-sends the cookie on every response).
+UI_SESSION_EXPIRY = timedelta(days=30)
+# ...but sliding the row is a write on the read path, so only do it once the
+# session has gone this long without being touched.
+UI_TOUCH_INTERVAL = timedelta(hours=1)
 
 
 def _utcnow() -> datetime:
@@ -44,12 +62,14 @@ def _client_info(request: Request | None) -> tuple[str | None, str | None]:
 def create(
     db: Session, user: User, refresh_token: str, request: Request | None = None
 ) -> AuthSession:
-    """Record a new login. Also drops the user's expired rows — sessions are
-    only ever created here, so this is enough to keep the table bounded."""
+    """Record a new ABS login. Also drops the user's expired rows — sessions
+    are only ever created here or in `create_ui`, so that is enough to keep
+    the table bounded."""
     prune_expired(db, user)
     user_agent, ip_address = _client_info(request)
     session = AuthSession(
         user_id=user.id,
+        kind=KIND_ABS,
         token_hash=token_hash(refresh_token),
         expires_at=_utcnow() + tokens.REFRESH_TOKEN_EXPIRY,
         user_agent=user_agent,
@@ -60,12 +80,62 @@ def create(
     return session
 
 
+def create_ui(db: Session, user: User, request: Request | None = None) -> str:
+    """Record a browser login and return the token to put in the cookie. The
+    token is opaque and random: the cookie is signed, but the session's
+    identity has to live here or there would be nothing to revoke."""
+    prune_expired(db, user)
+    token = secrets.token_urlsafe(32)
+    user_agent, ip_address = _client_info(request)
+    db.add(
+        AuthSession(
+            user_id=user.id,
+            kind=KIND_UI,
+            token_hash=token_hash(token),
+            expires_at=_utcnow() + UI_SESSION_EXPIRY,
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
+    )
+    db.commit()
+    return token
+
+
+def resolve_ui(db: Session, token: str) -> User | None:
+    """The account a browser session token belongs to, or None if there is no
+    live session for it (signed out, revoked from another device, password
+    reset, or expired).
+
+    Using a session slides its expiry, exactly as the cookie's own max_age
+    slides — but only once per `UI_TOUCH_INTERVAL`, so an ordinary page view
+    stays a pure read."""
+    row = db.execute(
+        select(AuthSession, User)
+        .join(User, User.id == AuthSession.user_id)
+        .where(
+            AuthSession.token_hash == token_hash(token),
+            AuthSession.kind == KIND_UI,
+            AuthSession.expires_at > _utcnow(),
+        )
+    ).first()
+    if row is None:
+        return None
+    session, user = row
+    now = _utcnow()
+    if session.updated_at is None or now - session.updated_at >= UI_TOUCH_INTERVAL:
+        session.updated_at = now
+        session.expires_at = now + UI_SESSION_EXPIRY
+        db.commit()
+    return user
+
+
 def find(db: Session, refresh_token: str) -> AuthSession | None:
     """The session a refresh token belongs to, current or within grace."""
     digest = token_hash(refresh_token)
     return db.scalar(
         select(AuthSession).where(
-            or_(AuthSession.token_hash == digest, AuthSession.last_token_hash == digest)
+            AuthSession.kind == KIND_ABS,
+            or_(AuthSession.token_hash == digest, AuthSession.last_token_hash == digest),
         )
     )
 
@@ -121,7 +191,24 @@ def revoke(db: Session, refresh_token: str) -> AuthSession | None:
     return session
 
 
+def revoke_ui(db: Session, token: str) -> AuthSession | None:
+    """Sign a browser out. Returns the session that was removed so the caller
+    can act on its user (an `allDevices` logout needs it)."""
+    session = db.scalar(
+        select(AuthSession).where(
+            AuthSession.token_hash == token_hash(token), AuthSession.kind == KIND_UI
+        )
+    )
+    if session is None:
+        return None
+    db.delete(session)
+    db.commit()
+    return session
+
+
 def revoke_all(db: Session, user: User) -> int:
+    """Every session the user has, browser and app alike — which is what makes
+    a password change lock out whoever knew the old one."""
     count = db.query(AuthSession).filter(AuthSession.user_id == user.id).delete()
     db.commit()
     return count

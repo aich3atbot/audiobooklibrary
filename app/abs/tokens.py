@@ -11,7 +11,7 @@ from typing import Any
 
 import jwt
 
-from app.auth import resolve_session_secret
+from app.config import resolve_session_secret
 from app.models import User
 
 ACCESS_TOKEN_EXPIRY = timedelta(hours=1)

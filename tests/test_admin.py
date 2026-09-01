@@ -235,6 +235,32 @@ def test_actions_on_missing_user_404(admin_client):
     assert admin_client.get("/admin/users/99999/delete").status_code == 404
 
 
+def test_the_admin_account_is_not_listed(admin_client, db_session):
+    """It is a row now, but not an administrable one — and showing it would
+    invite exactly the actions the next test refuses."""
+    page = admin_client.get("/admin/users")
+    assert page.status_code == 200
+    assert "<td>admin</td>" not in page.text
+
+
+def test_the_admin_account_cannot_be_administered(admin_client, db_session):
+    """No verb may disable, delete, demote or re-password the admin: there is
+    no second administrator to undo it, and ADMIN_PASSWORD owns the password."""
+    admin = db_session.scalar(select(User).where(User.username == "admin"))
+    base = f"/admin/users/{admin.id}"
+
+    assert admin_client.post(f"{base}/disable").status_code == 404
+    assert admin_client.post(f"{base}/enable").status_code == 404
+    assert admin_client.post(f"{base}/password", data={"password": "x"}).status_code == 404
+    assert admin_client.post(f"{base}/role", data={"role": "limited"}).status_code == 404
+    assert admin_client.post(f"{base}/token", data={"hardcover_token": "t"}).status_code == 404
+    assert admin_client.get(f"{base}/delete").status_code == 404
+    assert admin_client.post(f"{base}/delete").status_code == 404
+
+    db_session.refresh(admin)
+    assert admin.enabled and admin.is_admin and admin.hardcover_token == ""
+
+
 # --- delete-user orphan review ----------------------------------------------
 
 

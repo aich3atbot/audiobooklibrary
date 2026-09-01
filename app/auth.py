@@ -1,19 +1,18 @@
 """Multi-user session authentication.
 
 Accounts are mandatory: every UI route requires a logged-in user (or the
-virtual admin, who only sees user administration). The login session lives
-in a signed cookie (Starlette SessionMiddleware); regular users are
-re-checked against the database on every request so disabling an account
-locks it out immediately.
+admin, who only sees user administration). The signed session cookie carries
+nothing but an opaque token; the session itself is an `auth_session` row
+(`app/abs/sessions.py`), which is what makes a browser login revocable — from
+an app's device list, from a password change, or by signing out. The user is
+re-read on every request too, so disabling an account locks it out
+immediately.
 
 *Limited* accounts (`UserRole.LIMITED`) are ABS-only: they authenticate over
 the API surface (`/api/`, `/auth/`) but never here. The per-request re-check
 is what enforces that — a user demoted mid-session loses the UI on their very
-next request, which matters because browser sessions are signed cookies with
-no server-side row to revoke.
+next request.
 """
-
-import secrets
 
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -21,12 +20,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
-from app.config import get_settings
+from app.abs import sessions
 from app.db import get_db, get_sessionmaker
 from app.models import User
 
-SESSION_USER_ID = "user_id"
-SESSION_IS_ADMIN = "is_admin"
+# The cookie holds only this: the opaque token naming the session row.
+SESSION_TOKEN = "sid"
 ADMIN_USERNAME = "admin"
 # /status, /ping, /healthcheck: ABS client discovery must be public.
 # /logout too: ABS clients post it with a bearer/refresh token and no cookie,
@@ -45,28 +44,6 @@ APP_ONLY_ERROR = "app_only"
 APP_ONLY_MESSAGE = "This account can only be used with an Audiobookshelf app."
 
 
-def resolve_session_secret() -> str:
-    """Generate the cookie-signing secret once and persist it in the config
-    dir so sessions survive restarts."""
-    settings = get_settings()
-    settings.config_dir.mkdir(parents=True, exist_ok=True)
-    path = settings.config_dir / "session_secret"
-    if path.exists():
-        return path.read_text().strip()
-    secret = secrets.token_hex(32)
-    path.write_text(secret)
-    path.chmod(0o600)
-    return secret
-
-
-def check_admin_credentials(username: str, password: str) -> bool:
-    settings = get_settings()
-    # compare_digest on both fields to avoid timing side channels
-    user_ok = secrets.compare_digest(username.encode(), ADMIN_USERNAME.encode())
-    pass_ok = secrets.compare_digest(password.encode(), settings.admin_password.encode())
-    return user_ok and pass_ok
-
-
 def safe_next(next_url: str) -> str:
     """Only allow same-site relative redirect targets."""
     if next_url.startswith("/") and not next_url.startswith("//"):
@@ -75,52 +52,54 @@ def safe_next(next_url: str) -> str:
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    """The logged-in regular user. The middleware guarantees one on UI
-    routes; re-queried here so it is attached to the route's own session."""
-    user_id = request.session.get(SESSION_USER_ID)
+    """The logged-in regular user. The middleware resolved the session and
+    left the id on the request; re-queried here so the row is attached to the
+    route's own database session."""
+    user_id = getattr(request.state, "user_id", None)
     user = db.get(User, user_id) if user_id is not None else None
     if user is None or not user.enabled:
         raise HTTPException(status_code=401, detail="Not logged in")
-    # The middleware already turned limited accounts away; this is the
-    # backstop for any UI route reached without passing through it.
+    # The middleware already turned these away; this is the backstop for any
+    # UI route reached without passing through it.
     if user.is_limited:
         raise HTTPException(status_code=403, detail=APP_ONLY_MESSAGE)
+    if user.is_admin:
+        raise HTTPException(status_code=403, detail="The admin account has no library")
     return user
 
 
 def require_admin(request: Request) -> None:
-    if not request.session.get(SESSION_IS_ADMIN):
+    if not getattr(request.state, "is_admin", False):
         raise HTTPException(status_code=403, detail="Admin only")
 
 
 class RequireAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
+        request.state.user_id = None
         request.state.username = None
         request.state.is_admin = False
         if path in OPEN_PATHS or path.startswith(OPEN_PREFIXES):
             return await call_next(request)
 
-        if request.session.get(SESSION_IS_ADMIN):
-            request.state.username = ADMIN_USERNAME
-            request.state.is_admin = True
-            # The admin account only administers users.
-            if not path.startswith("/admin") and path != "/logout":
-                return RedirectResponse(url="/admin/users", status_code=303)
-            return await call_next(request)
-
         limited = False
-        user_id = request.session.get(SESSION_USER_ID)
-        if user_id is not None:
+        token = request.session.get(SESSION_TOKEN)
+        if token:
             with get_sessionmaker()() as db:
-                user = db.get(User, user_id)
+                user = sessions.resolve_ui(db, token)
             if user is not None and user.enabled and not user.is_limited:
                 request.state.user_id = user.id
                 request.state.username = user.username
-                if path.startswith("/admin"):
+                request.state.is_admin = user.is_admin
+                if user.is_admin:
+                    # The admin account only administers users.
+                    if not path.startswith("/admin") and path != "/logout":
+                        return RedirectResponse(url="/admin/users", status_code=303)
+                elif path.startswith("/admin"):
                     return RedirectResponse(url="/", status_code=303)
                 return await call_next(request)
-            # Deleted, disabled or demoted mid-session: drop the stale session.
+            # Revoked, deleted, disabled or demoted mid-session: drop the
+            # stale cookie so the next request doesn't repeat the lookup.
             limited = user is not None and user.is_limited
             request.session.clear()
 

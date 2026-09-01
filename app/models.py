@@ -33,10 +33,17 @@ class UserRole(str, enum.Enum):
     """What an account may do. A *limited* account is ABS-only: it listens
     through the apps (its own progress and bookmarks over the shared library)
     but cannot log in to the web UI, holds no Hardcover token, and never gets
-    a shelf entry — see `app/auth.py` and `app/abs/progress.py`."""
+    a shelf entry — see `app/auth.py` and `app/abs/progress.py`.
+
+    *admin* is the user-administration account: one row, username "admin",
+    password from ADMIN_PASSWORD. It is a role rather than a flag on purpose —
+    every query that drives Hardcover work already filters on `FULL`, so the
+    admin is excluded from sync, token-borrowing and the metadata backfills
+    without a line of extra code."""
 
     FULL = "full"
     LIMITED = "limited"
+    ADMIN = "admin"
 
 
 class DownloadState(str, enum.Enum):
@@ -97,8 +104,11 @@ def _enum_column(enum_cls, default):
 
 
 class User(Base):
-    """A login account. The admin account is virtual (checked against
-    ADMIN_PASSWORD, never stored here); "admin" is a reserved username."""
+    """A login account, including the administrator: "admin" is a reserved
+    username held by one `UserRole.ADMIN` row, reconciled against
+    ADMIN_PASSWORD at startup (`app.services.users.ensure_admin_account`).
+    It is a row so that its browser sessions can be revoked like anyone
+    else's — `auth_session.user_id` is a foreign key."""
 
     __tablename__ = "user"
 
@@ -133,14 +143,24 @@ class User(Base):
         """ABS-only account: no web UI, no Hardcover."""
         return self.role == UserRole.LIMITED
 
+    @property
+    def is_admin(self) -> bool:
+        """The user-administration account: no library, no ABS access."""
+        return self.role == UserRole.ADMIN
+
 
 class AuthSession(Base):
-    """One ABS client's long-lived login: the server side of a refresh token.
+    """One long-lived login, browser or app — the row that makes it revocable.
 
-    Refresh tokens are stateless JWTs, so without a row here nothing could be
-    revoked — signing out would leave a lost device working for the token's
-    full 30 days. The token itself is never stored, only its SHA-256, so a
-    leaked database hands out no working credentials.
+    An ABS client's refresh token is a stateless JWT and a browser's cookie is
+    a signed blob, so without a row here nothing could be revoked: signing out
+    would leave a lost device working for the credential's full 30 days.
+    Neither credential is stored, only its SHA-256, so a leaked database hands
+    out nothing usable.
+
+    `kind` says which sort: "abs" rows hold a refresh token and rotate,
+    "ui" rows hold the opaque token carried in the session cookie and never
+    do (`last_token_hash` stays null for them).
 
     `last_token_hash` keeps the previous token usable for a short grace period:
     clients fire concurrent refreshes (several 401s in flight on resume), and
@@ -156,6 +176,8 @@ class AuthSession(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("user.id", ondelete="CASCADE"), index=True
     )
+    # "abs" (a client's refresh token) or "ui" (a browser session cookie).
+    kind: Mapped[str] = mapped_column(String(8), default="abs", server_default="abs")
     token_hash: Mapped[str] = mapped_column(String(64), index=True)
     last_token_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     last_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime)

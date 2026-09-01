@@ -11,9 +11,11 @@ architecture, data model, workflows, and milestones. Keep it updated as decision
 
 All seven plan.md milestones plus collection import (/imports), an
 Audiobookshelf-compatible API, the direct torrent pipeline (AudioBookBay + Deluge, which
-replaced Prowlarr), the **multi-user conversion** (mandatory accounts, virtual admin,
+replaced Prowlarr), the **multi-user conversion** (mandatory accounts, admin account,
 per-user Hardcover sync and ABS progress over a shared /audiobooks store — see plan.md
-"Multi-user conversion"), and **multi-edition support** (a book can hold several
+"Multi-user conversion"), **revocable sessions** (browser and app logins alike are
+`auth_session` rows — see plan.md "Revocable sessions"), and **multi-edition support**
+(a book can hold several
 recordings as `edition` rows — see plan.md "Multi-edition support"), and **MP3 → M4B
 transcoding** (see plan.md "Transcoding MP3 editions to M4B") are built, tested,
 and committed. The Alembic history is rooted at a **squashed base revision**, `4279694b0300`
@@ -34,7 +36,7 @@ dispatches JSON (ABS) vs form (UI) by content type. The served entrypoint is
 `app.main:asgi` (FastAPI wrapped in a socket.io shim), not `app.main:app`. A library
 item is one *edition* (`li_<edition.id>`); only editions with `library_path` set are
 exposed, progress/bookmarks are per edition, and multi-edition books carry their label
-in the item title. ABS logins are user accounts (the virtual admin is rejected); token
+in the item title. ABS logins are user accounts (the admin account is rejected); token
 `userId` is the account's stable uuid. Finishing any edition in an app marks the book
 read on Hardcover via `update_read_state`. **Not every ABS endpoint is authenticated**:
 covers (`/api/items/:id/cover`), author photos (`/api/authors/:id/image`, a 302 to
@@ -171,26 +173,41 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   Hardcover push it can trigger has a 30s timeout and would otherwise stall the event
   loop, and streaming rides that same loop. Keep it off the loop.
 - **Multi-user, mandatory auth**: there is no open mode. Users are DB rows (scrypt
-  password hashes via `app/passwords.py`, per-user Hardcover tokens); the virtual `admin`
-  account (password from `ADMIN_PASSWORD`, required at startup, reserved username) sees
-  only the user-administration UI at /admin/users. Disabling a user locks them out
-  immediately — sessions and ABS tokens are re-checked against the DB per request. Auth
-  lives in `app/auth.py` (middleware + deps) + `app/routes/auth.py`; admin routes in
-  `app/routes/admin.py`. **Refresh tokens are session-backed** (`app/abs/sessions.py`,
-  `auth_session` rows keyed on the token's SHA-256): `/auth/refresh` requires a live row,
-  which is the only thing that makes `POST /logout` — and per-device revocation via
-  `/api/me/sessions` — actually revoke. Access tokens stay stateless and short-lived; do
-  not "simplify" the refresh path back to signature-only, or a sign-out on a lost device
-  becomes a no-op for 30 days. Rotation keeps the previous token alive for a 10-minute
-  grace window (clients fire concurrent refreshes; the loser must survive), and refresh
-  tokens carry a random `jti` so two logins in the same second can't collide. An admin
-  password reset revokes that user's sessions. **Browser sessions are not in the table** —
-  they are signed cookies with no server-side record, so a UI login cannot be revoked
-  individually (disabling the account is the lockout lever; rotating
-  `CONFIG_DIR/session_secret` is the blunt one, and it invalidates every ABS token too
-  since they share the secret). Putting UI logins in `auth_session` would close that and
-  make `/api/me/sessions` list browsers as upstream does; it is a deliberate not-yet. The multi-user conversion is in progress — see plan.md
-  "Multi-user conversion" for design and remaining milestones.
+  password hashes via `app/passwords.py`, per-user Hardcover tokens), and so is the
+  `admin` account — one `UserRole.ADMIN` row, reserved username, seeing only the
+  user-administration UI at /admin/users. Disabling a user locks them out immediately —
+  sessions and ABS tokens are re-checked against the DB per request. Auth lives in
+  `app/auth.py` (middleware + deps) + `app/routes/auth.py`; admin routes in
+  `app/routes/admin.py`.
+- **Every login is an `auth_session` row** (`app/abs/sessions.py`, keyed on the
+  credential's SHA-256; see plan.md "Revocable sessions"), which is the only thing that
+  makes `POST /logout`, an admin password reset, and per-device revocation via
+  `/api/me/sessions` actually revoke. Two kinds. `kind="abs"`: the client's *refresh*
+  token, required to be live by `/auth/refresh` — access tokens stay stateless and
+  short-lived, and rotation keeps the previous token alive for a 10-minute grace window
+  (clients fire concurrent refreshes; the loser must survive), with a random `jti` so two
+  logins in the same second can't collide. `kind="ui"`: a browser, whose signed cookie
+  holds nothing but an opaque `sid` naming the row; the middleware resolves it per
+  request, and using a session slides its 30-day expiry — throttled to once an hour, so a
+  page view stays a read. Do not "simplify" either path back to
+  signature-only/cookie-only, or a sign-out on a lost device becomes a no-op for 30 days.
+  `/api/me/sessions` lists **both** kinds (as upstream does), so an app can sign a browser
+  out. Still absent on purpose: a self-service session manager in the web UI. Rotating
+  `CONFIG_DIR/session_secret` remains the blunt instrument — it invalidates every cookie
+  and ABS token at once, since they share the secret.
+- **The admin is a role, not a flag** (`UserRole.ADMIN`), because every Hardcover select
+  already filters on `role == FULL` — sync, token-borrowing and the metadata backfills
+  skip it with no extra code. It is hidden from /admin/users and `_get_user` 404s on it,
+  so no verb can disable, delete, demote or re-password it, and the ABS surface rejects it
+  in four places (JSON login, `require_abs_user`, `/auth/refresh`, socket.io) now that it
+  has a uuid a hand-made token could name. **`ADMIN_PASSWORD` is reconciled at startup**
+  (`ensure_admin_account`, called at import in `app/main.py`, after `alembic upgrade
+  head`): it creates the row on a fresh database and refuses to start without one; while
+  set it wins at every restart (a change rehashes and revokes the admin's sessions);
+  unset, the stored password stands. It is the *only* way to set that password. A
+  non-admin row named "admin" stops startup rather than being promoted. Note
+  `resolve_session_secret` lives in `app/config.py`, not `app/auth.py` — `app/abs/tokens.py`
+  needs it and `app/auth.py` needs the session store, so one direction had to give.
 - **Limited accounts are ABS-only** (`user.role`: `full` | `limited`; see plan.md "Limited
   accounts"). A limited user logs in from Audiobookshelf apps, plays everything available
   and keeps its own progress/bookmarks — the ABS surface has **no role checks at all**, and

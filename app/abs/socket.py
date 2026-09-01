@@ -29,7 +29,7 @@ async def auth(sid, token):
         return
     with get_sessionmaker()() as db:
         user = db.scalar(select(User).where(User.uuid == payload.get("userId", "")))
-    if user is None or not user.enabled:
+    if user is None or user.is_admin or not user.enabled:
         await sio.emit("auth_failed", {"message": "Invalid token"}, to=sid)
         return
     await sio.emit(

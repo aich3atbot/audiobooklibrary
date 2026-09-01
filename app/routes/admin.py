@@ -1,4 +1,10 @@
-"""User administration, reachable only by the virtual admin account."""
+"""User administration, reachable only by the admin account.
+
+The admin is a `user` row itself now (so its own sessions can be revoked), but
+it is not administrable from here: it is filtered out of the list and
+`_get_user` refuses it, so no verb can disable, delete, demote or re-password
+it by id. Its password comes from ADMIN_PASSWORD at startup and nowhere
+else."""
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -33,7 +39,9 @@ def _users_page(
     status_code: int = 200,
     report=None,
 ):
-    users = db.scalars(select(User).order_by(User.username)).all()
+    users = db.scalars(
+        select(User).where(User.role != UserRole.ADMIN).order_by(User.username)
+    ).all()
     return templates.TemplateResponse(
         request,
         "admin_users.html",
@@ -81,8 +89,12 @@ def create_user(
 
 
 def _get_user(db: Session, user_id: int) -> User:
+    """The account a management verb acts on. The admin's own row is not one:
+    it is invisible to this page, and every verb here would break it (there is
+    no other administrator to enable it again, and its password would be reset
+    from the environment at the next restart anyway)."""
     user = db.get(User, user_id)
-    if user is None:
+    if user is None or user.is_admin:
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
@@ -117,8 +129,8 @@ def change_password(
     # A reset is how a compromised account gets taken back, so the old password's
     # logins have to die with it: without this an ABS client signed in before the
     # reset keeps working for its refresh token's full 30 days. Browser sessions
-    # are signed cookies with no server-side record, so they are NOT covered —
-    # disable the account instead if you need to lock someone out of the UI.
+    # are rows too, so they go the same way — whoever knew the old password is
+    # out of the web UI on their next request.
     sessions.revoke_all(db, user)
     return RedirectResponse(url="/admin/users", status_code=303)
 

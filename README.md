@@ -13,10 +13,11 @@ Self-hosted audiobook manager, in a single container:
   `Author/Series/{index} - Title/`.
 - **Web UI** — library grid with filters, Hardcover search to add new books, release picker,
   activity page for downloads and import failures, settings page with connection checks.
-- **User accounts** — login is mandatory (30-day session cookie). The `admin` account
-  (password from `ADMIN_PASSWORD`) manages users; each user gets their own password and
-  Hardcover token. *Limited* accounts are listeners: they sign in from Audiobookshelf apps
-  only — no web UI, no Hardcover.
+- **User accounts** — login is mandatory (30-day sessions, revocable: signing out, an admin
+  password reset, or removing a device in an Audiobookshelf app all take effect at once).
+  The `admin` account (password from `ADMIN_PASSWORD`) manages users; each user gets their
+  own password and Hardcover token. *Limited* accounts are listeners: they sign in from
+  Audiobookshelf apps only — no web UI, no Hardcover.
 
 See `plan.md` for the full design.
 
@@ -45,6 +46,11 @@ Open http://localhost:8000, log in as `admin` (password from `ADMIN_PASSWORD`) a
 user accounts — each with its own password and Hardcover token. The app syncs every user's
 Hardcover library on startup and every `SYNC_INTERVAL_MINUTES` after that.
 
+`ADMIN_PASSWORD` creates the admin account on first start and is checked at every start
+after that: change it and the stored password changes with it (signing the admin out
+everywhere), remove it from `.env` and the stored one stands. It is the only way to set
+that password, so put it back if you ever forget it.
+
 Each account is **full** or **limited**. A full account is the normal one: the web UI, its
 own Hardcover token, searching and downloading. A **limited** account is for people who only
 want to listen — it signs in from Audiobookshelf apps, plays anything in the library and
@@ -63,8 +69,8 @@ Volumes:
 
 By default imports **hardlink or copy** files so seeding torrents are left intact; set
 `IMPORT_MODE=move` to relocate them instead. All settings are environment variables — see
-`.env.example` for the full list. Only `ADMIN_PASSWORD` and the four host paths are
-required; leave any other variable out of `.env` and the app applies its own default
+`.env.example` for the full list. Only `ADMIN_PASSWORD` (on a fresh install) and the four
+host paths are required; leave any other variable out of `.env` and the app applies its own default
 (they are defined in `app/config.py`, and `docker-compose.yml` passes each one through
 only if you set it).
 

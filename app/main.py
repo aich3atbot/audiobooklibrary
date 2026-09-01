@@ -13,8 +13,8 @@ from app.abs import playback_routes as abs_playback_routes
 from app.abs import public_routes as abs_public_routes
 from app.abs import routes as abs_routes
 from app.abs.socket import wrap_asgi
-from app.auth import RequireAuthMiddleware, resolve_session_secret
-from app.config import get_settings
+from app.auth import RequireAuthMiddleware
+from app.config import resolve_session_secret
 from app.routes import (
     activity,
     admin,
@@ -30,11 +30,13 @@ from app.services.audio_meta import audio_backfill_task
 from app.services.importer import download_watch_loop
 from app.services.sync import hardcover_sync_loop
 from app.services.transcode import transcode_worker_loop
+from app.services.users import ensure_admin_account
 
 logging.basicConfig(level=logging.INFO)
 
-if not get_settings().admin_password:
-    raise RuntimeError("ADMIN_PASSWORD must be set (user accounts are mandatory)")
+# Import time, not lifespan: the app must not start at all without a usable
+# admin account, and the container runs `alembic upgrade head` first.
+ensure_admin_account()
 
 
 @asynccontextmanager

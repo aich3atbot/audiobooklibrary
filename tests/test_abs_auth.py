@@ -80,6 +80,25 @@ def test_json_login_admin_rejected(anon_client):
     assert response.status_code == 401
 
 
+def test_a_token_for_the_admin_is_worthless(anon_client, db_session):
+    """No login mints one, but the admin has a uuid like any other row now, so
+    the API refuses tokens that name it rather than trusting that."""
+    from sqlalchemy import select
+
+    from app.models import User
+
+    admin = db_session.scalar(select(User).where(User.username == "admin"))
+    access = tokens.create_access_token(admin)
+    refresh = tokens.create_refresh_token(admin)
+
+    assert anon_client.get(
+        "/api/me", headers={"Authorization": f"Bearer {access}"}
+    ).status_code == 401
+    assert anon_client.post(
+        "/auth/refresh", headers={"x-refresh-token": refresh}
+    ).status_code == 401
+
+
 def test_limited_user_logs_in_like_any_other(anon_client, limited_user):
     """The whole point of a limited account: the ABS surface is unchanged for
     it, only the web UI and Hardcover are gone."""

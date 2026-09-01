@@ -1,3 +1,4 @@
+import secrets
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -9,8 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Password for the virtual "admin" account (user administration only).
-    # Required: the app refuses to start without it.
+    # Password for the "admin" account (user administration only). Required
+    # on a fresh database, where it creates the account; afterwards it is
+    # optional, and setting it changes the stored password (see
+    # app.services.users.ensure_admin_account).
     admin_password: str = ""
 
     # Torrent indexer (AudioBookBay) and the torrent client that downloads it.
@@ -96,3 +99,21 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def resolve_session_secret() -> str:
+    """Generate the cookie-signing secret once and persist it in the config
+    dir so sessions survive restarts. Not configurable by design.
+
+    Lives here rather than in `app/auth.py` because the ABS tokens are signed
+    with it too (`app/abs/tokens.py`), and auth reaches into `app/abs` for the
+    session store — one of the two directions had to give."""
+    settings = get_settings()
+    settings.config_dir.mkdir(parents=True, exist_ok=True)
+    path = settings.config_dir / "session_secret"
+    if path.exists():
+        return path.read_text().strip()
+    secret = secrets.token_hex(32)
+    path.write_text(secret)
+    path.chmod(0o600)
+    return secret

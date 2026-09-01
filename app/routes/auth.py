@@ -9,9 +9,7 @@ from app.abs.routes import REFRESH_COOKIE, abs_login, refresh_token_from
 from app.auth import (
     APP_ONLY_ERROR,
     APP_ONLY_MESSAGE,
-    SESSION_IS_ADMIN,
-    SESSION_USER_ID,
-    check_admin_credentials,
+    SESSION_TOKEN,
     safe_next,
 )
 from app.db import get_db
@@ -23,11 +21,20 @@ router = APIRouter()
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, next: str = "/", error: str = ""):
-    if request.session.get(SESSION_IS_ADMIN):
-        return RedirectResponse(url="/admin/users", status_code=303)
-    if request.session.get(SESSION_USER_ID) is not None:
-        return RedirectResponse(url="/", status_code=303)
+def login_page(
+    request: Request,
+    next: str = "/",
+    error: str = "",
+    db: Session = Depends(get_db),
+):
+    token = request.session.get(SESSION_TOKEN)
+    # /login is open, so the middleware resolved nothing: check the session
+    # here or an already-signed-in visitor gets the form back.
+    user = sessions.resolve_ui(db, token) if token else None
+    if user is not None and user.enabled and not user.is_limited:
+        return RedirectResponse(
+            url="/admin/users" if user.is_admin else "/", status_code=303
+        )
     # The middleware turns limited accounts away with ?error=app_only; the key
     # maps to a fixed message here so nothing arbitrary is rendered.
     return templates.TemplateResponse(
@@ -54,11 +61,8 @@ async def login(request: Request, db: Session = Depends(get_db)):
     password = form.get("password") or ""
     next_url = safe_next(form.get("next", "/"))
 
-    if check_admin_credentials(username, password):
-        request.session.clear()
-        request.session[SESSION_IS_ADMIN] = True
-        return RedirectResponse(url="/admin/users", status_code=303)
-
+    # The admin is an ordinary row (username "admin", UserRole.ADMIN), so it
+    # authenticates through this same path and gets a revocable session.
     user = db.scalar(select(User).where(User.username == username))
     if (
         user is not None
@@ -77,8 +81,10 @@ async def login(request: Request, db: Session = Depends(get_db)):
                 status_code=403,
             )
         request.session.clear()
-        request.session[SESSION_USER_ID] = user.id
-        return RedirectResponse(url=next_url, status_code=303)
+        request.session[SESSION_TOKEN] = sessions.create_ui(db, user, request)
+        # The admin has no library to be sent back to.
+        target = "/admin/users" if user.is_admin else next_url
+        return RedirectResponse(url=target, status_code=303)
 
     return templates.TemplateResponse(
         request,
@@ -92,14 +98,18 @@ async def login(request: Request, db: Session = Depends(get_db)):
 def logout(request: Request, allDevices: str = "", db: Session = Depends(get_db)):  # noqa: N803
     """Sign out. Two callers share this route: the UI form (cookie session,
     wants the login page back) and ABS clients (refresh token in a header,
-    want JSON). Revoking the session row is what makes it stick — the tokens
-    themselves are stateless and would otherwise keep working for 30 days.
+    want JSON). Deleting the session row is what makes it stick — both
+    credentials are self-contained and would otherwise keep working for 30
+    days.
 
     `?allDevices=1` drops every session the user has, not just this one."""
+    ui_token = request.session.get(SESSION_TOKEN)
     request.session.clear()
+    revoked = sessions.revoke_ui(db, ui_token) if ui_token else None
 
     refresh_token = refresh_token_from(request)
-    revoked = sessions.revoke(db, refresh_token) if refresh_token else None
+    if refresh_token:
+        revoked = sessions.revoke(db, refresh_token) or revoked
     if revoked is not None and allDevices == "1":
         user = db.get(User, revoked.user_id)
         if user is not None:

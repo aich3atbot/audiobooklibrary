@@ -87,11 +87,15 @@ everything is granted.
   current}]}`. `current` is resolved from the refresh token on the request. `deviceInfo`
   is upstream's *parsed* user agent; we don't parse UAs and leave it null — clients label
   their own sessions from the raw `userAgent` prefix and fall back to "unknown device".
+  The list includes the user's **browser** sessions as well as their apps (upstream lists
+  them too), so a `DELETE` here can sign a web session out; a browser row is never
+  `current`, since currency comes from the request's refresh token.
 - `DELETE /api/me/sessions/:id` — 400 on a non-uuid id (clients rely on this), 404 if it
   isn't the caller's, else 200 and that device is signed out.
 
 **Sessions are what make revocation real.** Access tokens stay stateless, but each refresh
-token gets an `auth_session` row (SHA-256 of the token, never the token), and
+token gets an `auth_session` row — `kind="abs"`; the web UI's own logins share the table
+as `kind="ui"` (SHA-256 of the credential, never the credential itself) — and
 `/auth/refresh` requires one — otherwise a "sign out" on a lost phone would leave it
 working for the token's full 30 days. Two consequences to preserve: refresh tokens carry a
 random `jti` so that two logins in the same second can't mint the *same* token (the

@@ -62,9 +62,23 @@ def test_settings(tmp_path_factory):
     get_engine.cache_clear()
     get_sessionmaker.cache_clear()
 
-    from app.models import Base
+    from app.models import Base, User, UserRole
 
     Base.metadata.create_all(get_engine())
+    # Seed the admin account before anything imports app.main, whose startup
+    # bootstrap would otherwise hash ADMIN_PASSWORD at production scrypt cost.
+    # The cost parameters are embedded in the stored hash, so the bootstrap's
+    # verify (and every admin login) stays cheap.
+    with get_sessionmaker()() as session:
+        session.add(
+            User(
+                username="admin",
+                password_hash=cheap_password_hash(ADMIN_PASSWORD),
+                hardcover_token="",
+                role=UserRole.ADMIN,
+            )
+        )
+        session.commit()
     yield get_settings()
 
 

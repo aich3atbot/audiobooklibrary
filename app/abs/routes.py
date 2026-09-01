@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 
 from app.abs import payloads, sessions, tokens
 from app.abs.deps import require_abs_user
-from app.auth import ADMIN_USERNAME
 from app.db import get_db
 from app.models import User
 from app.passwords import verify_password
@@ -49,10 +48,13 @@ def healthcheck():
 def abs_login(request: Request, username: str, password: str, db: Session) -> JSONResponse:
     """JSON login for ABS clients (the UI form path lives in routes/auth.py).
     The admin account has no library and cannot use the ABS API."""
-    user = None
-    if username.strip() != ADMIN_USERNAME:
-        user = db.scalar(select(User).where(User.username == username.strip()))
-    if user is None or not user.enabled or not verify_password(password, user.password_hash):
+    user = db.scalar(select(User).where(User.username == username.strip()))
+    if (
+        user is None
+        or user.is_admin
+        or not user.enabled
+        or not verify_password(password, user.password_hash)
+    ):
         return JSONResponse({"error": "Invalid username or password"}, status_code=401)
 
     return_tokens = request.headers.get("x-return-tokens") == "true"
@@ -88,7 +90,7 @@ def refresh(request: Request, db: Session = Depends(get_db)):
     if payload is None or payload.get("type") != "refresh":
         return JSONResponse({"error": "Invalid refresh token"}, status_code=401)
     user = db.scalar(select(User).where(User.uuid == payload.get("userId", "")))
-    if user is None or not user.enabled:
+    if user is None or user.is_admin or not user.enabled:
         return JSONResponse({"error": "Invalid refresh token"}, status_code=401)
 
     # A valid signature is not enough: the session must still exist, which is

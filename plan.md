@@ -27,7 +27,7 @@ finished audiobooks into a clean library folder. Single container, Python, SQLit
 | Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
 | Read-state sync | **Two-way**: UI changes push to Hardcover immediately; a periodic sync pulls Hardcover changes down. Hardcover is the source of truth for read state. |
 | Web stack | **FastAPI + Jinja2 + HTMX** (server-rendered, HTMX for in-page updates). |
-| Users | **Multi-user, mandatory login** (signed session cookie). A virtual `admin` account (password from `ADMIN_PASSWORD`, required at startup) only administers users: add, enable/disable, delete, change passwords/tokens. Regular users are DB rows (scrypt password hashes) created by the admin, each with their own Hardcover token. An account is **full** (web UI + Hardcover) or **limited** (Audiobookshelf apps only — see "Limited accounts" below). "admin" is a reserved username. See "Multi-user conversion" below for the full design. |
+| Users | **Multi-user, mandatory login** (signed session cookie naming a server-side session row, so a login can be revoked). An `admin` account (password from `ADMIN_PASSWORD`, which creates it on a fresh database) only administers users: add, enable/disable, delete, change passwords/tokens. Regular users are DB rows (scrypt password hashes) created by the admin, each with their own Hardcover token. An account is **full** (web UI + Hardcover) or **limited** (Audiobookshelf apps only — see "Limited accounts" below). "admin" is a reserved username. See "Multi-user conversion" and "Revocable sessions" below for the full design. |
 | Configuration | Environment variables (12-factor), with a `.env` file for local dev. |
 
 ## Architecture
@@ -59,8 +59,13 @@ One FastAPI process running:
 ## Data model (SQLite)
 
 - **user** — id, uuid (ABS userId), username (unique), password_hash (scrypt), hardcover_token,
-  role (`full` | `limited` — see "Limited accounts"), enabled, created_at, last_sync_at,
-  last_sync_result. The `admin` account is virtual — never a row.
+  role (`full` | `limited` — see "Limited accounts" — or `admin`), enabled, created_at,
+  last_sync_at, last_sync_result. The `admin` account is one of these rows; see
+  "Revocable sessions".
+- **auth_session** — id, uuid (the client-facing session id), user_id, kind (`abs` | `ui`),
+  token_hash, last_token_hash + last_token_expires_at (ABS rotation grace), expires_at,
+  user_agent, ip_address, created_at, updated_at. One row per live login of either
+  kind; see "Revocable sessions".
 - **author** — id, hardcover_id, name, image_url (Hardcover's author photo; NULL = never
   looked up, "" = Hardcover has none)
 - **series** — id, hardcover_id, name, hardcover_slug
@@ -326,7 +331,9 @@ default is itself empty — there empty is a real setting). Everything but `ADMI
 and the four bind-mount paths can simply be left out.
 
 ```
-ADMIN_PASSWORD          # password for the virtual "admin" account (required at startup)
+ADMIN_PASSWORD          # password for the "admin" account. Required on a fresh database
+                        # (it creates the account); afterwards optional — while set it is
+                        # authoritative at every startup, unset the stored one stands
                         # (Hardcover tokens are per-user, set on the admin's Users page)
 INDEX_URL               # AudioBookBay base URL (mirrors rotate; http:// may be the working one)
 DOWNLOAD_CLIENT         # "deluge" or "qbittorrent"; optional — downloading is enabled
@@ -517,7 +524,7 @@ Primary compatibility target: the **official ABS app** (Android/iOS); third-part
 (Plappa, ShelfPlayer) should mostly work as a byproduct and get quirk fixes on demand.
 
 Decisions:
-- **Auth**: user-account credentials (the virtual admin is rejected — it has no library).
+- **Auth**: user-account credentials (the admin account is rejected — it has no library).
   `POST /login` (JSON) issues a signed bearer token (same secret as the session cookie)
   whose `userId` is the account's stable uuid; ABS endpoints authenticate via
   `Authorization: Bearer` and re-check the account is enabled on every request. The UI's
@@ -584,10 +591,10 @@ migration from the single-user schema exists):
 
 - **Accounts**: `user` table (uuid for the ABS userId, unique username, scrypt password
   hash with parameters embedded in the stored string, per-user `hardcover_token`, `enabled`
-  flag, per-user sync cursor/result). The `admin` account is virtual — checked against
-  `ADMIN_PASSWORD`, never stored — and sees only the user-administration UI. Disabling a
-  user takes effect immediately (sessions and ABS tokens are re-checked against the DB per
-  request).
+  flag, per-user sync cursor/result). The `admin` account is a row of the same table with
+  `role = admin` (see "Revocable sessions") and sees only the user-administration UI.
+  Disabling a user takes effect immediately (sessions and ABS tokens are re-checked against
+  the DB per request).
 - **Per-user library**: a `user_book` join row carries `read_state`, `read_at`,
   `pending_push`, and `hardcover_user_book_id`; those columns leave `book`. Each user's
   Hardcover sync runs with their own token and maintains their own `user_book` rows over
@@ -621,6 +628,43 @@ Milestones (commit each; the app stays runnable throughout):
 5. ✅ **Imports rework + delete-user orphan review.**
 6. ✅ **Squash migrations + final docs pass.**
 
+## Revocable sessions (complete)
+
+Every login of either kind is an `auth_session` row, so signing out actually signs out.
+ABS refresh tokens got rows first; browser logins followed, which needed the admin to
+become a real user (`auth_session.user_id` is a foreign key to `user`, and the admin had
+no row to point at).
+
+- **Browser sessions** (`kind = "ui"`): the signed cookie carries one opaque random token
+  (`sid`); the row it hashes to is the session. `RequireAuthMiddleware` resolves it per
+  request, so deleting the row logs the browser out immediately — from a password reset,
+  a sign-out, or an app's device list. Sessions live 30 days and **slide** as they are
+  used, matching the cookie's own `max_age` (Starlette re-sends it on every response), but
+  the row is only touched once an hour so an ordinary page view stays a read.
+  Browser sessions never rotate; `last_token_hash` stays null for them.
+- **The device list**: `/api/me/sessions` lists both kinds, as upstream does, and
+  `DELETE /api/me/sessions/:id` revokes either — a phone can sign a laptop out. A browser
+  row is never `current` there (currency is resolved from the request's refresh token).
+- **Password changes revoke everything.** An admin reset drops every session the user has,
+  browser and app alike; whoever knew the old password is out on their next request.
+- **The admin account** is a `user` row with `role = admin`, username "admin" (still
+  reserved). A role rather than a flag on purpose: the Hardcover selects already filter
+  on `role == full`, so the admin is excluded from sync, token-borrowing and the metadata
+  backfills for free. It is invisible to /admin/users and `_get_user` refuses it, so no
+  verb can disable, delete, demote or re-password it; the ABS surface rejects it in four
+  places (JSON login, `require_abs_user`, `/auth/refresh`, socket.io auth) because it now
+  has a uuid a hand-made token could name.
+- **`ADMIN_PASSWORD` reconciles the account at startup** (`ensure_admin_account`): it
+  creates the row on a fresh database and refuses to start without one; while it stays set
+  it is authoritative, and changing it rehashes and revokes the admin's sessions; unset,
+  the stored password stands. It is the only way to set that password — there is no
+  self-service password change in the UI.
+- **Still not covered**: a *self-service* session manager. Users cannot see or revoke their
+  own browser sessions from the web UI (only from an ABS app, or by logging out); the
+  admin's lever is a password reset or disabling the account. Rotating
+  `CONFIG_DIR/session_secret` remains the blunt instrument — it invalidates every cookie
+  and every ABS token at once.
+
 ## Limited accounts (complete)
 
 `user.role` is `full` (everything above, the default) or `limited`: a listener who reaches
@@ -633,9 +677,8 @@ the library only through Audiobookshelf apps.
 - **What it cannot do**: the web UI. `RequireAuthMiddleware` turns it away (`/login?error=app_only`)
   and the login form refuses it with 403 — the credentials are valid, this door is not
   theirs. Because the middleware re-reads the row per request, demoting a signed-in user
-  locks them out on their next request, which matters as browser sessions are signed
-  cookies with nothing to revoke. ABS sessions are deliberately left alive: app access is
-  precisely what a limited account keeps.
+  locks them out on their next request. ABS sessions are deliberately left alive: app
+  access is precisely what a limited account keeps.
 - **No Hardcover, enforced**: the token is forced empty on create and cleared on demotion,
   `POST /admin/users/{id}/token` refuses (422), and the sync selects filter on the role.
   Listening skips read state entirely — `_set_read_state` in `app/abs/progress.py` returns
