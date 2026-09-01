@@ -61,8 +61,10 @@ async def login(request: Request, db: Session = Depends(get_db)):
     password = form.get("password") or ""
     next_url = safe_next(form.get("next", "/"))
 
-    # The admin is an ordinary row (username "admin", UserRole.ADMIN), so it
-    # authenticates through this same path and gets a revocable session.
+    # One credential check for everybody, the administrator included: it is an
+    # ordinary row, authenticated against its stored hash like any other and
+    # given the same revocable session. Only `user.is_admin` — the role, never
+    # the name — decides which interface it lands on.
     user = db.scalar(select(User).where(User.username == username))
     if (
         user is not None

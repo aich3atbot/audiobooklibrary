@@ -82,16 +82,57 @@ def test_create_user_validation(admin_client, user):
         admin_client.post("/admin/users", data={"username": "x", "password": ""}).status_code
         == 422
     )
-    reserved = admin_client.post(
-        "/admin/users", data={"username": "Admin", "password": "x"}
-    )
-    assert reserved.status_code == 422
-    assert "reserved" in reserved.text
     duplicate = admin_client.post(
         "/admin/users", data={"username": user.username, "password": "x"}
     )
     assert duplicate.status_code == 422
     assert "already exists" in duplicate.text
+
+
+def test_the_admins_name_is_taken_like_any_other(admin_client):
+    """There is no name-based reservation any more: "admin" is refused because
+    the account already holds it, exactly as any duplicate would be."""
+    response = admin_client.post(
+        "/admin/users", data={"username": "admin", "password": "x"}
+    )
+    assert response.status_code == 422
+    assert "already exists" in response.text
+
+
+def test_a_lookalike_name_confers_nothing(admin_client, db_session, anon_client):
+    """Authorisation is by role alone, so an account that merely looks like the
+    administrator is an ordinary user — no admin UI, no admin powers."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    db_session.query(User).filter(User.username == "Admin").delete()
+    db_session.commit()
+
+    assert (
+        admin_client.post(
+            "/admin/users",
+            data={"username": "Admin", "password": "lookalike-pw"},
+            follow_redirects=False,
+        ).status_code
+        == 303
+    )
+    created = db_session.scalar(select(User).where(User.username == "Admin"))
+    assert created.role == UserRole.FULL and not created.is_admin
+
+    impostor = TestClient(app)
+    landing = impostor.post(
+        "/login",
+        data={"username": "Admin", "password": "lookalike-pw"},
+        follow_redirects=False,
+    )
+    # The ordinary library, not /admin/users...
+    assert landing.headers["location"] == "/"
+    # ...and the admin pages stay shut.
+    assert impostor.get("/admin/users", follow_redirects=False).headers["location"] == "/"
+
+    db_session.delete(created)
+    db_session.commit()
 
 
 def test_disable_enable_user(admin_client, other_user, db_session):

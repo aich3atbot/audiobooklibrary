@@ -26,7 +26,9 @@ from app.models import User
 
 # The cookie holds only this: the opaque token naming the session row.
 SESSION_TOKEN = "sid"
-ADMIN_USERNAME = "admin"
+# Nothing here knows the administrator's *name*: authentication is by password
+# against the row, and which UI you get is decided by `user.is_admin`. The name
+# only exists at startup, to create the row (app/services/users.py).
 # /status, /ping, /healthcheck: ABS client discovery must be public.
 # /logout too: ABS clients post it with a bearer/refresh token and no cookie,
 # and a redirect to /login would hand them an HTML page instead of revoking.

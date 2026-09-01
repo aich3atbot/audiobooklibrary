@@ -16,7 +16,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased, joinedload
 
 from app.abs import sessions
-from app.auth import ADMIN_USERNAME
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.models import Book, Edition, MediaProgress, Release, User, UserBook, UserRole
@@ -24,6 +23,10 @@ from app.passwords import hash_password, verify_password
 from app.services.importer import ACTIVE_STATUSES, cleanup_empty_parents
 
 logger = logging.getLogger(__name__)
+
+# What a newly created administrator row is *called*. Used only here, and only
+# when creating that row: nothing authenticates or authorises on the name.
+ADMIN_USERNAME = "admin"
 
 
 def ensure_admin_account(session: Session | None = None) -> User:
@@ -47,13 +50,25 @@ def ensure_admin_account(session: Session | None = None) -> User:
             return ensure_admin_account(own_session)
 
     password = get_settings().admin_password
-    admin = session.scalar(select(User).where(User.username == ADMIN_USERNAME))
+    # Identified by its role, never by its name: the name is only what a new
+    # row gets called. Everything downstream (login, the middleware, the ABS
+    # guards) tests the role too, so a renamed administrator keeps working.
+    admin = session.scalar(select(User).where(User.role == UserRole.ADMIN))
 
     if admin is None:
         if not password:
             raise RuntimeError(
                 "ADMIN_PASSWORD must be set to create the admin account "
                 "(no admin user exists yet)"
+            )
+        if session.scalar(select(User).where(User.username == ADMIN_USERNAME)):
+            # Only reachable by hand — but the username is unique, so the
+            # insert below would fail anyway, and silently promoting somebody
+            # else's account would be far worse.
+            raise RuntimeError(
+                f'an ordinary account named "{ADMIN_USERNAME}" already exists, so the '
+                "admin account cannot be created; rename that account in the database "
+                "before starting"
             )
         admin = User(
             username=ADMIN_USERNAME,
@@ -71,11 +86,6 @@ def ensure_admin_account(session: Session | None = None) -> User:
         logger.info("Created the admin account")
         return admin
 
-    if not admin.is_admin:
-        raise RuntimeError(
-            'a non-admin account named "admin" exists; rename it in the '
-            "database before starting (the name is reserved)"
-        )
     if not password:
         return admin
     if verify_password(password, admin.password_hash):

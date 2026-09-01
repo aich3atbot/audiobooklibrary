@@ -147,6 +147,29 @@ def test_wrong_admin_password_rejected(anon_client):
     assert response.status_code == 401
 
 
+def test_login_routes_on_the_role_not_the_username(anon_client, db_session):
+    """Which interface you get is decided by `user.is_admin` alone — the login
+    path never compares a name (or ADMIN_PASSWORD) against anything."""
+    from sqlalchemy import select
+
+    from app.models import User
+
+    admin = db_session.scalar(select(User).where(User.username == "admin"))
+    admin.username = "sysop"
+    db_session.commit()
+    try:
+        response = login(anon_client, username="sysop", password=ADMIN_PASSWORD)
+        assert response.status_code == 303
+        assert response.headers["location"] == "/admin/users"
+        assert anon_client.get("/admin/users").status_code == 200
+        # ...and the old name is now just a name nobody holds.
+        assert login(anon_client, username="admin", password=ADMIN_PASSWORD).status_code == 401
+    finally:
+        db_session.refresh(admin)
+        admin.username = "admin"
+        db_session.commit()
+
+
 def test_admin_is_redirected_away_from_regular_routes(admin_client):
     response = admin_client.get("/", follow_redirects=False)
     assert response.status_code == 303

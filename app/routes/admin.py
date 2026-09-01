@@ -1,10 +1,14 @@
 """User administration, reachable only by the admin account.
 
 The admin is a `user` row itself now (so its own sessions can be revoked), but
-it is not administrable from here: it is filtered out of the list and
-`_get_user` refuses it, so no verb can disable, delete, demote or re-password
-it by id. Its password comes from ADMIN_PASSWORD at startup and nowhere
-else."""
+it is not administrable from here: it is filtered out of the list *by role*
+and `_get_user` refuses it, so no verb can disable, delete, demote or
+re-password it by id. Its password comes from ADMIN_PASSWORD at startup and
+nowhere else.
+
+No username is treated as special: a new account called "admin" is refused
+only because the unique index already holds it, and a lookalike name grants
+nothing, since every check here is on `UserRole.ADMIN`."""
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -14,7 +18,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.abs import sessions
-from app.auth import ADMIN_USERNAME, require_admin
+from app.auth import require_admin
 from app.db import get_db
 from app.models import User, UserRole
 from app.passwords import hash_password
@@ -67,9 +71,9 @@ def create_user(
     username = username.strip()
     if not username or not password:
         return _users_page(request, db, "Username and password are required.", 422)
-    if username.lower() == ADMIN_USERNAME:
-        return _users_page(request, db, '"admin" is reserved.', 422)
 
+    # No name is special here: the administrator is a row like any other, and
+    # the unique index on username is what stops a second one taking its name.
     parsed_role = _parse_role(role)
     user = User(
         username=username,

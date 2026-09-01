@@ -104,11 +104,12 @@ def _enum_column(enum_cls, default):
 
 
 class User(Base):
-    """A login account, including the administrator: "admin" is a reserved
-    username held by one `UserRole.ADMIN` row, reconciled against
-    ADMIN_PASSWORD at startup (`app.services.users.ensure_admin_account`).
-    It is a row so that its browser sessions can be revoked like anyone
-    else's — `auth_session.user_id` is a foreign key."""
+    """A login account, including the administrator — one `UserRole.ADMIN`
+    row, created and password-reconciled from ADMIN_PASSWORD at startup
+    (`app.services.users.ensure_admin_account`). It is a row so that its
+    browser sessions can be revoked like anyone else's (`auth_session.user_id`
+    is a foreign key), and it is identified by its **role**: the username it
+    is created with ("admin") carries no privilege and can be changed."""
 
     __tablename__ = "user"
 

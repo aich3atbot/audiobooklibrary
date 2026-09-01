@@ -27,7 +27,7 @@ finished audiobooks into a clean library folder. Single container, Python, SQLit
 | Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
 | Read-state sync | **Two-way**: UI changes push to Hardcover immediately; a periodic sync pulls Hardcover changes down. Hardcover is the source of truth for read state. |
 | Web stack | **FastAPI + Jinja2 + HTMX** (server-rendered, HTMX for in-page updates). |
-| Users | **Multi-user, mandatory login** (signed session cookie naming a server-side session row, so a login can be revoked). An `admin` account (password from `ADMIN_PASSWORD`, which creates it on a fresh database) only administers users: add, enable/disable, delete, change passwords/tokens. Regular users are DB rows (scrypt password hashes) created by the admin, each with their own Hardcover token. An account is **full** (web UI + Hardcover) or **limited** (Audiobookshelf apps only — see "Limited accounts" below). "admin" is a reserved username. See "Multi-user conversion" and "Revocable sessions" below for the full design. |
+| Users | **Multi-user, mandatory login** (signed session cookie naming a server-side session row, so a login can be revoked). An `admin` account (password from `ADMIN_PASSWORD`, which creates it on a fresh database) only administers users: add, enable/disable, delete, change passwords/tokens. Regular users are DB rows (scrypt password hashes) created by the admin, each with their own Hardcover token. An account is **full** (web UI + Hardcover) or **limited** (Audiobookshelf apps only — see "Limited accounts" below). Which interface an account gets is decided by its role, never by its username. See "Multi-user conversion" and "Revocable sessions" below for the full design. |
 | Configuration | Environment variables (12-factor), with a `.env` file for local dev. |
 
 ## Architecture
@@ -647,18 +647,26 @@ no row to point at).
   row is never `current` there (currency is resolved from the request's refresh token).
 - **Password changes revoke everything.** An admin reset drops every session the user has,
   browser and app alike; whoever knew the old password is out on their next request.
-- **The admin account** is a `user` row with `role = admin`, username "admin" (still
-  reserved). A role rather than a flag on purpose: the Hardcover selects already filter
-  on `role == full`, so the admin is excluded from sync, token-borrowing and the metadata
-  backfills for free. It is invisible to /admin/users and `_get_user` refuses it, so no
-  verb can disable, delete, demote or re-password it; the ABS surface rejects it in four
-  places (JSON login, `require_abs_user`, `/auth/refresh`, socket.io auth) because it now
-  has a uuid a hand-made token could name.
-- **`ADMIN_PASSWORD` reconciles the account at startup** (`ensure_admin_account`): it
-  creates the row on a fresh database and refuses to start without one; while it stays set
-  it is authoritative, and changing it rehashes and revokes the admin's sessions; unset,
-  the stored password stands. It is the only way to set that password — there is no
-  self-service password change in the UI.
+- **The admin account** is a `user` row with `role = admin`. A role rather than a flag on
+  purpose: the Hardcover selects already filter on `role == full`, so the admin is
+  excluded from sync, token-borrowing and the metadata backfills for free. It is invisible
+  to /admin/users and `_get_user` refuses it, so no verb can disable, delete, demote or
+  re-password it; the ABS surface rejects it in four places (JSON login,
+  `require_abs_user`, `/auth/refresh`, socket.io auth) because it now has a uuid a
+  hand-made token could name.
+- **The name "admin" is not special, the role is.** Logging in is a single password check
+  against the row for every account, and `user.is_admin` alone chooses the interface — no
+  code path compares a username, or `ADMIN_PASSWORD`, to authenticate or authorise
+  anybody. Creating an account called "admin" is refused by the unique index like any
+  other duplicate, and one called "Admin" is simply an ordinary user with a confusing
+  name. Renaming the administrator in the database costs it nothing.
+- **`ADMIN_PASSWORD` reconciles the account at startup, and is read nowhere else**
+  (`ensure_admin_account`): it creates the row on a fresh database and refuses to start
+  without one; while it stays set it is authoritative, and changing it rehashes and
+  revokes the admin's sessions; unset, the stored password stands. It is the only way to
+  set that password — there is no self-service password change in the UI. The account is
+  located **by role**; the username is used only to name a row being created, and if an
+  ordinary account already holds that name, startup stops rather than promoting it.
 - **Still not covered**: a *self-service* session manager. Users cannot see or revoke their
   own browser sessions from the web UI (only from an ABS app, or by logging out); the
   admin's lever is a password reset or disabling the account. Rotating

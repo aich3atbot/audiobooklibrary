@@ -130,8 +130,8 @@ def test_changing_the_password_re_enables_a_disabled_admin(fresh_db, admin_passw
 
 
 def test_a_non_admin_account_named_admin_stops_startup(fresh_db, admin_password):
-    """Only possible by hand — /admin/users has always reserved the name — but
-    silently promoting a real user's row would be worse than refusing."""
+    """Only reachable by hand, and the unique index would reject the insert
+    anyway — but silently promoting a real user's row would be far worse."""
     from app.models import User
     from app.services.users import ensure_admin_account
 
@@ -139,8 +139,34 @@ def test_a_non_admin_account_named_admin_stops_startup(fresh_db, admin_password)
     fresh_db.commit()
 
     admin_password("whatever")
-    with pytest.raises(RuntimeError, match="reserved"):
+    with pytest.raises(RuntimeError, match="rename"):
         ensure_admin_account(fresh_db)
+    # ...and it certainly did not become the administrator.
+    assert not stored_admin(fresh_db).is_admin
+
+
+def test_the_account_is_found_by_role_not_by_name(fresh_db, admin_password):
+    """Renaming the administrator in the database is not startup's business:
+    the role is its identity, so it is reconciled, not duplicated."""
+    from app.models import User, UserRole
+    from app.passwords import verify_password
+    from app.services.users import ensure_admin_account
+
+    admin_password("original")
+    admin = ensure_admin_account(fresh_db)
+    admin.username = "sysop"
+    fresh_db.commit()
+
+    admin_password("rotated")
+    again = ensure_admin_account(fresh_db)
+
+    assert again.id == admin.id
+    assert again.username == "sysop"
+    # One administrator, and no second row created under the default name.
+    assert fresh_db.scalars(select(User).where(User.role == UserRole.ADMIN)).all() == [again]
+    assert fresh_db.scalar(select(User).where(User.username == "admin")) is None
+    # The password change still applied to it.
+    assert verify_password("rotated", again.password_hash)
 
 
 def test_the_admin_is_excluded_from_hardcover_sync(fresh_db, admin_password):

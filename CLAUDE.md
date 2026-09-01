@@ -174,7 +174,7 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   loop, and streaming rides that same loop. Keep it off the loop.
 - **Multi-user, mandatory auth**: there is no open mode. Users are DB rows (scrypt
   password hashes via `app/passwords.py`, per-user Hardcover tokens), and so is the
-  `admin` account — one `UserRole.ADMIN` row, reserved username, seeing only the
+  `admin` account — one `UserRole.ADMIN` row, seeing only the
   user-administration UI at /admin/users. Disabling a user locks them out immediately —
   sessions and ABS tokens are re-checked against the DB per request. Auth lives in
   `app/auth.py` (middleware + deps) + `app/routes/auth.py`; admin routes in
@@ -195,17 +195,25 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   out. Still absent on purpose: a self-service session manager in the web UI. Rotating
   `CONFIG_DIR/session_secret` remains the blunt instrument — it invalidates every cookie
   and ABS token at once, since they share the secret.
-- **The admin is a role, not a flag** (`UserRole.ADMIN`), because every Hardcover select
-  already filters on `role == FULL` — sync, token-borrowing and the metadata backfills
-  skip it with no extra code. It is hidden from /admin/users and `_get_user` 404s on it,
-  so no verb can disable, delete, demote or re-password it, and the ABS surface rejects it
-  in four places (JSON login, `require_abs_user`, `/auth/refresh`, socket.io) now that it
-  has a uuid a hand-made token could name. **`ADMIN_PASSWORD` is reconciled at startup**
+- **The admin is a role, not a flag and not a name** (`UserRole.ADMIN`). A role because
+  every Hardcover select already filters on `role == FULL` — sync, token-borrowing and the
+  metadata backfills skip it with no extra code. **Never a name**: login is one
+  password check against the row for everybody, and `user.is_admin` alone decides which
+  interface you land on, so nothing compares a username (or `ADMIN_PASSWORD`) to authenticate
+  or authorise — do not reintroduce a `username == "admin"` test anywhere. It is hidden
+  from /admin/users (filtered by role) and `_get_user` 404s on it, so no verb can disable,
+  delete, demote or re-password it, and the ABS surface rejects it in four places (JSON
+  login, `require_abs_user`, `/auth/refresh`, socket.io) now that it has a uuid a
+  hand-made token could name. Creating a user called "admin" is refused only by the
+  unique index ("already exists"), and a lookalike like "Admin" is just an ordinary user.
+  **`ADMIN_PASSWORD` is reconciled at startup and used nowhere else**
   (`ensure_admin_account`, called at import in `app/main.py`, after `alembic upgrade
   head`): it creates the row on a fresh database and refuses to start without one; while
   set it wins at every restart (a change rehashes and revokes the admin's sessions);
-  unset, the stored password stands. It is the *only* way to set that password. A
-  non-admin row named "admin" stops startup rather than being promoted. Note
+  unset, the stored password stands. It is the *only* way to set that password. Startup
+  finds the account **by role**, so renaming it in the database is harmless — the username
+  is only used to name a row it is about to create, and an ordinary account already
+  holding that name stops startup rather than being promoted. Note
   `resolve_session_secret` lives in `app/config.py`, not `app/auth.py` — `app/abs/tokens.py`
   needs it and `app/auth.py` needs the session store, so one direction had to give.
 - **Limited accounts are ABS-only** (`user.role`: `full` | `limited`; see plan.md "Limited
