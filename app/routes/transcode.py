@@ -53,7 +53,12 @@ def status_context(db: Session, edition: Edition, refresh: bool = False) -> dict
         )
     active = job is not None and job.state in TRANSCODE_ACTIVE
     root = Path(edition.library_path) if edition.library_path else None
-    applicable = root is not None and root.is_dir() and mp3_sources(root) is not None
+    # A running job already settles the question, and this context is rebuilt
+    # every two seconds while one runs: `mp3_sources` is an rglob plus a header
+    # read per file, on the disk ffmpeg is busy reading and writing.
+    applicable = active or (
+        root is not None and root.is_dir() and mp3_sources(root) is not None
+    )
     return {
         "edition": edition,
         "job": job,
@@ -99,6 +104,7 @@ async def transcode_confirm(
             chapter_plan,
             mp3_sources,
             probe_sources,
+            sidecar_is_spent,
             target_bitrate,
         )
 
@@ -110,7 +116,7 @@ async def transcode_confirm(
         # Tag durations are good enough to *describe* the job; the decode pass
         # that places the chapters happens in the worker.
         durations = [s.duration for s in sources]
-        chapters, sidecar = chapter_plan(edition, durations)
+        chapters, sidecars = chapter_plan(edition, durations)
         return {
             "edition": edition,
             "error": None,
@@ -118,7 +124,13 @@ async def transcode_confirm(
             "bitrate": target_bitrate(sources, get_settings().transcode_bitrate),
             "duration": sum(durations),
             "chapters": len(chapters),
-            "sidecar": sidecar.name if sidecar else None,
+            # where the chapters come from, and — separately, because an ABS
+            # metadata.json is a source we do not delete — what goes with the
+            # MP3s. A multi-disc rip can have one cue sheet per disc.
+            "sidecar": ", ".join(p.name for p in sidecars) or None,
+            "deleted_sidecar": ", ".join(
+                p.name for p in sidecars if sidecar_is_spent(p)
+            ) or None,
             "output": f"{Path(edition.library_path).name}.m4b",
         }
 

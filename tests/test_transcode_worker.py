@@ -286,6 +286,27 @@ def test_successful_transcode_removes_the_consumed_cue(edition, clean_db, fake_f
     assert library_files(edition) == ["Transcode Me.m4b", "cover.jpg", "notes.nfo"]
 
 
+def test_a_consumed_metadata_json_is_kept(edition, clean_db, fake_ffmpeg, settings_with):
+    """Audiobookshelf's metadata.json is a chapter source, but it is not *only*
+    that — description, series and narrator ride along, and nothing here can
+    write them back. Deleting it as a spent sidecar would lose them."""
+    import json
+    from pathlib import Path
+
+    settings_with(fake_ffmpeg)
+    root = Path(edition.library_path)
+    (root / "metadata.json").write_text(json.dumps({
+        "description": "Everything the m4b will not carry",
+        "narrators": ["A Reader"],
+        "chapters": [{"id": 0, "start": 0, "end": 12, "title": "One"}],
+    }))
+
+    assert run_job(clean_db, queue_job(clean_db, edition, None)) is True
+
+    assert library_files(edition) == ["Transcode Me.m4b", "cover.jpg", "metadata.json"]
+    assert "Everything the m4b will not carry" in (root / "metadata.json").read_text()
+
+
 def test_emptied_disc_folders_are_pruned(clean_db, test_settings, fake_ffmpeg, settings_with):
     from pathlib import Path
 
@@ -338,6 +359,38 @@ def test_a_truncated_encode_is_rejected(edition, clean_db, fake_ffmpeg, settings
     assert library_files(edition) == before
     assert job.state == TranscodeState.FAILED
     assert "of audio" in job.error
+
+
+def test_a_measured_book_keeps_the_flat_tolerance(edition, clean_db, fake_ffmpeg, settings_with, monkeypatch):
+    """Every file measured, so a 10% shortfall on a 12-second book — 1.2s — is
+    still a truncated encode and not slack owed to any estimate."""
+    settings_with(fake_ffmpeg)
+    monkeypatch.setenv("FAKE_SCALE", "0.9")
+    job = queue_job(clean_db, edition, None)
+
+    assert run_job(clean_db, job) is False
+
+    assert "of audio" in job.error
+
+
+def test_an_unmeasurable_file_widens_the_check_by_its_own_length(
+    edition, clean_db, fake_ffmpeg, settings_with, monkeypatch
+):
+    """One file that ffmpeg could not measure keeps its tag duration, which
+    runs ~0.8% long. The allowance is charged against that file's seconds
+    alone: 500 estimated seconds buy 10s of slack, so an encode 3s short of the
+    expected total is kept rather than binned as truncated — a correct encode
+    of a multi-hour book used to be discarded over exactly this."""
+    settings_with(fake_ffmpeg)
+    monkeypatch.setattr(
+        transcode, "measure_durations", lambda *a, **k: ([500.0, 4.0, 3.0], 500.0)
+    )
+    monkeypatch.setenv("FAKE_SCALE", "0.994")  # ~3s under the 507s we expect
+    job = queue_job(clean_db, edition, None)
+
+    assert run_job(clean_db, job) is True
+
+    assert library_files(edition) == ["Transcode Me.m4b", "cover.jpg"]
 
 
 def test_an_unplayable_output_is_rejected(edition, clean_db, tmp_path, settings_with):
@@ -412,6 +465,33 @@ def test_cancelling_a_running_encode_stops_it(edition, clean_db, fake_ffmpeg, se
     settings_with(fake_ffmpeg)
     monkeypatch.setenv("FAKE_LINES", "80")  # enough to reach a checkpoint
     job = queue_job(clean_db, edition, None)
+    measure = transcode.measure_durations
+
+    def cancel_once_measured(*args, **kwargs):
+        # the flag arrives after the measure pass, so only the encode loop can
+        # be the one that notices it
+        result = measure(*args, **kwargs)
+        job.cancel_requested = True
+        clean_db.commit()
+        return result
+
+    monkeypatch.setattr(transcode, "measure_durations", cancel_once_measured)
+
+    assert run_job(clean_db, job) is False
+
+    assert job.state == TranscodeState.CANCELLED
+    assert job.error is None
+    assert library_files(edition) == before
+
+
+def test_cancelling_during_the_measure_pass_stops_before_the_encode(
+    edition, clean_db, fake_ffmpeg, settings_with
+):
+    """The decode pass runs before ffmpeg is ever started and can be minutes of
+    work on a long book, so it watches the flag too."""
+    before = library_files(edition)
+    settings_with(fake_ffmpeg)
+    job = queue_job(clean_db, edition, None)
     job.cancel_requested = True
     clean_db.commit()
 
@@ -419,6 +499,7 @@ def test_cancelling_a_running_encode_stops_it(edition, clean_db, fake_ffmpeg, se
 
     assert job.state == TranscodeState.CANCELLED
     assert job.error is None
+    assert job.progress == 0.0  # never reached the encode
     assert library_files(edition) == before
 
 

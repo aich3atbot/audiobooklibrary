@@ -858,6 +858,16 @@ the ABS apps are showing right now. Sources, first hit wins:
 3. **`*.cue`** in the folder. Both real-world shapes: one `FILE` (times absolute over the
    whole book) and one `FILE` per MP3 (times relative to that file, offset by the file's
    start in the concatenation, matched by filename). `INDEX 01 mm:ss:ff` frames are 1/75s.
+   **A `FILE` that names one of our tracks is always placed against it**, however many
+   `FILE`s the sheet has; only a *lone* unrecognised one means "absolute". That is what
+   makes a **per-disc set** work: a multi-disc rip ships one sheet per disc, each timed
+   from its own disc's zero, so the shallowest-wins rule alone would chapter disc one and
+   leave the rest bare with its last chapter stretched over the remainder. A sheet
+   anchored to real tracks is therefore merged with every other anchored sheet in the
+   folder (`_cue_pass`), and all of them count as consumed. A whole-book sheet anchors
+   nothing and still stands alone. Matching is by bare filename, so **a stem two tracks
+   share (`CD1/Track01.mp3`, `CD2/Track01.mp3`) resolves to neither** — `track_offsets`
+   drops it, and the sheet naming it is refused rather than placed on a coin-flip disc.
 4. **`chapters.txt` / `*.chapters.txt`** — `HH:MM:SS(.mmm) Title` or `MM:SS Title` lines.
 5. **An FFMETADATA file** (`*.ffmeta`/`*.ffmetadata`, or any sidecar starting with
    `;FFMETADATA1`) — parsed through our own reader rather than trusted wholesale.
@@ -930,7 +940,12 @@ muxer and a `pcm_s16le` encoder) and its real length used for every offset. On t
 set this moved the chapter marks from 0 / 5.042 / 12.095 to exactly 0 / 5.0 / 12.0 and cut
 the whole-file duration error from 105 ms to 21 ms. The pass costs one cheap decode: MP3
 decodes an order of magnitude faster than the AAC encode that follows, and a file that
-cannot be measured falls back to its tag duration rather than failing the job.
+cannot be measured falls back to its tag duration rather than failing the job — including
+one ffmpeg *hangs* on, which is why each file gets a timeout (a quarter of its own length,
+floor five minutes): the measure pass is not the loop that watches for a cancel, so
+without it one bad file holds the single worker until the process restarts. It does poll
+the cancel flag between files, because on a long book this is minutes of decoding before
+the progress bar moves at all.
 `catalogue.edition_chapters` takes the measured durations as an override — the ABS API
 never passes it, because the chapter list it serves must agree with the durations it
 serves alongside.
@@ -997,7 +1012,12 @@ by a restart") and its stray `.part` file removed — never silently resumed.
    both what ffmpeg reported encoding and the summed *measured* durations. That tolerance
    can be this tight precisely because the offsets are measured rather than taken from
    tags: the only remaining difference is the AAC encoder's priming (21 ms on the test
-   encode), which is constant and does not grow with the book. Anything else fails the job
+   encode), which is constant and does not grow with the book. The one thing that widens
+   it is a file that *couldn't* be measured and fell back to its tag duration: those
+   seconds carry the +0.8% drift, so they buy 2% of **their own length** in extra
+   tolerance — charged per estimated second, never against the whole book, so one
+   unmeasurable file in twenty neither loosens the check on the other nineteen nor gets
+   held to a measured file's flat second. Anything else fails the job
    and leaves the folder untouched. Validation comes **before** tagging, not after —
    mutagen cannot open a file that is not really an MP4, and its error is far less useful
    than ours (found by a test that fed the validator a stub's junk output).
@@ -1005,9 +1025,14 @@ by a restart") and its stray `.part` file removed — never silently resumed.
    file still parses at the same duration — a tagging pass rewrites the container, and
    nothing should be deleted for a file that pass damaged.
 3. Atomically rename to `<edition folder name>.m4b` (refusing an occupied name).
-4. Delete the MP3s **and the chapter sidecar that was actually consumed** (the `.cue` that
-   produced the chapters — never one we didn't use); prune emptied disc subfolders with
-   `prune_empty_dirs`. Cover art, `.nfo`, and everything else stay.
+4. Delete the MP3s **and the chapter sidecars that were actually consumed** (the `.cue`
+   that produced the chapters, or the whole per-disc set — never one we didn't use);
+   prune emptied disc subfolders with
+   `prune_empty_dirs`. Cover art, `.nfo`, and everything else stay. An ABS
+   `metadata.json` stays too even when it *was* the chapter source
+   (`sidecar_is_spent`): unlike a `.cue` it carries description, subtitle, series,
+   narrator and tags that describe the book rather than the files being deleted, and
+   nothing here can write them back.
 5. `scan_edition_audio` rebuilds the `audio_file` rows and reads the chapters back out of
    the new file.
 6. Job → `done`.

@@ -209,12 +209,19 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   editions to M4B"): offered in an expanded edition's file list when every audio file in
   the folder identifies as MP3. **The order in `run_job` is the safety property** — encode
   to a dotfile, validate (parses as MP4, holds the audio that went in), tag, re-validate,
-  rename, and only then delete the MP3s and the consumed chapter sidecar; anything failing
-  before the rename leaves the edition untouched. Chapters reuse
-  `catalogue.edition_chapters` so the m4b carries exactly what the apps already showed;
-  a sidecar only wins when the embedded data is trivial (one chapter per file).
+  rename, and only then delete the MP3s and the consumed chapter sidecars; anything failing
+  before the rename leaves the edition untouched. An ABS `metadata.json` is the one
+  consumed sidecar that is **never** deleted (`sidecar_is_spent`) — unlike a `.cue` it
+  also carries description, series and narrator, which nothing here can write back.
+  Chapters reuse `catalogue.edition_chapters` so the m4b carries exactly what the apps
+  already showed; a sidecar only wins when the embedded data is trivial (one chapter per
+  file). Cue sheets are matched to tracks by bare filename, which is why a per-disc set is
+  merged rather than first-wins, and why a stem two tracks share is dropped instead of
+  resolved (see plan.md).
   **Chapter offsets come from a decode pass (`measure_durations`), never from tags** —
-  tag durations run ~0.8% long, which is minutes of drift once files are concatenated.
+  tag durations run ~0.8% long, which is minutes of drift once files are concatenated;
+  a file it cannot measure (or times out on) keeps its tag duration, and only *those*
+  seconds widen the output's duration check.
   One `transcode_job` row + one serial worker; cancel goes through `cancel_requested`,
   and a job left RUNNING by a restart is failed, never resumed. **ffmpeg's stderr goes to
   a file, never a `PIPE`** — we drain stdout for progress and read stderr only at the end,

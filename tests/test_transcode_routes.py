@@ -125,6 +125,20 @@ def test_a_queued_job_shows_progress_not_a_button(client, ready):
     assert "hx-trigger=\"every 2s\"" in body
 
 
+def test_the_running_poll_does_not_re_examine_the_files(client, ready, monkeypatch):
+    """This runs every two seconds for the length of the encode, and
+    `mp3_sources` is an rglob plus a header read per file — hundreds of opens
+    on the disk ffmpeg has busy, to answer a question the running job settles."""
+    client.post(f"/editions/{ready.id}/transcode")
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("the poll probed the folder while a job was active")
+
+    monkeypatch.setattr("app.routes.transcode.mp3_sources", refuse)
+
+    assert "Waiting to convert" in client.get(f"/editions/{ready.id}/transcode").text
+
+
 def test_starting_needs_a_login(anon_client, ready):
     response = anon_client.post(f"/editions/{ready.id}/transcode", follow_redirects=False)
     assert response.status_code in (302, 303, 401, 403)

@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -71,9 +72,19 @@ MAX_DIRECT_INPUTS = 300
 # encode) and it does not grow with the book, which is what lets this be a
 # flat second rather than a percentage.
 DURATION_TOLERANCE = 1.0
-# ...unless a file could not be measured and fell back to its tag duration,
-# which runs systematically long (see measure_durations).
+# ...plus an allowance for the files that could not be measured and fell back
+# to their tag duration, which runs systematically long (see
+# measure_durations). It is charged per estimated second, not against the whole
+# book: one unmeasurable file in twenty must not be checked as if the other
+# nineteen were guesses, and must not have its own drift checked to the second.
 LOOSE_TOLERANCE = 0.02
+# When to give up on measuring one file. MP3 decodes an order of magnitude
+# faster than realtime even on slow hardware, so a quarter of the file's own
+# length — never less than five minutes — is generous. A file that reaches it
+# is one ffmpeg has hung on, and without a limit that hangs the single worker
+# for good: the measure pass is not the loop that watches for a cancel.
+MEASURE_TIMEOUT_FLOOR = 300.0
+MEASURE_TIMEOUT_RATIO = 0.25
 WORKER_POLL_SECONDS = 2.0
 # Progress lines between database writes. ffmpeg emits a block twice a second
 # and two of its lines carry a position, so 10 is a write every ~2.5s — often
@@ -101,8 +112,13 @@ class SourceFile:
     sample_rate: int
 
 
-def measure_durations(sources: list[SourceFile], ffmpeg: str | None = None) -> list[float]:
-    """Each input's *decoded* length, straight from ffmpeg.
+def measure_durations(
+    sources: list[SourceFile],
+    ffmpeg: str | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> tuple[list[float], float]:
+    """Each input's *decoded* length, straight from ffmpeg, and how many of
+    those seconds are tag estimates rather than measurements.
 
     Tag-derived durations are not good enough to place chapters. Measured on a
     mixed test set, mutagen reports every MP3 about 0.8% long — the frame count
@@ -114,16 +130,27 @@ def measure_durations(sources: list[SourceFile], ffmpeg: str | None = None) -> l
 
     It costs one extra decode, which is cheap next to what follows — MP3
     decodes an order of magnitude faster than AAC encodes. A file we cannot
-    measure keeps its tag duration rather than failing the job."""
+    measure keeps its tag duration rather than failing the job (including one
+    that takes longer than `MEASURE_TIMEOUT_FLOOR` to decode); the seconds it
+    contributes are returned separately so the caller can widen its duration
+    check by just that much.
+
+    On a long book this pass is minutes of work before the encode's progress
+    bar moves at all, so `should_cancel` is polled between files: without it
+    the Stop button does nothing until the encode itself starts."""
     binary = ffmpeg or get_settings().ffmpeg_path
     measured = []
+    estimated = 0.0
     for source in sources:
+        if should_cancel is not None and should_cancel():
+            raise TranscodeCancelled("cancelled by the user")
         seconds = None
         try:
             result = subprocess.run(
                 [binary, "-nostdin", "-hide_banner", "-v", "error", "-i", str(source.path),
                  "-f", "null", "-", "-progress", "pipe:1", "-nostats"],
                 capture_output=True, text=True, check=False,
+                timeout=max(MEASURE_TIMEOUT_FLOOR, source.duration * MEASURE_TIMEOUT_RATIO),
             )
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
@@ -135,8 +162,9 @@ def measure_durations(sources: list[SourceFile], ffmpeg: str | None = None) -> l
         if seconds is None:
             logger.warning("Falling back to the tag duration for %s", source.path.name)
             seconds = source.duration
+            estimated += seconds
         measured.append(seconds)
-    return measured
+    return measured, estimated
 
 
 def probe_sources(paths: list[Path]) -> list[SourceFile]:
@@ -194,13 +222,25 @@ def _cue_seconds(rest: str) -> float | None:
 
 
 def parse_cue(text: str, file_offsets: dict[str, float] | None = None) -> list[dict] | None:
-    """Chapters from a cue sheet, in both shapes that turn up in the wild.
+    """Chapters from one cue sheet. See `_cue_sheet` for how it is placed."""
+    parsed = _cue_sheet(text, file_offsets)
+    return parsed[0] if parsed else None
 
-    One `FILE` means the times are absolute over the whole book. Several mean
-    each `TRACK` is relative to its own file, so every `FILE` has to resolve to
-    one of the edition's tracks — if one doesn't, the sheet is abandoned rather
-    than guessed at, because a misplaced offset silently scatters every chapter
-    after it."""
+
+def _cue_sheet(
+    text: str, file_offsets: dict[str, float] | None = None
+) -> tuple[list[dict], bool] | None:
+    """One cue sheet's chapters, and whether they are *anchored* — placed
+    against the edition's own tracks rather than assumed to start at zero.
+
+    Every `FILE` that names a track we know is timed from that track's offset.
+    A sheet with several `FILE`s has to place all of them, and is abandoned if
+    one does not resolve, because a wrong offset silently scatters every
+    chapter after it. A lone `FILE` naming something we cannot place is the
+    ordinary whole-book sheet: its times are absolute and it is not anchored.
+
+    That distinction is what lets `_cue_pass` tell a per-disc sheet (anchored,
+    one of a set) from a whole-book one (not anchored, on its own)."""
     file_offsets = file_offsets or {}
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     files = [_cue_value(line[5:], strip_format=True) for line in lines if line[:5].upper() == "FILE "]
@@ -208,17 +248,20 @@ def parse_cue(text: str, file_offsets: dict[str, float] | None = None) -> list[d
 
     chapters: list[dict] = []
     offset = 0.0
+    anchored = bool(files)
     title = ""
     for line in lines:
         keyword, _, rest = line.partition(" ")
         keyword = keyword.upper()
         if keyword == "FILE":
-            if per_file:
-                key = Path(_cue_value(rest, strip_format=True)).stem.casefold()
-                if key not in file_offsets:
-                    logger.info("Cue sheet names %r, which is not one of the tracks", key)
-                    return None
+            key = Path(_cue_value(rest, strip_format=True)).stem.casefold()
+            if key in file_offsets:
                 offset = file_offsets[key]
+            elif per_file:
+                logger.info("Cue sheet names %r, which is not one of the tracks", key)
+                return None
+            else:
+                anchored = False
             title = ""
         elif keyword == "TRACK":
             title = ""  # also drops the sheet's own header TITLE
@@ -228,7 +271,7 @@ def parse_cue(text: str, file_offsets: dict[str, float] | None = None) -> list[d
             start = _cue_seconds(rest)
             if start is not None:
                 chapters.append({"start": offset + start, "title": title})
-    return chapters or None
+    return (chapters, anchored) if chapters else None
 
 
 def parse_chapters_txt(text: str) -> list[dict] | None:
@@ -319,12 +362,65 @@ def _sidecars(root: Path, matches) -> list[Path]:
     return sorted(found, key=lambda p: (len(p.parts), str(p).casefold()))
 
 
-def sidecar_chapters(root: Path, file_offsets: dict[str, float]) -> tuple[list[dict], Path] | None:
-    """The first chapter sidecar in the folder that parses to something, with
-    the file it came from (the caller deletes it once its chapters are inside
-    the m4b — it describes files that will no longer exist)."""
+def sidecar_is_spent(path: Path) -> bool:
+    """Whether a consumed sidecar has nothing left to say once its chapters are
+    inside the m4b. A .cue, chapters.txt or ffmetadata file describes only the
+    files that are about to be deleted. Audiobookshelf's metadata.json does
+    not: it carries description, subtitle, series, narrator and tags alongside
+    the chapters, none of which this app can regenerate, so it stays."""
+    return not IS_ABS_METADATA(path.name.casefold())
+
+
+def _cue_pass(root: Path, file_offsets: dict[str, float]) -> tuple[list[dict], list[Path]] | None:
+    """The cue sheets, which are the one sidecar that regularly arrives in
+    parts: a multi-disc rip ships one per disc, each timed from its own disc's
+    zero. Taking only the shallowest would chapter disc one and leave the rest
+    of the book bare, with its final chapter stretched over the remainder.
+
+    So: the shallowest sheet that parses leads, and if it is *anchored* to the
+    edition's tracks — which is what marks it as describing one part of the
+    book — every other anchored sheet is folded in with it. A whole-book sheet
+    is not anchored and stands alone, as before; unanchored strays alongside a
+    per-disc set are left out rather than laid over it at offset zero."""
+    sheets = []
+    for path in _sidecars(root, IS_CUE):
+        text = _read(path)
+        if text is None:
+            continue
+        try:
+            parsed = _cue_sheet(text, file_offsets)
+        except Exception:
+            logger.exception("Chapter sidecar %s could not be parsed", path)
+            continue
+        if parsed:
+            sheets.append((path, *parsed))
+    if not sheets:
+        return None
+
+    path, chapters, anchored = sheets[0]
+    if not anchored:
+        return chapters, [path]
+    chapters = list(chapters)
+    paths = [path]
+    for other, more, other_anchored in sheets[1:]:
+        if other_anchored:
+            chapters.extend(more)
+            paths.append(other)
+    chapters.sort(key=lambda c: c["start"])
+    return chapters, paths
+
+
+def sidecar_chapters(
+    root: Path, file_offsets: dict[str, float]
+) -> tuple[list[dict], list[Path]] | None:
+    """The first kind of chapter sidecar in the folder that parses to
+    something, with the file (or files — see `_cue_pass`) it came from. The
+    caller deletes those once the chapters are inside the m4b, unless one holds
+    more than chapters (see `sidecar_is_spent`)."""
+    found = _cue_pass(root, file_offsets)
+    if found is not None:
+        return found
     for matches, parse in (
-        (IS_CUE, lambda text: parse_cue(text, file_offsets)),
         (IS_CHAPTERS_TXT, parse_chapters_txt),
         (IS_FFMETADATA, parse_ffmetadata),
         (IS_ABS_METADATA, parse_abs_metadata),
@@ -339,7 +435,7 @@ def sidecar_chapters(root: Path, file_offsets: dict[str, float]) -> tuple[list[d
                 logger.exception("Chapter sidecar %s could not be parsed", path)
                 continue
             if chapters:
-                return chapters, path
+                return chapters, [path]
     return None
 
 
@@ -382,10 +478,33 @@ def normalize_chapters(chapters: list[dict], total: float) -> list[dict]:
     return out
 
 
+def track_offsets(edition: Edition, durations: list[float]) -> dict[str, float]:
+    """Where each track starts in the concatenated book, keyed by its bare
+    filename — how a sidecar names a file it wants its times placed against.
+
+    A stem that two tracks share (`CD1/Track01.mp3` and `CD2/Track01.mp3`) is
+    left out entirely rather than resolved to one of them. Keeping the last
+    writer would place a sidecar's chapters on the wrong disc *and* look like a
+    successful lookup, so the sheet would be used instead of refused."""
+    offsets: dict[str, float] = {}
+    ambiguous: set[str] = set()
+    running = 0.0
+    for index, file in enumerate(edition.audio_files):
+        key = Path(file.rel_path).stem.casefold()
+        if key in offsets:
+            ambiguous.add(key)
+        offsets[key] = running
+        running += durations[index] if index < len(durations) else (file.duration or 0.0)
+    for key in ambiguous:
+        logger.info("Two tracks are both named %r; no sidecar can be placed by it", key)
+        del offsets[key]
+    return offsets
+
+
 def chapter_plan(
     edition: Edition, durations: list[float]
-) -> tuple[list[dict], Path | None]:
-    """The chapters the m4b will carry, and the sidecar they came from (None
+) -> tuple[list[dict], list[Path]]:
+    """The chapters the m4b will carry, and the sidecars they came from (empty
     when they came from the files themselves).
 
     `durations` are the measured decoded lengths, in track order — every offset
@@ -393,19 +512,14 @@ def chapter_plan(
     root = Path(edition.library_path)
     total = sum(durations)
     if not has_real_embedded_chapters(edition):
-        offsets: dict[str, float] = {}
-        running = 0.0
-        for index, file in enumerate(edition.audio_files):
-            offsets[Path(file.rel_path).stem.casefold()] = running
-            running += durations[index] if index < len(durations) else (file.duration or 0.0)
-        found = sidecar_chapters(root, offsets)
+        found = sidecar_chapters(root, track_offsets(edition, durations))
         if found is not None:
-            chapters, path = found
-            return normalize_chapters(chapters, total), path
+            chapters, paths = found
+            return normalize_chapters(chapters, total), paths
     # edition_chapters is what the ABS apps are already showing: embedded
     # chapters shifted by each file's offset, else one per track. Reusing it is
     # the point — the conversion must not change the chapter list.
-    return normalize_chapters(edition_chapters(edition, durations), total), None
+    return normalize_chapters(edition_chapters(edition, durations), total), []
 
 
 def write_ffmetadata(chapters: list[dict], path: Path) -> None:
@@ -809,13 +923,20 @@ def run_job(session: Session, job: TranscodeJob) -> bool:
             raise TranscodeFailure("the folder no longer holds only MP3s")
 
         sources = probe_sources(paths)
-        durations = measure_durations(sources, settings.ffmpeg_path)
-        exact = durations != [s.duration for s in sources]
+
+        def cancelled() -> bool:
+            # Same trick as _run_encode: commit to end this transaction's
+            # snapshot, so the refresh can see a cancel another request wrote.
+            session.commit()
+            session.refresh(job)
+            return job.cancel_requested
+
+        durations, estimated = measure_durations(sources, settings.ffmpeg_path, cancelled)
         total = sum(durations)
         if total <= 0:
             raise TranscodeFailure("the files report no duration")
 
-        chapters, sidecar = chapter_plan(edition, durations)
+        chapters, sidecars = chapter_plan(edition, durations)
         bitrate = target_bitrate(sources, settings.transcode_bitrate)
         job.source_count = len(sources)
         job.bitrate = bitrate
@@ -845,7 +966,9 @@ def run_job(session: Session, job: TranscodeJob) -> bool:
             raise TranscodeFailure(
                 f"the encode stopped at {reported:.0f}s but the file holds {actual:.0f}s"
             )
-        tolerance = DURATION_TOLERANCE if exact else max(DURATION_TOLERANCE, total * LOOSE_TOLERANCE)
+        # Only the estimated seconds can drift; the measured ones are held to
+        # the flat tolerance however long the book is.
+        tolerance = DURATION_TOLERANCE + estimated * LOOSE_TOLERANCE
         if abs(actual - total) > tolerance:
             raise TranscodeFailure(
                 f"expected about {total:.0f}s of audio but the file holds {actual:.0f}s"
@@ -866,10 +989,11 @@ def run_job(session: Session, job: TranscodeJob) -> bool:
 
         for path in paths:
             path.unlink(missing_ok=True)
-        if sidecar is not None:
-            # Its chapters are inside the m4b now, and it describes files that
-            # no longer exist.
-            sidecar.unlink(missing_ok=True)
+        for sidecar in sidecars:
+            # Their chapters are inside the m4b now, and they describe files
+            # that no longer exist.
+            if sidecar_is_spent(sidecar):
+                sidecar.unlink(missing_ok=True)
         prune_empty_dirs(root)
 
         job.output_path = str(destination)

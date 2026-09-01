@@ -11,6 +11,7 @@ import pytest
 from app.models import AudioFile, Author, Book, Edition
 from app.services.transcode import (
     SourceFile,
+    TranscodeCancelled,
     build_command,
     chapter_plan,
     has_real_embedded_chapters,
@@ -25,6 +26,7 @@ from app.services.transcode import (
     parse_progress,
     sidecar_chapters,
     target_bitrate,
+    track_offsets,
     write_ffmetadata,
 )
 
@@ -136,6 +138,17 @@ def test_cue_with_nothing_usable():
     assert parse_cue("REM COMMENT nothing here\n") is None
 
 
+def test_a_lone_file_is_placed_against_its_track_when_we_know_it():
+    """A sheet for one disc of a set names that disc's file. Its times are
+    relative to it, not to the book, so knowing the file is what places it —
+    reading them as absolute puts disc two's chapters over disc one."""
+    cue = 'FILE "disc2.mp3" MP3\n TRACK 01 AUDIO\n  TITLE "Later"\n  INDEX 01 00:01:00\n'
+
+    assert [c["start"] for c in parse_cue(cue, {"disc1": 0.0, "disc2": 600.0})] == [601.0]
+    # and with no idea what disc2.mp3 is, it stays the ordinary whole-book sheet
+    assert [c["start"] for c in parse_cue(cue, {"01": 0.0})] == [1.0]
+
+
 # --- other sidecars --------------------------------------------------------
 
 
@@ -194,9 +207,9 @@ def test_sidecar_precedence_prefers_the_cue(tmp_path):
     (tmp_path / "book.cue").write_text(SINGLE_FILE_CUE)
     (tmp_path / "chapters.txt").write_text("00:00 From the text file\n")
 
-    chapters, path = sidecar_chapters(tmp_path, {})
+    chapters, paths = sidecar_chapters(tmp_path, {})
 
-    assert path.name == "book.cue"
+    assert [p.name for p in paths] == ["book.cue"]
     assert chapters[0]["title"] == "The Worst Birthday"
 
 
@@ -204,9 +217,9 @@ def test_sidecar_falls_through_an_unusable_cue(tmp_path):
     (tmp_path / "book.cue").write_text(PER_FILE_CUE)  # files we cannot place
     (tmp_path / "Chapters.txt").write_text("00:00 From the text file\n")
 
-    chapters, path = sidecar_chapters(tmp_path, {})
+    chapters, paths = sidecar_chapters(tmp_path, {})
 
-    assert path.name == "Chapters.txt"  # matched case-insensitively
+    assert [p.name for p in paths] == ["Chapters.txt"]  # matched case-insensitively
     assert chapters[0]["title"] == "From the text file"
 
 
@@ -215,14 +228,48 @@ def test_sidecar_prefers_the_shallowest(tmp_path):
     (tmp_path / "CD1" / "disc.cue").write_text('FILE "a.mp3" MP3\n TRACK 01 AUDIO\n  TITLE Deep\n  INDEX 01 00:01:00\n')
     (tmp_path / "book.cue").write_text(SINGLE_FILE_CUE)
 
-    _, path = sidecar_chapters(tmp_path, {})
+    _, paths = sidecar_chapters(tmp_path, {})
 
-    assert path.name == "book.cue"
+    assert [p.name for p in paths] == ["book.cue"]
 
 
 def test_no_sidecars_at_all(tmp_path):
     (tmp_path / "cover.jpg").write_bytes(b"img")
     assert sidecar_chapters(tmp_path, {}) is None
+
+
+def test_one_cue_per_disc_is_merged(tmp_path):
+    """A multi-disc rip ships a sheet per disc, each timed from its own zero.
+    Taking only the shallowest would chapter disc one and leave the rest of the
+    book bare, with its last chapter stretched over the remainder."""
+    for disc, (name, title) in enumerate((("disc1", "Opening"), ("disc2", "Later")), start=1):
+        folder = tmp_path / f"CD{disc}"
+        folder.mkdir()
+        (folder / f"{name}.cue").write_text(
+            f'FILE "{name}.mp3" MP3\n TRACK 01 AUDIO\n  TITLE "{title}"\n  INDEX 01 00:01:00\n'
+        )
+
+    chapters, paths = sidecar_chapters(tmp_path, {"disc1": 0.0, "disc2": 600.0})
+
+    assert [(c["start"], c["title"]) for c in chapters] == [(1.0, "Opening"), (601.0, "Later")]
+    # both are consumed, so both are deleted with the MP3s they describe
+    assert [p.name for p in paths] == ["disc1.cue", "disc2.cue"]
+
+
+def test_a_whole_book_cue_is_not_merged_with_anything(tmp_path):
+    """The shallowest sheet places nothing against a track, so it is the
+    ordinary whole-book sheet and stands alone — a stray per-disc cue must not
+    be laid over it."""
+    (tmp_path / "book.cue").write_text(SINGLE_FILE_CUE)
+    (tmp_path / "CD1").mkdir()
+    (tmp_path / "CD1" / "disc.cue").write_text(
+        'FILE "disc1.mp3" MP3\n TRACK 01 AUDIO\n  TITLE "Deep"\n  INDEX 01 00:01:00\n'
+    )
+
+    chapters, paths = sidecar_chapters(tmp_path, {"disc1": 0.0})
+
+    assert [p.name for p in paths] == ["book.cue"]
+    assert "Deep" not in [c["title"] for c in chapters]
 
 
 # --- choosing between embedded and sidecar ---------------------------------
@@ -253,10 +300,10 @@ def test_plan_prefers_embedded_chapters_over_a_sidecar(tmp_path):
     edition.library_path = str(tmp_path)
     (tmp_path / "book.cue").write_text(SINGLE_FILE_CUE)
 
-    chapters, sidecar = chapter_plan(edition, [60.0])
+    chapters, sidecars = chapter_plan(edition, [60.0])
 
     assert [c["title"] for c in chapters] == ["Embedded one", "Embedded two"]
-    assert sidecar is None
+    assert sidecars == []
 
 
 def test_plan_uses_a_sidecar_when_embedded_data_is_trivial(tmp_path):
@@ -268,10 +315,45 @@ def test_plan_uses_a_sidecar_when_embedded_data_is_trivial(tmp_path):
     edition.library_path = str(tmp_path)
     (tmp_path / "book.cue").write_text(SINGLE_FILE_CUE)
 
-    chapters, sidecar = chapter_plan(edition, [400.0, 400.0])
+    chapters, sidecars = chapter_plan(edition, [400.0, 400.0])
 
     assert [c["title"] for c in chapters] == ["The Worst Birthday", "Dobby's Warning"]
-    assert sidecar.name == "book.cue"
+    assert [p.name for p in sidecars] == ["book.cue"]
+
+
+def test_tracks_sharing_a_name_place_nothing(tmp_path):
+    """`CD1/Track01.mp3` and `CD2/Track01.mp3` are one stem. Resolving it to
+    either disc would be a coin flip that *looks* like a successful lookup, so
+    the key is dropped and sheets naming it are refused instead."""
+    edition = make_edition([
+        ("CD1/Track01.mp3", 60.0, None),
+        ("CD2/Track01.mp3", 60.0, None),
+        ("CD2/Track02.mp3", 60.0, None),
+    ])
+
+    assert track_offsets(edition, [60.0, 60.0, 60.0]) == {"track02": 120.0}
+
+
+def test_a_cue_naming_an_ambiguous_track_is_refused(tmp_path):
+    """The whole sheet goes rather than half its chapters landing on the wrong
+    disc — silently, because the MP3s are deleted straight after."""
+    edition = make_edition([
+        ("CD1/Track01.mp3", 400.0, None),
+        ("CD1/Track02.mp3", 400.0, None),
+        ("CD2/Track01.mp3", 400.0, None),  # the name CD1's first track already has
+    ])
+    edition.library_path = str(tmp_path)
+    (tmp_path / "book.cue").write_text(
+        'FILE "Track01.mp3" MP3\n TRACK 01 AUDIO\n  TITLE "One"\n  INDEX 01 00:00:00\n'
+        'FILE "Track02.mp3" MP3\n TRACK 02 AUDIO\n  TITLE "Two"\n  INDEX 01 00:00:30\n'
+    )
+
+    chapters, sidecars = chapter_plan(edition, [400.0, 400.0, 400.0])
+
+    # every FILE would have resolved if the duplicate stem kept a value — to
+    # CD2's offset, putting "One" 800 seconds into the book
+    assert sidecars == []  # fell back to one chapter per file
+    assert [c["start"] for c in chapters] == [0.0, 400.0, 800.0]
 
 
 def test_plan_falls_back_to_the_abs_chapter_list(tmp_path):
@@ -279,11 +361,11 @@ def test_plan_falls_back_to_the_abs_chapter_list(tmp_path):
     edition = make_edition([("01 - Opening.mp3", 60.0, None), ("02 - Second.mp3", 30.0, None)])
     edition.library_path = str(tmp_path)
 
-    chapters, sidecar = chapter_plan(edition, [60.0, 30.0])
+    chapters, sidecars = chapter_plan(edition, [60.0, 30.0])
 
     assert [c["title"] for c in chapters] == ["01 - Opening", "02 - Second"]
     assert [c["start"] for c in chapters] == [0.0, 60.0]
-    assert sidecar is None
+    assert sidecars == []
 
 
 def test_normalize_closes_ends_and_drops_overruns():
@@ -340,7 +422,7 @@ def test_measure_durations_uses_ffmpeg_not_the_tags(tmp_path, fake_ffmpeg):
         source(tmp_path / "7.mp3", duration=7.05),
     ]
 
-    assert measure_durations(sources, fake_ffmpeg) == [5.0, 7.0]
+    assert measure_durations(sources, fake_ffmpeg) == ([5.0, 7.0], 0.0)
 
 
 def test_measure_durations_falls_back_when_ffmpeg_fails(tmp_path):
@@ -350,7 +432,59 @@ def test_measure_durations_falls_back_when_ffmpeg_fails(tmp_path):
     broken.write_text("#!/bin/sh\nexit 1\n")
     broken.chmod(0o755)
 
-    assert measure_durations([source(tmp_path / "a.mp3", duration=12.5)], str(broken)) == [12.5]
+    durations, estimated = measure_durations([source(tmp_path / "a.mp3", duration=12.5)], str(broken))
+
+    assert durations == [12.5]
+    assert estimated == 12.5
+
+
+def test_the_measure_pass_honours_a_cancel(tmp_path, fake_ffmpeg):
+    """On a long book this pass is minutes of decoding before the progress bar
+    moves at all. Without this the Stop button does nothing until the encode
+    starts, because only the encode loop watches the flag."""
+    asked = []
+
+    def cancel():
+        asked.append(len(asked))
+        return len(asked) > 1  # let the first file through, stop at the second
+
+    with pytest.raises(TranscodeCancelled):
+        measure_durations(
+            [source(tmp_path / "5.mp3"), source(tmp_path / "7.mp3")], fake_ffmpeg, cancel
+        )
+
+
+def test_a_hung_measure_gives_up_instead_of_wedging_the_worker(tmp_path, monkeypatch):
+    """One ffmpeg that never returns would hold the single worker forever, with
+    no recovery short of restarting the process. The file falls back to its tag
+    duration, exactly like one ffmpeg refuses to read."""
+    stub = tmp_path / "hanging-ffmpeg"
+    stub.write_text("#!/bin/sh\nsleep 30\n")
+    stub.chmod(0o755)
+    monkeypatch.setattr("app.services.transcode.MEASURE_TIMEOUT_FLOOR", 0.2)
+
+    durations, estimated = measure_durations(
+        [source(tmp_path / "a.mp3", duration=0.4)], str(stub)
+    )
+
+    assert durations == [0.4]
+    assert estimated == 0.4
+
+
+def test_only_the_unmeasured_seconds_count_as_estimates(tmp_path, fake_ffmpeg):
+    """The stub reports the duration in the filename, so `x.mp3` cannot be
+    measured and falls back to its tag. What matters is that the two files
+    that *were* measured contribute nothing to the drift allowance — charging
+    it against the whole book would hold a correct encode of a mostly-measured
+    edition to a tolerance built for guesses (or, before this, hold the
+    guesses to a tolerance built for measurements)."""
+    sources = [
+        source(tmp_path / "5.mp3", duration=5.04),
+        source(tmp_path / "x.mp3", duration=90.0),  # unmeasurable
+        source(tmp_path / "7.mp3", duration=7.05),
+    ]
+
+    assert measure_durations(sources, fake_ffmpeg) == ([5.0, 90.0, 7.0], 90.0)
 
 
 def test_plan_places_chapters_on_measured_boundaries(tmp_path):
