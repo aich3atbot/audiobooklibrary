@@ -35,10 +35,20 @@ class Settings(BaseSettings):
     # client's own settings.
     download_remove_immediately: bool = False
 
+    # The image's VOLUME mount points, and *not* part of a deployment's
+    # configuration surface: docker-compose.yml never passes CONFIG_DIR /
+    # DOWNLOAD_DIR / LIBRARY_DIR into the container — there those names are
+    # compose's own variables, naming the *host* side of each bind mount, which
+    # is the opposite of what the fields below mean. A deployment therefore
+    # picks its paths with `volumes:`, and README documents no path variables.
+    # pydantic-settings still binds each field to its uppercased name, which is
+    # how a dev checkout's .env and the tests point them elsewhere; setting one
+    # inside a container would only desync the app from the volumes it declares.
     download_dir: Path = Path("/downloads")
     library_dir: Path = Path("/audiobooks")
     config_dir: Path = Path("/config")
-    # Hard-coded volume path (undocumented setting; overridden only by tests).
+    # Same, but deliberately undocumented even for a dev run: /imports is the
+    # collection-import staging area everywhere, overridden only by tests.
     imports_dir: Path = Path("/imports")
     sync_interval_minutes: int = 30
     watch_interval_seconds: int = 30

@@ -276,6 +276,19 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   field's own default is `""` — there empty is meaningful (no `DOWNLOAD_CLIENT` disables
   downloading, no `DOWNLOAD_LABEL` means no label, blank `ADMIN_PASSWORD` still refuses to
   start).
+- **The four paths are mounts, not settings — never document them as container env vars.**
+  `/config`, `/audiobooks`, `/downloads` and `/imports` are fixed by the image (`VOLUME` in
+  the Dockerfile), and `docker-compose.yml` does not pass `CONFIG_DIR`/`LIBRARY_DIR`/
+  `DOWNLOAD_DIR` through `environment:` at all — there they are *compose-level* variables
+  naming the **host** side of each bind mount, the opposite of what the app's field means.
+  A deployment picks its paths with `volumes:`. The `Settings` fields do bind to those
+  names (pydantic-settings maps every field to its uppercased name, `IMPORTS_DIR` included,
+  so `app/config.py`'s "hard-coded" comment is about intent, not mechanism), which is what
+  a dev checkout's `.env` and the tests use — but telling a container user to set one would
+  silently desync the app from the volumes it declares. Generally: **a field in
+  `app/config.py` is not evidence of a user-facing knob.** Before documenting a variable in
+  README, check how it reaches the container (`docker-compose.yml`, `Dockerfile`), and
+  verify behaviour claims by running the code rather than reading the field.
 
 ## Sandbox environment
 
