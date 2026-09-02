@@ -1,0 +1,50 @@
+name: Prune GHCR
+
+# Every push publishes an OCI *index* plus one child manifest per architecture
+# (and a provenance attestation for each). Only the index carries the tag, so
+# GHCR lists the children as untagged package versions, and once a tag moves to
+# a newer index the previous run's children are referenced by nothing.
+#
+# Those unreferenced children are what this deletes. **The children of a live
+# tag are the images themselves** — delete them and the tag survives pointing at
+# digests that no longer resolve, so `docker pull` fails with "manifest unknown"
+# while the UI still looks healthy. That is exactly what
+# `actions/delete-package-versions` with `delete-only-untagged-versions` does to
+# a multi-arch package, which is why this uses an index-aware action instead.
+# Do not swap it for the naive one.
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"  # Sundays, 04:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only log what would be deleted"
+        type: boolean
+        default: true
+
+concurrency:
+  group: prune-ghcr
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          package: audiobooklibrary  # the package name is the repository name
+          delete-untagged: true
+          # Tagged images are never touched (no delete-tags rule is set); this
+          # is belt-and-braces for the two tags that matter.
+          exclude-tags: latest,testing
+          # Long enough that a rollback to an older release still has an image
+          # to pull, and that a build being debugged is not swept mid-week.
+          older-than: 120 days
+          # Rescans every multi-arch image afterwards and fails the run if one
+          # lost a platform child. The check that turns silent breakage loud.
+          validate: true
+          # Scheduled runs prune for real; a manual run previews unless the box
+          # is unticked (`inputs` is null on a schedule, so this is false there).
+          dry-run: ${{ inputs.dry_run || false }}

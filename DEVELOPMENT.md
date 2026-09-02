@@ -98,3 +98,21 @@ uv run pytest
 ```
 
 External APIs are mocked in tests (respx); no tokens are needed to run them.
+
+## Releases
+
+`.github/workflows/docker.yml` publishes `ghcr.io/aich3atbot/audiobooklibrary` — `:testing`
+on every push to master, `:X.Y.Z` plus `:latest` on a `vX.Y.Z` tag. The suite runs on both
+architectures, and `linux/amd64` and `linux/arm64` are built on their own native runners
+(no QEMU), pushed untagged by digest, and joined into one manifest by the `merge` job —
+which is where the tags are applied.
+
+Each build then runs the ffmpeg it just shipped inside the image it just pushed: a
+one-second AAC encode read back through `identify()`. The suite mocks ffmpeg, so this is
+the only check that the binary in the image actually works on that architecture.
+
+`prune-ghcr.yml` runs weekly and deletes package versions older than 120 days that no
+tagged image references. Because a multi-arch tag is an index whose per-architecture
+children are untagged, the untagged versions GHCR lists *are* the images — so the prune
+uses an index-aware action and re-validates every manifest afterwards. Run it by hand from
+the Actions tab first: `workflow_dispatch` defaults to a dry run that only logs.

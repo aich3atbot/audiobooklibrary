@@ -289,6 +289,22 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   `app/config.py` is not evidence of a user-facing knob.** Before documenting a variable in
   README, check how it reaches the container (`docker-compose.yml`, `Dockerfile`), and
   verify behaviour claims by running the code rather than reading the field.
+- **The image is `linux/amd64` + `linux/arm64`, built one architecture per native runner**
+  (`.github/workflows/docker.yml`). The Dockerfile needs nothing architecture-specific: every
+  native wheel in `uv.lock` has an aarch64 build, and ffmpeg's configure flags compile clean
+  for aarch64. **Do not collapse this back into one job with QEMU** — emulating the ffmpeg
+  source build costs 15-45 minutes against about two natively, and standard arm64 runners are
+  free on public repositories. Each platform job pushes *untagged, by digest*; the `merge` job
+  joins the digests into one manifest and is the only place tags are applied, so tag rules and
+  build rules live apart on purpose. A multi-arch tag is an *index*: the tag names the index,
+  and the per-architecture manifests under it are untagged, so GHCR lists **the images
+  themselves** as untagged versions. `prune-ghcr.yml` clears the ones no index still
+  references, using an index-aware action — **never** `actions/delete-package-versions` with
+  `delete-only-untagged-versions`, which deletes a live tag's children and leaves the tag
+  resolving to nothing while the UI looks fine. Because the suite mocks ffmpeg, the **only** thing that ever runs the
+  shipped binary is the smoke step: a one-second `anullsrc` → AAC → `ipod` encode inside the
+  pushed image, read back through `identify()`. Keep it — without it nothing proves the arm64
+  encoder works before users pull it.
 
 ## Sandbox environment
 

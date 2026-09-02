@@ -55,9 +55,10 @@ supported.
 ## Installation
 
 > [!NOTE]
-> The published image is built for `linux/amd64` only. On ARM hardware — a Raspberry Pi,
-> most ARM NAS boxes, Apple Silicon — build it yourself instead: clone the repository and
-> run `docker compose up --build` (see `DEVELOPMENT.md`).
+> The published image is multi-architecture: `linux/amd64` and `linux/arm64`. Docker picks
+> the right one automatically, so a Raspberry Pi 4/5, an ARM NAS or Apple Silicon pulls the
+> same tag as an x86 server. 32-bit ARM (`armv7`, a Pi 3 or earlier) is not published —
+> build it yourself there with `docker compose up --build` (see `DEVELOPMENT.md`).
 
 ### Docker Compose
 
