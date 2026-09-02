@@ -260,9 +260,9 @@ class Book(Base):
 
 
 class Edition(Base):
-    """One audiobook recording of a Book (e.g. the Stephen Fry narration).
+    """One audiobook recording of a Book (e.g. a particular narration).
     Owns the on-disk files and the download pipeline state. label is the
-    grouping name used in library folder names ("Stephen Fry", "Full Cast");
+    grouping name used in library folder names ("Narrator", "Full Cast");
     "" is the unlabelled edition, which lives at the plain unsuffixed path.
     The unique constraint doubles as "at most one unlabelled edition"."""
 
@@ -277,7 +277,7 @@ class Edition(Base):
     # null for free-form labels and pre-edition rows.
     hardcover_edition_id: Mapped[int | None] = mapped_column(Integer)
     label: Mapped[str] = mapped_column(String(200), default="", server_default="")
-    # Display narrators from the Hardcover edition ("Stephen Fry").
+    # Display narrators from the Hardcover edition ("Narrator").
     narrator: Mapped[str] = mapped_column(String(500), default="", server_default="")
     download_state: Mapped[DownloadState] = _enum_column(DownloadState, DownloadState.NONE)
     library_path: Mapped[str | None] = mapped_column(Text)

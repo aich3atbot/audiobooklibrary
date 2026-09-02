@@ -288,7 +288,7 @@ def edition_chapters(
 def display_title(edition: Edition) -> str:
     """The item title clients show. When a book has several editions in the
     library, each item carries its label so list views can tell them apart:
-    "Chamber of Secrets (Stephen Fry)". Display-only — book.title is
+    "Chamber of Secrets (Narrator)". Display-only — book.title is
     untouched."""
     book = edition.book
     siblings = [e for e in book.editions if e.library_path]

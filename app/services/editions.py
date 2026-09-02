@@ -233,7 +233,7 @@ def replace_choice(form, ns: str = "") -> int | None:
 
 def suggest_labels(session: Session, book: Book) -> list[str]:
     """Labels already in use across the book's series, so edition groups line
-    up ("Stephen Fry" for book 3 once books 1-2 use it). Standalone books
+    up ("Narrator" for book 3 once books 1-2 use it). Standalone books
     suggest nothing beyond their own labels."""
     query = select(Edition.label).join(Book).where(Edition.label != "").distinct()
     if book.series_id is not None:

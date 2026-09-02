@@ -328,8 +328,8 @@ class HardcoverClient:
 
     def fetch_editions(self, book_id: int) -> list[dict[str, Any]]:
         """A book's audiobook editions, most-shelved first. Each entry carries
-        the narrators and a default grouping label ("Stephen Fry"; "Full
-        Cast" when a big ensemble is credited)."""
+        the narrators and a default grouping label ("Narrator"; "Full Cast"
+        when a big ensemble is credited)."""
         data = self.execute(EDITIONS_QUERY, {"bookId": book_id})
         return [_parse_edition(row) for row in data.get("editions") or []]
 

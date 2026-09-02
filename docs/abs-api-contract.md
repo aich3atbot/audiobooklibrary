@@ -15,7 +15,7 @@ item ids are `li_<edition.id>`, `media.id` is `bk_<edition.id>`, the item "ino" 
 edition id, and the audio file "ino" is our audio_file row id as a string. Progress and
 bookmarks are per edition; finishing any edition marks the *book* read on Hardcover.
 When a book has 2+ editions in the library, the payload `title` (and `displayTitle` in
-play sessions) carries the edition's label — `"Chamber of Secrets (Stephen Fry)"` — so
+play sessions) carries the edition's label — `"Chamber of Secrets (Narrator)"` — so
 list views can tell the items apart (display-only; the stored title is unchanged), and
 `narrators`/`narratorName`/filterdata narrators come from the edition's Hardcover
 narrator credits or its label.

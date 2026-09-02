@@ -34,7 +34,7 @@
     <input type="hidden" name="hcnarr_{{ e.id }}" value="{{ e.narrator }}">
     {% endfor %}
     <input type="text" name="edition_label" list="label-suggestions"
-           placeholder="Label (e.g. Stephen Fry){% if hc_editions and not buttons %} — overrides the selection above{% endif %}"
+           placeholder="Label (e.g. Narrator){% if hc_editions and not buttons %} — overrides the selection above{% endif %}"
            aria-label="Edition label">
     {% if suggestions %}
     <datalist id="label-suggestions">

@@ -21,7 +21,7 @@
         </label>
         <input type="text" name="edition_label__{{ field_ns }}" id="edlabel-{{ row_id }}"
                {% if suggestions %}list="edlabels-{{ row_id }}"{% endif %}
-               placeholder="e.g. Stephen Fry — empty imports to the plain folder"
+               placeholder="e.g. Narrator — empty imports to the plain folder"
                aria-label="Edition label"
                oninput='document.getElementById("edcustom-{{ row_id }}").checked = true;
                         abEditionPicked("{{ row_id }}", this.value)'>
