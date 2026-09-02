@@ -118,7 +118,7 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   renamed by *family* (`.m4b`/`.m4a`/`.mp4` are one family), so `.m4b` is never rewritten
   to `.m4a`. Parse audio through `identify`, not bare `mutagen.File`.
 - **Import mode**: default is hardlink-or-copy (seeding torrents keep their files);
-  `IMPORT_MODE=move` opts into relocating. Do not change the default back to move.
+  `DOWNLOAD_IMPORT_MODE=move` opts into relocating. Do not change the default back to move.
   Seeding also survives import by default: `DOWNLOAD_REMOVE_IMMEDIATELY=true` opts into
   removing the torrent + data from the client right after a successful import (a failed
   removal never un-imports; it is noted on the release for the Activity page).
@@ -126,7 +126,7 @@ clients fall back to `/api/me`, which carries both — but that fallback is keye
   (`Settings.imports_dir` exists only for tests). Entries are identified by **searching
   Hardcover** (folder-name heuristics; cached in app_state per entry), never by shelving —
   imported books are **ownerless** until each user's own sync attaches their shelf entry.
-  Always MOVES files (draining /imports is the point) regardless of IMPORT_MODE, which
+  Always MOVES files (draining /imports is the point) regardless of DOWNLOAD_IMPORT_MODE, which
   applies to the download pipeline only. It moves file-by-file through the shared
   `collect_files(keep_unknown=True)`, so audio gets the same content identification as a
   download; a rejected file is **left in /imports, never deleted** (a move would destroy

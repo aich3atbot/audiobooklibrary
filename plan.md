@@ -24,7 +24,7 @@ finished audiobooks into a clean library folder. Single container, Python, SQLit
 | Indexer / client | Both behind small protocols (`Indexer`, `DownloadClient`) so more can be added. Today: AudioBookBay + Deluge or qBittorrent. |
 | Cancelling | Cancel **removes the torrent and deletes its data** in the client, ending any seeding of it, and stops tracking the release here. Chosen deliberately over preserving seeds. The UI asks for confirmation; if the client is unreachable the release is still cancelled locally, with the failure recorded so the user knows the torrent may still be running. |
 | Library layout | **Audiobookshelf-style**: `Author/Series/{SeriesIndex} - Title/` (no series: `Author/Title/`). A labelled edition suffixes the **series** folder (`Author/Series {Label}/{idx} - Title/`) or, standalone, the book folder (`Author/Title {Label}/`) — see "Multi-edition support". |
-| Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
+| Import mode | Default **hardlink-or-copy** (leaves the download in place so seeding torrents aren't broken); `DOWNLOAD_IMPORT_MODE=move` relocates instead. Deviation from the original "move" wording, for seeding safety. |
 | Read-state sync | **Two-way**: UI changes push to Hardcover immediately; a periodic sync pulls Hardcover changes down. Hardcover is the source of truth for read state. |
 | Web stack | **FastAPI + Jinja2 + HTMX** (server-rendered, HTMX for in-page updates). |
 | Users | **Multi-user, mandatory login** (signed session cookie naming a server-side session row, so a login can be revoked). An `admin` account (password from `ADMIN_PASSWORD`, which creates it on a fresh database) only administers users: add, enable/disable, delete, change passwords/tokens. Regular users are DB rows (scrypt password hashes) created by the admin, each with their own Hardcover token. An account is **full** (web UI + Hardcover) or **limited** (Audiobookshelf apps only — see "Limited accounts" below). Which interface an account gets is decided by its role, never by its username. See "Multi-user conversion" and "Revocable sessions" below for the full design. |
@@ -309,8 +309,8 @@ should refresh itself for **both** downloads and conversions.
 - **The watcher gets the same treatment.** Page polling alone would show download progress
   advancing in 30-second steps, because that is how often the watcher asks the torrent
   client. `download_watch_loop` sleeps `ACTIVE_WATCH_SECONDS` (10) when its last pass saw
-  active releases and `watch_interval_seconds` when it did not — never *longer* than the
-  configured interval, so `WATCH_INTERVAL_SECONDS` stays both the idle cadence and the
+  active releases and `download_watch_interval_seconds` when it did not — never *longer* than the
+  configured interval, so `DOWNLOAD_WATCH_INTERVAL_SECONDS` stays both the idle cadence and the
   ceiling for an operator who wants it slower. `scan_downloads_once` already loads the
   active releases, so it returns that count rather than the loop asking again. No new env
   var: this is a floor on responsiveness, not a knob.
@@ -356,9 +356,9 @@ LIBRARY_DIR             # -> /audiobooks
 CONFIG_DIR              # -> /config (sqlite db + session_secret)
 IMPORTS_DIR             # -> /imports (staging area for an existing collection)
 SYNC_INTERVAL_MINUTES   # default 30
-WATCH_INTERVAL_SECONDS  # default 30 (download dir poll)
+DOWNLOAD_WATCH_INTERVAL_SECONDS  # default 30 (download client/dir poll)
 DOWNLOAD_QUIET_SECONDS  # default 120 (download "finished" quiet period)
-IMPORT_MODE             # copy (default, hardlink-or-copy) | move
+DOWNLOAD_IMPORT_MODE    # copy (default, hardlink-or-copy) | move; downloads only
 TRANSCODE_BITRATE       # default 64k — target AAC bitrate for MP3 -> M4B; halved for a
                         # mono book, never above the source's own bitrate
 FFMPEG_PATH             # default "ffmpeg" (the image builds its own 2 MB copy)
@@ -470,7 +470,7 @@ library. Complements (does not change) the automatic /downloads pipeline.
   tracked books) or from a Hardcover search. Choosing a match only stores it; **nothing is
   shelved on Hardcover from the Imports page**.
 - **Import**: per-row button, bulk-select, or import-all-matched. Import always **moves**
-  (regardless of IMPORT_MODE, which remains download-pipeline-only): the Book row is
+  (regardless of DOWNLOAD_IMPORT_MODE, which remains download-pipeline-only): the Book row is
   created from Hardcover metadata if nobody tracks it yet (**ownerless** — no user_book),
   files go to the standard edition path (`Author/Series/{index} - Title/`, label-suffixed
   for labelled editions), the source folder is removed from /imports, and now-empty
@@ -835,7 +835,7 @@ extra and lands exactly where the user can see what would be converted.
 
 The button opens a confirm dialog (destructive, irreversible) naming the file count, the
 target bitrate, where the chapters will come from, and what will be deleted. It also warns
-when the MP3s are the *only* copy: with the default `IMPORT_MODE=copy` the library files
+when the MP3s are the *only* copy: with the default `DOWNLOAD_IMPORT_MODE=copy` the library files
 are hardlinks to the still-seeding torrent, so deleting them costs nothing, but a `move`
 import or a collection import leaves no second copy.
 

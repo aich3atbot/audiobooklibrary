@@ -102,16 +102,16 @@ def test_it_slows_down_again_when_the_work_finishes(client, ready, clean_db):  #
 
 
 def test_the_watcher_hurries_while_something_downloads(test_settings, monkeypatch):
-    monkeypatch.setattr(test_settings, "watch_interval_seconds", 30)
+    monkeypatch.setattr(test_settings, "download_watch_interval_seconds", 30)
 
     assert watch_interval(active=1) == ACTIVE_WATCH_SECONDS
     assert watch_interval(active=0) == 30
 
 
 def test_the_watcher_never_polls_slower_than_configured(test_settings, monkeypatch):
-    """WATCH_INTERVAL_SECONDS stays the ceiling: an operator who asked for less
+    """DOWNLOAD_WATCH_INTERVAL_SECONDS stays the ceiling: an operator who asked for less
     chatter than the active rate keeps it."""
-    monkeypatch.setattr(test_settings, "watch_interval_seconds", 5)
+    monkeypatch.setattr(test_settings, "download_watch_interval_seconds", 5)
 
     assert watch_interval(active=1) == 5
     assert watch_interval(active=0) == 5

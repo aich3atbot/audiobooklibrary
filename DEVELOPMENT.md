@@ -47,9 +47,9 @@ lists the optional ones bare, so an unset one never reaches the container at all
 
 Two that catch people out:
 
-- `IMPORT_MODE` (default `copy`) governs **downloads only**: a finished download is
-  hardlinked (or copied) so the torrent keeps its files and goes on seeding, and
-  `IMPORT_MODE=move` relocates them instead. Importing from `/imports` always *moves*,
+- `DOWNLOAD_IMPORT_MODE` (default `copy`) governs **downloads only**, as its prefix says: a
+  finished download is hardlinked (or copied) so the torrent keeps its files and goes on
+  seeding, and `move` relocates them instead. Importing from `/imports` always *moves*,
   whatever this is set to — draining that directory is the point of it.
 - A blank value is treated as absent, *except* where the field's own default is `""` — there
   empty is meaningful. No `DOWNLOAD_CLIENT` disables downloading, no `DOWNLOAD_LABEL` means

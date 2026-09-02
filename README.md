@@ -146,8 +146,8 @@ Audiobookshelf API) keeps working.
 | `DOWNLOAD_PASSWORD` | — | (Optional) Web UI password. An empty password is valid for Deluge if that is how yours is set up. |
 | `DOWNLOAD_LABEL` | — | (Optional) Label to tag this app's torrents with in the client (Deluge Label plugin / qBittorrent category). Best-effort; no label by default. |
 | `DOWNLOAD_REMOVE_IMMEDIATELY` | `false` | (Optional) `true` removes the torrent *and its data* from the client right after a successful import. Default leaves it seeding per the client's own settings. |
-| `IMPORT_MODE` | `copy` | (Optional) How a finished download becomes library files. `copy` hardlinks (falling back to a real copy) so the torrent keeps its files and goes on seeding; `move` relocates them out of the download directory. Downloads only — importing from `/imports` always moves, whatever this is set to. |
-| `WATCH_INTERVAL_SECONDS` | `30` | (Optional) How often to poll the download client for progress and completion. |
+| `DOWNLOAD_IMPORT_MODE` | `copy` | (Optional) How a finished download becomes library files. `copy` hardlinks (falling back to a real copy) so the torrent keeps its files and goes on seeding; `move` relocates them out of the download directory. Downloads only — importing from `/imports` always moves, whatever this is set to. |
+| `DOWNLOAD_WATCH_INTERVAL_SECONDS` | `30` | (Optional) How often to poll the download client for progress and completion. |
 | `DOWNLOAD_QUIET_SECONDS` | `120` | (Optional) Fallback completion rule used when the client can't be reached: a download counts as finished when nothing in it has changed for this long. |
 
 #### Hardcover sync
@@ -299,7 +299,7 @@ and everyone else finds it as *available* in search.
 > [!WARNING]
 > Importing **moves** files: a book that imports successfully is gone from `/imports`, and
 > the copy in `/audiobooks` is then your only one. This is deliberate — draining `/imports`
-> is the point of the page — and it is not affected by `IMPORT_MODE`, which applies to
+> is the point of the page — and it is not affected by `DOWNLOAD_IMPORT_MODE`, which applies to
 > downloads alone.
 >
 > So if you are trying the app out and want to keep your existing library as it is, **copy**
@@ -330,8 +330,8 @@ an entry did not fully drain, and is worth a look.
    the site's own ordering rather than a made-up ranking.
 2. **Grab** reads the release's details page for the torrent's info hash, builds a magnet,
    and adds it to your torrent client. The app records the hash.
-3. The watcher asks the client about that hash every `WATCH_INTERVAL_SECONDS` — its progress
-   is what the Activity page shows — and imports the download into `/audiobooks` as soon as
+3. The watcher asks the client about that hash every `DOWNLOAD_WATCH_INTERVAL_SECONDS` —
+   its progress is what the Activity page shows — and imports it into `/audiobooks` as soon as
    the client reports the torrent finished. If the client can't be reached, it falls back to
    watching `/downloads` for a folder matching the release name that has stopped changing.
 4. Anything that can't be matched or imported shows up on the **Activity** page with retry,
@@ -369,9 +369,10 @@ always kept, even when its chapters were the ones used: it also carries the desc
 subtitle, series, narrator and tags, none of which this app can write back. Cover art and
 everything else stays.
 
-With the default `IMPORT_MODE=copy` your library files are hardlinks to the still-seeding
-torrent, so converting costs nothing — the torrent keeps its own copy. If you imported with
-`move`, or from `/imports`, the MP3s are your only copy and the conversion is one-way.
+With the default `DOWNLOAD_IMPORT_MODE=copy` your library files are hardlinks to the
+still-seeding torrent, so converting costs nothing — the torrent keeps its own copy. If you
+imported with `move`, or from `/imports`, the MP3s are your only copy and the conversion is
+one-way.
 
 ### Limited User Accounts
 

@@ -48,7 +48,7 @@ def test_settings(tmp_path_factory):
     os.environ["DOWNLOAD_PASSWORD"] = ""
     os.environ["DOWNLOAD_LABEL"] = ""
     os.environ["DOWNLOAD_REMOVE_IMMEDIATELY"] = "false"
-    os.environ["IMPORT_MODE"] = "copy"
+    os.environ["DOWNLOAD_IMPORT_MODE"] = "copy"
     # Pinned for the same reason as the rest: a developer whose own .env sets a
     # different bitrate (or points at a real ffmpeg) would otherwise see tests
     # that assert on the encode parameters fail on their machine and nowhere else.

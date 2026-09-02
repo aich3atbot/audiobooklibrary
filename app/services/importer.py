@@ -53,7 +53,7 @@ ACTIVE_STATUSES = ("grabbed", "downloading")
 # How often to ask the download client about a torrent that is actually
 # running. The Activity page refreshes every few seconds, so a 30s default
 # would show progress advancing in visible jumps. This is a floor on
-# responsiveness rather than a setting: WATCH_INTERVAL_SECONDS stays the idle
+# responsiveness rather than a setting: DOWNLOAD_WATCH_INTERVAL_SECONDS stays the idle
 # cadence *and* the ceiling, so an operator who wants less chatter still gets it.
 ACTIVE_WATCH_SECONDS = 10
 
@@ -264,7 +264,7 @@ def import_release(session: Session, release: Release, source: Path) -> bool:
         if dest.exists() and any(dest.iterdir()):
             raise ImportFailure(f"destination already exists: {dest}")
         dest.mkdir(parents=True, exist_ok=True)
-        mode = get_settings().import_mode
+        mode = get_settings().download_import_mode
         for src, rel in files:
             _place(src, dest / rel, mode)
         if mode == "move" and source.is_dir():
@@ -446,7 +446,7 @@ def watch_interval(active: int) -> float:
     """How long to wait before the next watcher pass. A download in flight is
     worth asking about often — its progress is what the Activity page shows —
     while an idle library is not worth waking the client for."""
-    interval = get_settings().watch_interval_seconds
+    interval = get_settings().download_watch_interval_seconds
     return min(interval, ACTIVE_WATCH_SECONDS) if active else interval
 
 

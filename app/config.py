@@ -51,12 +51,14 @@ class Settings(BaseSettings):
     # collection-import staging area everywhere, overridden only by tests.
     imports_dir: Path = Path("/imports")
     sync_interval_minutes: int = 30
-    watch_interval_seconds: int = 30
+    download_watch_interval_seconds: int = 30
     # A download is considered finished when nothing in it changed for this long.
     download_quiet_seconds: int = 120
-    # "copy" hardlinks (falls back to copying) so seeding torrents keep their
-    # files; "move" relocates them out of the download directory.
-    import_mode: str = "copy"
+    # How a *finished download* becomes library files: "copy" hardlinks (falls
+    # back to copying) so seeding torrents keep their files, "move" relocates
+    # them out of the download directory. The DOWNLOAD_ prefix is load-bearing —
+    # importing from /imports always moves and never consults this.
+    download_import_mode: str = "copy"
 
     # Converting an MP3 edition to a single chaptered m4b (see
     # app/services/transcode.py). The target AAC bitrate is halved for a book
