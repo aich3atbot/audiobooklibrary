@@ -26,7 +26,43 @@ Use at your own risk, as you should any software you have not personally written
 Each full user needs a [Hardcover](https://hardcover.app) account and API token. It is used
 to query book metadata, and to get / set book read status.
 
-Get this from [Hardcover](https://hardcover.app) → Settings → Hardcover API.
+Get this from [Hardcover](https://hardcover.app) → Settings → Hardcover API → **New API
+Key**. The form asks for a name, an expiration, and which permissions the key may use.
+
+#### Permissions
+
+Hardcover keys are scoped: a key can only run the operations its permissions cover. This
+app needs five.
+
+| Permission | What it is used for |
+| --- | --- |
+| `read:me:content` | Identifying the account a token belongs to (`id`, `username`) — what the Settings page's Hardcover check reports. |
+| `read:library` | Reading your shelves: which books are on them, their read state and read dates. |
+| `write:library` | Pushing read state back — shelving a book, and marking one *reading* or *read*. |
+| `read:catalog:data` | Looking up book, edition, author and series metadata. |
+| `read:catalog:search` | The Search page, and matching folders in `/imports` to books. |
+
+[**Create a key with exactly these permissions**](https://hardcover.app/account/api/keys/new?scope=read:me:content+read:library+write:library+read:catalog:data+read:catalog:search)
+— that link opens the New API Key form with the five already ticked, and nothing else is
+needed. A key with the blanket `all` permission works too, but it can do anything your
+Hardcover account can, up to deleting it. Keys issued before August 2026 are equivalent to
+`all` and keep working.
+
+Two things to know about narrowing further:
+
+- `read:library` covers your public, followers-only and private shelf entries. Ticking only
+  `read:library:public` also "works", but privately shelved books simply never appear here,
+  which looks like sync silently dropping books.
+- Leaving out a permission the app needs isn't a silent failure: Hardcover answers `403`,
+  and the last-sync line on the Library and Settings pages reads
+  `error: Client error '403 Forbidden'` — the status only, it does not name the missing
+  permission. Note that the Settings page's Hardcover *check* only identifies the account,
+  so it still says "connected" on a key that is missing, say, `write:library`; the sync
+  result is the thing to read.
+
+**Expiry is a real setting.** Once the key's expiration passes it stops working, sync fails
+and someone has to paste a new key in on the admin's Users page, so pick the longest expiry
+you are comfortable with, or **never**.
 
 The token is what syncing, searching and importing run on. An account without one still
 works for browsing and listening to what is already in the library — it just cannot reach
