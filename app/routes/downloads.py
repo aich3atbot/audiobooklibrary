@@ -10,7 +10,8 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import Book, Edition, User, book_status, display_status
 from app.services.audio_format import identify
-from app.services.downloads import grab_release, search_releases
+from app.clients.ratelimit import RateLimited
+from app.services.downloads import ReleaseSearch, grab_release, search_releases
 from app.services.editions import (
     edition_choice,
     edition_sections,
@@ -33,6 +34,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 DISABLED_ERROR = "Downloading is not configured (DOWNLOAD_CLIENT and DOWNLOAD_URL must both be set)."
+
+
+SEARCH_ERROR = "Search failed — check the indexer connection and try again."
+
+
+def _search(book: Book, user: User, query: str | None = None) -> ReleaseSearch:
+    """search_releases, with an unexpected failure turned into the picker's
+    error line (a rate limit already arrives as one)."""
+    try:
+        return search_releases(book, user, query)
+    except Exception:
+        logger.exception("Indexer search failed for %s", book.title)
+        return ReleaseSearch(query=query or "", error=SEARCH_ERROR)
 
 
 def _get_book(db: Session, book_id: int) -> Book:
@@ -356,20 +370,15 @@ async def new_edition_submit(
             logger.exception("Relabel failed for %s", book.title)
             return dialog_error("Renaming the existing edition failed — see the app log.")
 
-    releases = []
-    error = None
-    try:
-        releases = search_releases(book)
-    except Exception:
-        logger.exception("Indexer search failed for %s", book.title)
-        error = "Search failed — check the indexer connection and try again."
+    found = _search(book, user)
     return templates.TemplateResponse(
         request,
         "_releases.html",
         {
             "book": book,
-            "releases": releases,
-            "error": error,
+            "releases": found.releases,
+            "query": found.query,
+            "error": found.error,
             "add_edition": True,
             "edition_label": label,
             "hardcover_edition_id": hc_id,
@@ -386,8 +395,17 @@ def list_releases(
     replace: bool = False,
     edition_id: int | None = None,
     detail: bool = False,
+    q: str | None = None,
+    add_edition: bool = False,
+    edition_label: str = "",
+    hc_edition: int | None = None,
+    narrator: str = "",
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
+    """The release picker. `q` is a search the user typed in the picker; the
+    add-edition fields carry that flow's choice through such a re-search
+    (new_edition_submit only runs once — it relabels)."""
     book = _get_book(db, book_id)
     if not get_settings().downloads_enabled:
         return templates.TemplateResponse(
@@ -397,27 +415,41 @@ def list_releases(
         )
     target = _replace_target(book, edition_id) if replace else None
     replacing = target is not None
-    blocked = None if replacing else _grab_blocked(book)
+    # An additional edition needs a label (grab re-checks it, and the label's
+    # own edition being idle); the book-level guard is what it exists to skip.
+    adding = add_edition and not replacing and bool(edition_label.strip())
+    blocked = None if replacing or adding else _grab_blocked(book)
     if blocked:
         return templates.TemplateResponse(
             request,
             "_releases.html",
             {"book": book, "releases": [], "error": blocked, "from_detail": detail},
         )
-    releases = []
-    error = None
-    try:
-        releases = search_releases(book)
-    except Exception:
-        logger.exception("Indexer search failed for %s", book.title)
-        error = "Search failed — check the indexer connection and try again."
+    found = _search(book, user, q)
+    if adding:
+        return templates.TemplateResponse(
+            request,
+            "_releases.html",
+            {
+                "book": book,
+                "releases": found.releases,
+                "query": found.query,
+                "error": found.error,
+                "add_edition": True,
+                "edition_label": edition_label.strip(),
+                "hardcover_edition_id": hc_edition,
+                "narrator": narrator,
+                "from_detail": detail,
+            },
+        )
     return templates.TemplateResponse(
         request,
         "_releases.html",
         {
             "book": book,
-            "releases": releases,
-            "error": error,
+            "releases": found.releases,
+            "query": found.query,
+            "error": found.error,
             "replace": replacing,
             "replace_edition_id": target.id if target else None,
             "from_detail": detail,
@@ -469,6 +501,17 @@ async def grab(
         edition = get_or_create_edition(db, book, label, hc_id, narrator)
     try:
         release = grab_release(db, user, book, guid, indexer, title, size, edition=edition)
+    except RateLimited as exc:
+        db.rollback()
+        return templates.TemplateResponse(
+            request,
+            "_releases.html",
+            {
+                "book": book,
+                "releases": [],
+                "error": f"{exc.service} is limiting requests — try again in {exc.wait_seconds}s.",
+            },
+        )
     except Exception:
         logger.exception("Grab failed for %s", book.title)
         db.rollback()

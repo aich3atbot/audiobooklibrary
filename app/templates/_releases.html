@@ -65,6 +65,25 @@
         {% elif not error %}
         <p>No releases found for this book.</p>
         {% endif %}
+        {% if query is defined %}
+        {# Re-search by hand: no title rule catches every upload's naming.
+           Carries the dialog's own context, so a replace or a new edition
+           stays one through the new search. #}
+        <form class="release-search" role="search" hx-get="/books/{{ book.id }}/releases"
+              hx-target="#modal" hx-swap="outerHTML">
+            {% if replace %}<input type="hidden" name="replace" value="1">
+            {% if replace_edition_id %}<input type="hidden" name="edition_id" value="{{ replace_edition_id }}">{% endif %}{% endif %}
+            {% if add_edition %}<input type="hidden" name="add_edition" value="1">
+            <input type="hidden" name="edition_label" value="{{ edition_label }}">
+            {% if hardcover_edition_id %}<input type="hidden" name="hc_edition" value="{{ hardcover_edition_id }}">{% endif %}
+            <input type="hidden" name="narrator" value="{{ narrator }}">{% endif %}
+            {% if from_detail %}<input type="hidden" name="detail" value="1">{% endif %}
+            <input type="search" name="q" value="{{ query }}" required
+                   aria-label="Search releases" placeholder="Search releases">
+            <button type="submit">Search</button>
+        </form>
+        {% if query %}<small>Searched for “{{ query }}”.</small>{% endif %}
+        {% endif %}
     </article>
 </dialog>
 </div>

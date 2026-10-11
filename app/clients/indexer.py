@@ -12,9 +12,18 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Protocol, runtime_checkable
 
+from app.clients.ratelimit import RateLimited
+
 
 class IndexerError(RuntimeError):
     pass
+
+
+class IndexerRateLimited(IndexerError, RateLimited):
+    """The indexer is rate limiting us (or we are still backing off from it)."""
+
+    def __init__(self, service: str, retry_after: float):
+        RateLimited.__init__(self, service, retry_after)
 
 
 @dataclass

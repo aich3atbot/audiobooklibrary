@@ -327,11 +327,17 @@ with the current policy.
   already make, and `backfill_hardcover_slugs` tops up rows stored before that. The site
   itself is *not* reachable from the sandbox (only `api.hardcover.app` is), so link urls
   can't be verified by fetching them.
+- **Rate limits** (`app/clients/ratelimit.py`): both Hardcover and the indexer back off
+  from a limited response — nothing more is sent to that service until the cooldown
+  passes. The limited response shapes are **unverified**; never provoke one live to find
+  out (an IP ban on the user's ABB access is the cost). A 403 is not a rate limit.
 - **AudioBookBay** (HTML scraping, no API — contract pinned in plan.md, verified live):
   a **browser User-Agent is mandatory** (ABB blocks tool UAs); an exhausted search page
   returns 200 with zero posts, not a 404; post metadata sits in inline `<span>`s split by
   `<br>`, so parse element *text*, not raw HTML; some mirrors base64-encode posts
-  (`div.post.re-ab`). No seeder counts exist — don't invent a "best match" ranking. Mirrors
+  (`div.post.re-ab`). No seeder counts exist — don't invent a "best match" ranking.
+  Search matches *every* word, so a Hardcover subtitle the upload lacks finds nothing;
+  `search_releases` walks a measured query order (plan.md) — don't collapse it. Mirrors
   rotate domains and some have expired TLS certs, so `INDEX_URL` may be plain `http://`.
   **Releases lie about file extensions** — one shipped a 22-hour audiobook named `.mp4`
   whose bytes are a raw ADTS AAC stream. Never trust a suffix; see `audio_format.identify`.

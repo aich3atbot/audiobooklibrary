@@ -99,6 +99,17 @@ def no_real_http():
         yield
 
 
+@pytest.fixture(autouse=True)
+def no_rate_limit_carryover():
+    """Rate-limit cooldowns are process-wide; one test's must not make the
+    next refuse its requests."""
+    from app.clients import ratelimit
+
+    ratelimit.reset()
+    yield
+    ratelimit.reset()
+
+
 @pytest.fixture
 def db_session(test_settings):
     from app.db import get_sessionmaker

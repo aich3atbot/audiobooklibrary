@@ -126,6 +126,20 @@ tracked as `edition` rows, optionally tied to a Hardcover *edition* id.
   label falls back to "Full Cast" when more than 3 narrators are credited.
 - Rate limiting: modest request rate, cache search results briefly; sync is incremental where
   possible (updated-since cursor), full refresh as fallback.
+- **Rate-limit backoff** (`app/clients/ratelimit.py`, used by `HardcoverClient.execute`
+  and every `AudioBookBayClient` request): a limited response starts a process-wide
+  cooldown — per token for Hardcover, per host for the indexer — and nothing is sent to
+  that service until it passes; the request raises `HardcoverRateLimited` /
+  `IndexerRateLimited` instead (subclasses of the existing errors). Limited means HTTP 429,
+  503 *with* `Retry-After`, or (Hardcover) a GraphQL error mentioning throttling/rate
+  limit; the wait is `Retry-After` (seconds or HTTP date), else 60s, capped at an hour.
+  **Neither service's limited response has been seen live** — provoking one risks the
+  ban the backoff exists to avoid — so detection is deliberately loose. A 403 is never
+  a limit (ABB's blocked-UA answer, and the sandbox policy's). A rate-limited release
+  search stops its query chain at once and says so in the picker.
+- **Default audiobook edition title** (verified live 2026-10-09):
+  `books(where: {id: {_eq: $id}}) { default_audio_edition { title } }`. Usually the
+  retail audiobook title, but it can add a subtitle of its own — see AudioBookBay below.
 - *First implementation task: verify current schema/field names against the live API with the
   user's token — the Hardcover API is beta and shifts occasionally.*
 
@@ -149,6 +163,26 @@ Verified against the live site; re-verify before changing the parser.
   `Tracker:` rows). We build a magnet from those (public trackers as fallback).
 - Mirrors rotate domains and some serve expired TLS certs, hence `INDEX_URL` is
   user-configured and may legitimately be plain `http://`.
+- **Search matches every word**, so a query word the post title lacks loses the post.
+  Hardcover's book title is sometimes the ebook's marketing title (book 2707026 is
+  "He Who Fights with Monsters 13: A LitRPG Adventure"; the upload is "He Who Fights
+  with Monsters 13 - Shirtaloon, Travis Deverell"), which found nothing. So
+  `search_releases` tries queries in a fixed order and stops at the first with results
+  (`candidate_queries`, `app/services/downloads.py`):
+  1. author + full title
+  2. author + the default audiobook edition's title (Hardcover `default_audio_edition`;
+     fetched only when 1 found nothing, skipped without a token or on any failure)
+  3. author + the title before its first `:`
+  4. full title alone
+  5. the title before its first `:` alone — only if at least two words
+  Queries that normalise alike are sent once. **The order is measured, not arbitrary**
+  (2026-10-09, `audiobookbay.fi`): the full title must stay first — "Four: The
+  Transfer" finds exactly its uploads, and its audiobook title ("Four: The Transfer: A
+  Divergent Story") finds nothing; the audiobook title is not a replacement for the
+  colon cut — "Four: A Divergent Collection" misses on both its titles and is found as
+  "Veronica Roth Four"; and a one-word cut alone is useless ("Four" matched 18 unrelated
+  posts, past the two pages we read). The release picker always offers a search box,
+  prefilled with the last query, because no rule catches every upload's naming.
 
 ### Deluge (web UI JSON-RPC, `POST {DOWNLOAD_URL}/json`)
 

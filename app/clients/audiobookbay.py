@@ -14,18 +14,22 @@ Contract notes (verified against the live site and the prowlarr-abb fork):
   (``<td>Info Hash:</td><td>{hex}</td>``) and its tracker list; ``grab``
   builds a public magnet link from those. Mirrors rotate domains and some run
   with expired TLS certs, so INDEX_URL may deliberately be plain http.
+- Every request goes through ``_get``, which backs off from a rate limit
+  (see ``app.clients.ratelimit``): once the site has limited us, nothing more
+  is sent to it until the cooldown passes.
 """
 
 import base64
 import logging
 import re
 from datetime import date, datetime
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from app.clients.indexer import GrabResult, IndexerError, IndexerRelease
+from app.clients import ratelimit
+from app.clients.indexer import GrabResult, IndexerError, IndexerRateLimited, IndexerRelease
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +75,18 @@ def _parse_size(text: str) -> int | None:
         return None
 
 
+def search_term(query: str) -> str:
+    """The term ABB is actually searched for: lowercased, with non-word
+    characters collapsed to spaces (so "13: A" and "13 a" are one search)."""
+    return re.sub(r"[\W_]+", " ", query.lower()).strip()
+
+
 class AudioBookBayClient:
     name = "AudioBookBay"
 
     def __init__(self, index_url: str, timeout: float = 30.0):
         self._base_url = index_url.rstrip("/")
+        self._limit_key = f"indexer:{urlsplit(self._base_url).netloc.lower()}"
         self._client = httpx.Client(
             headers={"User-Agent": BROWSER_UA},
             follow_redirects=True,
@@ -91,14 +102,34 @@ class AudioBookBayClient:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    def _get(self, url: str, **kwargs) -> httpx.Response:
+        """GET, unless we are backing off from a rate limit; a limited
+        response starts the cooldown. Raises IndexerRateLimited for both."""
+        if (left := ratelimit.check(self._limit_key)) is not None:
+            raise IndexerRateLimited(self.name, left)
+        response = self._client.get(url, **kwargs)
+        if (wait := ratelimit.limited_for(response)) is not None:
+            wait = ratelimit.trip(self._limit_key, wait)
+            logger.warning("%s rate limited us (HTTP %s); backing off %.0fs",
+                           self.name, response.status_code, wait)
+            raise IndexerRateLimited(self.name, wait)
+        return response
+
     def search(self, query: str) -> list[IndexerRelease]:
-        term = re.sub(r"[\W_]+", " ", query.lower()).strip()
+        term = search_term(query)
         releases: list[IndexerRelease] = []
         for page in range(1, MAX_PAGES + 1):
             path = "/" if page == 1 else f"/page/{page}/"
-            response = self._client.get(
-                f"{self._base_url}{path}", params={"s": term, "tt": "1"}
-            )
+            try:
+                response = self._get(
+                    f"{self._base_url}{path}", params={"s": term, "tt": "1"}
+                )
+            except IndexerRateLimited:
+                # Keep what earlier pages found; with nothing yet, the caller
+                # needs to know why.
+                if releases:
+                    break
+                raise
             if response.status_code == 404:  # past the last page on some mirrors
                 break
             response.raise_for_status()
@@ -109,7 +140,7 @@ class AudioBookBayClient:
         return releases
 
     def grab(self, guid: str) -> GrabResult:
-        response = self._client.get(guid)
+        response = self._get(guid)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
 
@@ -130,7 +161,7 @@ class AudioBookBayClient:
         return GrabResult(info_hash=info_hash, magnet_uri=magnet, title=title)
 
     def check(self) -> str:
-        response = self._client.get(f"{self._base_url}/")
+        response = self._get(f"{self._base_url}/")
         response.raise_for_status()
         return "reachable"
 

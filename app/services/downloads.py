@@ -9,28 +9,113 @@ torrent back out again.
 """
 
 import logging
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from app.clients.audiobookbay import search_term
 from app.clients.download_client import get_download_client
-from app.clients.indexer import IndexerRelease, get_indexer
+from app.clients.hardcover import HardcoverClient
+from app.clients.indexer import IndexerRateLimited, IndexerRelease, get_indexer
 from app.config import get_settings
 from app.models import Book, DownloadState, Edition, Release, User
 from app.services.editions import get_or_create_edition
 
 logger = logging.getLogger(__name__)
 
+# The audio-title lookup is an optional extra query, so it gets a short leash.
+AUDIO_TITLE_TIMEOUT = 10.0
+# A title cut at its colon is only searched without the author when it still
+# says something: "Four" (from "Four: The Transfer") matched 18 unrelated posts.
+MIN_BARE_MAIN_TITLE_WORDS = 2
 
-def search_releases(book: Book) -> list[IndexerRelease]:
-    """Search the indexer for a book: '{author} {title}', falling back to just
-    the title. Results keep the indexer's own relevance order — AudioBookBay
-    publishes no seeder counts, so there is nothing better to rank on."""
+
+@dataclass
+class ReleaseSearch:
+    releases: list[IndexerRelease] = field(default_factory=list)
+    query: str = ""  # the last query sent — what produced `releases`
+    error: str | None = None
+
+
+def main_title(title: str) -> str:
+    """The title before its first colon — drops a subtitle like ": A LitRPG
+    Adventure" that the release name usually doesn't carry."""
+    return title.split(":", 1)[0].strip()
+
+
+def candidate_queries(book: Book, audio_title: Callable[[], str | None]) -> Iterator[str]:
+    """Queries for a book, most specific first; the caller stops at the first
+    that finds anything. `audio_title` is only called if the first query came
+    up empty (it costs a Hardcover request).
+
+    Order matters (measured against the live indexer, see plan.md): the full
+    title first, so a book that works today never gets a broader search; the
+    audiobook edition's title next, as the most specific other source; the
+    colon cut last, as it broadens."""
+    author = book.author.name if book.author else ""
+    title = book.title
+    short = main_title(title)
+
+    def with_author(text: str) -> str:
+        return f"{author} {text}".strip()
+
+    yield with_author(title)
+    if audio := audio_title():
+        yield with_author(audio)
+    if short:
+        yield with_author(short)
+    yield title
+    if short and len(search_term(short).split()) >= MIN_BARE_MAIN_TITLE_WORDS:
+        yield short
+
+
+def _audio_title_lookup(book: Book, user: User | None) -> Callable[[], str | None]:
+    def lookup() -> str | None:
+        if user is None or not user.hardcover_token:
+            return None
+        try:
+            with HardcoverClient(user.hardcover_token, timeout=AUDIO_TITLE_TIMEOUT) as client:
+                return client.fetch_audio_title(book.hardcover_id)
+        except Exception:
+            # Optional: a missing or limited lookup just skips this query.
+            logger.warning("Audio title lookup failed for %s", book.title, exc_info=True)
+            return None
+
+    return lookup
+
+
+def search_releases(book: Book, user: User | None = None, query: str | None = None) -> ReleaseSearch:
+    """Search the indexer for a book, trying `candidate_queries` in order and
+    stopping at the first that finds anything — or just `query` when the user
+    typed one. Results keep the indexer's own relevance order — AudioBookBay
+    publishes no seeder counts, so there is nothing better to rank on.
+
+    A rate limit stops the chain at once (every further query would be limited
+    too) and is reported as the result's `error`; other failures raise."""
+    queries = [query.strip()] if query and query.strip() else candidate_queries(
+        book, _audio_title_lookup(book, user)
+    )
+    result = ReleaseSearch()
+    tried: set[str] = set()
     with get_indexer() as indexer:
-        results = indexer.search(f"{book.author.name} {book.title}")
-        if not results:
-            results = indexer.search(book.title)
-    return results
+        for q in queries:
+            term = search_term(q)
+            if not term or term in tried:
+                continue
+            tried.add(term)
+            result.query = q
+            try:
+                result.releases = indexer.search(q)
+            except IndexerRateLimited as exc:
+                result.error = (
+                    f"{exc.service} is limiting requests — try again in {exc.wait_seconds}s."
+                )
+                return result
+            if result.releases:
+                break
+    return result
 
 
 def drop_from_client(release: Release) -> None:

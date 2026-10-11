@@ -110,11 +110,12 @@ def test_search_releases_queries_author_and_title(book):
         return_value=httpx.Response(200, text=fixture("search_empty.html"))
     )
 
-    releases = search_releases(book)
+    found = search_releases(book)
 
     assert route.calls[0].request.url.params["s"] == "ryan rimmel the mayor of noobtown"
     # the indexer's own order is preserved — ABB publishes no seeders to rank on
-    assert [r.format for r in releases] == ["M4B", "MP3"]
+    assert [r.format for r in found.releases] == ["M4B", "MP3"]
+    assert found.query == "Ryan Rimmel The Mayor of Noobtown"
 
 
 @respx.mock
@@ -124,10 +125,12 @@ def test_search_releases_falls_back_to_title_only(book):
     page1 = respx.get(f"{ABB}/").mock(side_effect=[empty, hits])
     respx.get(f"{ABB}/page/2/").mock(return_value=empty)
 
-    releases = search_releases(book)
+    found = search_releases(book)
 
+    # no colon to cut and no user to look up an audio title for, so the
+    # author-less title is the next distinct query
     assert page1.calls[1].request.url.params["s"] == "the mayor of noobtown"
-    assert len(releases) == 2
+    assert len(found.releases) == 2
 
 
 @respx.mock

@@ -2,11 +2,22 @@
 
 The API is beta and its schema shifts; the queries below were verified against
 the live API. `me` returns a list of users, not a single object.
+
+Hardcover limits requests per token (about 60 a minute). `execute` backs off
+from a rate limit per token — see `app.clients.ratelimit` — so one user
+hitting the limit never stalls another's sync.
 """
 
+import hashlib
+import logging
 from typing import Any
 
 import httpx
+
+from app.clients import ratelimit
+from app.clients.ratelimit import RateLimited
+
+logger = logging.getLogger(__name__)
 
 API_URL = "https://api.hardcover.app/v1/graphql"
 PAGE_SIZE = 100
@@ -94,6 +105,18 @@ query SeriesBooks($sid: Int!) {
         author { id name cached_image }
       }
     }
+  }
+}
+"""
+
+# The title of Hardcover's chosen audiobook edition, verified live 2026-10-09.
+# A book's own title can be its ebook's marketing title ("He Who Fights with
+# Monsters 13: A LitRPG Adventure"); the audiobook edition usually carries the
+# retail audiobook title, which is what torrent uploads tend to copy.
+AUDIO_TITLE_QUERY = """
+query AudioTitle($id: Int!) {
+  books(where: {id: {_eq: $id}}) {
+    default_audio_edition { title }
   }
 }
 """
@@ -193,6 +216,20 @@ class HardcoverError(RuntimeError):
     pass
 
 
+class HardcoverRateLimited(HardcoverError, RateLimited):
+    """Hardcover is limiting this token (or we are still backing off)."""
+
+    def __init__(self, retry_after: float):
+        RateLimited.__init__(self, "Hardcover", retry_after)
+
+
+def _is_throttle_error(errors: Any) -> bool:
+    """A GraphQL error body that reports a rate limit rather than a bad query.
+    Unverified live (see app.clients.ratelimit), so match loosely."""
+    text = str(errors).lower()
+    return "throttl" in text or "rate limit" in text or "too many requests" in text
+
+
 class HardcoverClient:
     def __init__(self, token: str, base_url: str = API_URL, timeout: float = 30.0):
         # Tolerate tokens pasted with the "Bearer " prefix already included.
@@ -200,6 +237,7 @@ class HardcoverClient:
         if token.lower().startswith("bearer "):
             token = token[7:].strip()
         self._url = base_url
+        self._limit_key = "hardcover:" + hashlib.sha256(token.encode()).hexdigest()
         self._client = httpx.Client(
             headers={"Authorization": f"Bearer {token}"},
             timeout=timeout,
@@ -215,14 +253,26 @@ class HardcoverClient:
         self.close()
 
     def execute(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+        if (left := ratelimit.check(self._limit_key)) is not None:
+            raise HardcoverRateLimited(left)
         response = self._client.post(
             self._url, json={"query": query, "variables": variables or {}}
         )
+        if (wait := ratelimit.limited_for(response)) is not None:
+            self._back_off(wait, f"HTTP {response.status_code}")
         response.raise_for_status()
         payload = response.json()
         if payload.get("errors"):
+            if _is_throttle_error(payload["errors"]):
+                wait = ratelimit.retry_after(response)
+                self._back_off(ratelimit.DEFAULT_COOLDOWN if wait is None else wait, "throttled")
             raise HardcoverError(f"Hardcover query failed: {payload['errors']}")
         return payload["data"]
+
+    def _back_off(self, wait: float, why: str) -> None:
+        wait = ratelimit.trip(self._limit_key, wait)
+        logger.warning("Hardcover rate limited us (%s); backing off %.0fs", why, wait)
+        raise HardcoverRateLimited(wait)
 
     def fetch_author_images(self, author_ids: list[int]) -> dict[int, str]:
         """Author photo urls keyed by Hardcover author id; authors without one
@@ -325,6 +375,14 @@ class HardcoverClient:
         data = self.execute(BOOK_BY_ID_QUERY, {"id": book_id})
         books = data.get("books") or []
         return books[0] if books else None
+
+    def fetch_audio_title(self, book_id: int) -> str | None:
+        """The title of the book's default audiobook edition, or None when it
+        has none (or Hardcover doesn't know the book)."""
+        data = self.execute(AUDIO_TITLE_QUERY, {"id": book_id})
+        books = data.get("books") or []
+        edition = (books[0].get("default_audio_edition") if books else None) or {}
+        return (edition.get("title") or "").strip() or None
 
     def fetch_editions(self, book_id: int) -> list[dict[str, Any]]:
         """A book's audiobook editions, most-shelved first. Each entry carries
